@@ -5,7 +5,7 @@ mod ui;
 
 use app::App;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -137,6 +137,11 @@ fn handle_key(
     key: event::KeyEvent,
     tx: &mpsc::UnboundedSender<AppEvent>,
 ) {
+    // On Windows, crossterm emits both Press and Release events; only handle Press.
+    if key.kind != KeyEventKind::Press {
+        return;
+    }
+
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.should_quit = true;
         return;
