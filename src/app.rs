@@ -524,9 +524,18 @@ impl App {
             return None;
         }
         if let Some(pid) = agent.pid {
-            // Send SIGTERM to the process group (negative pid kills the group)
+            #[cfg(unix)]
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
+            }
+            #[cfg(windows)]
+            {
+                use std::process::Command;
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
             }
         }
         agent.status = AgentStatus::Failed;
