@@ -91,45 +91,68 @@ async fn run_app(
         }
     });
 
-    // Main loop
+    // Main loop — batch all pending events before rendering to keep TUI responsive
     loop {
-        terminal.draw(|f| ui::render(f, &app))?;
-
+        // Wait for at least one event
         match rx.recv().await {
-            Some(AppEvent::Terminal(Event::Key(key))) => {
-                handle_key(&mut app, key, &tx);
-            }
-            Some(AppEvent::Tick) => {
-                app.on_tick();
-
-                if app.auto_spawn {
-                    while let Some(req) = app.get_auto_spawn_info() {
-                        tokio::spawn(spawn_agent_process(tx.clone(), req));
-                    }
-                }
-            }
-            Some(AppEvent::PollResult(tasks)) => {
-                app.on_poll_result(tasks);
-            }
-            Some(AppEvent::AgentOutput { agent_id, line }) => {
-                app.on_agent_output(agent_id, line);
-            }
-            Some(AppEvent::AgentExited { agent_id, exit_code }) => {
-                app.on_agent_exited(agent_id, exit_code);
-            }
-            Some(AppEvent::AgentPid { agent_id, pid }) => {
-                app.on_agent_pid(agent_id, pid);
-            }
-            Some(AppEvent::Terminal(_)) => {}
+            Some(event) => process_event(&mut app, event, &tx),
             None => break,
+        }
+
+        // Drain all remaining pending events without blocking
+        while let Ok(event) = rx.try_recv() {
+            process_event(&mut app, event, &tx);
+            if app.should_quit {
+                break;
+            }
         }
 
         if app.should_quit {
             break;
         }
+
+        // Render once after processing the entire batch
+        terminal.draw(|f| ui::render(f, &app))?;
     }
 
     Ok(())
+}
+
+fn process_event(
+    app: &mut App,
+    event: AppEvent,
+    tx: &mpsc::UnboundedSender<AppEvent>,
+) {
+    match event {
+        AppEvent::Terminal(Event::Key(key)) => {
+            handle_key(app, key, tx);
+        }
+        AppEvent::Tick => {
+            app.on_tick();
+
+            if app.auto_spawn {
+                while let Some(req) = app.get_auto_spawn_info() {
+                    tokio::spawn(spawn_agent_process(tx.clone(), req));
+                }
+            }
+        }
+        AppEvent::PollResult(tasks) => {
+            app.on_poll_result(tasks);
+        }
+        AppEvent::AgentOutput { agent_id, line } => {
+            app.on_agent_output(agent_id, line);
+        }
+        AppEvent::AgentExited {
+            agent_id,
+            exit_code,
+        } => {
+            app.on_agent_exited(agent_id, exit_code);
+        }
+        AppEvent::AgentPid { agent_id, pid } => {
+            app.on_agent_pid(agent_id, pid);
+        }
+        AppEvent::Terminal(_) => {}
+    }
 }
 
 fn handle_key(
@@ -203,7 +226,21 @@ fn handle_key(
             app.selected_runtime = app.selected_runtime.next();
             app.log(
                 LogCategory::System,
-                format!("Runtime switched to {}", app.selected_runtime.name()),
+                format!(
+                    "Runtime switched to {} [{}]",
+                    app.selected_runtime.name(),
+                    app.selected_model()
+                ),
+            );
+        }
+        KeyCode::Char('m') if app.active_view == View::Dashboard => {
+            app.cycle_model();
+            app.log(
+                LogCategory::System,
+                format!(
+                    "Model switched to {}",
+                    app.selected_model()
+                ),
             );
         }
         KeyCode::Char('a') if app.active_view == View::Dashboard => {
@@ -264,7 +301,7 @@ async fn spawn_agent_process(
 ) {
     let agent_id = req.agent_id;
     // Agent prompt handles claim/close lifecycle itself
-    match runtime::spawn_agent(req.runtime, &req.task, &req.system_prompt, &req.user_prompt).await
+    match runtime::spawn_agent(req.runtime, &req.model, &req.task, &req.system_prompt, &req.user_prompt).await
     {
         Ok(mut spawned) => {
             // Record PID for kill support

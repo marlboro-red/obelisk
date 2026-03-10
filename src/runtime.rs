@@ -8,15 +8,19 @@ pub struct SpawnedAgent {
     pub stderr: tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStderr>>,
 }
 
-pub fn build_command(runtime: Runtime, system_prompt: &str, user_prompt: &str) -> Command {
+pub fn build_command(
+    runtime: Runtime,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Command {
     match runtime {
         Runtime::ClaudeCode => {
             let mut cmd = Command::new("claude");
-            // -p: non-interactive print mode (user prompt)
-            // --append-system-prompt: layers onto default system prompt
-            // --dangerously-skip-permissions: no permission dialogs
-            cmd.arg("-p")
+            cmd.arg("--print")
                 .arg(user_prompt)
+                .arg("--model")
+                .arg(model)
                 .arg("--append-system-prompt")
                 .arg(system_prompt)
                 .arg("--dangerously-skip-permissions");
@@ -25,11 +29,10 @@ pub fn build_command(runtime: Runtime, system_prompt: &str, user_prompt: &str) -
         }
         Runtime::Codex => {
             let mut cmd = Command::new("codex");
-            // Positional arg is the user prompt
-            // --approval-mode full-auto: no approval prompts
-            // --instructions: append system-level instructions
             cmd.arg("--approval-mode")
                 .arg("full-auto")
+                .arg("--model")
+                .arg(model)
                 .arg("--instructions")
                 .arg(system_prompt)
                 .arg(user_prompt);
@@ -38,11 +41,12 @@ pub fn build_command(runtime: Runtime, system_prompt: &str, user_prompt: &str) -
         }
         Runtime::Copilot => {
             let mut cmd = Command::new("copilot");
-            // -p: non-interactive prompt mode
-            // --yolo: skip all permission dialogs
-            // Copilot has no separate system prompt flag, so we combine them
             let combined = format!("{}\n\n{}", system_prompt, user_prompt);
-            cmd.arg("-p").arg(&combined).arg("--yolo");
+            cmd.arg("-p")
+                .arg(&combined)
+                .arg("--model")
+                .arg(model)
+                .arg("--yolo");
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             cmd
         }
@@ -51,6 +55,7 @@ pub fn build_command(runtime: Runtime, system_prompt: &str, user_prompt: &str) -
 
 pub async fn spawn_agent(
     runtime: Runtime,
+    model: &str,
     _task: &BeadTask,
     system_prompt: &str,
     user_prompt: &str,
@@ -58,7 +63,7 @@ pub async fn spawn_agent(
     use tokio::io::AsyncBufReadExt;
     use tokio::io::BufReader;
 
-    let mut cmd = build_command(runtime, system_prompt, user_prompt);
+    let mut cmd = build_command(runtime, model, system_prompt, user_prompt);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn {} agent: {}", runtime.name(), e))?;

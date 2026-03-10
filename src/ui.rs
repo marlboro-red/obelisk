@@ -936,12 +936,26 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
         Runtime::Copilot => INFO,
     };
 
+    let model_name = app.selected_model();
+    // Show short model name: strip common prefixes for display
+    let model_short = model_name
+        .strip_prefix("claude-")
+        .or_else(|| model_name.strip_prefix("gpt-"))
+        .unwrap_or(model_name);
+
     let line = Line::from(vec![
         Span::styled("  RUNTIME: ", Style::default().fg(MUTED)),
         Span::styled(
             app.selected_runtime.name(),
             Style::default()
                 .fg(runtime_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  MODEL: ", Style::default().fg(MUTED)),
+        Span::styled(
+            model_short,
+            Style::default()
+                .fg(WARN)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  │  ", Style::default().fg(MUTED)),
@@ -998,6 +1012,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("s", "spawn"),
             ("p", "poll"),
             ("r", "runtime"),
+            ("m", "model"),
             ("a", "auto"),
             ("Tab", "focus"),
             ("j/k", "nav"),

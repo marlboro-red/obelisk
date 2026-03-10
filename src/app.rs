@@ -1,6 +1,6 @@
 use crate::types::*;
 use ratatui::widgets::ListState;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 const AGENT_PROMPT_TEMPLATE: &str = r#"Work on beads issue {id}. Follow this workflow exactly.
 
@@ -106,6 +106,7 @@ git status             # should show "up to date with origin/master"
 pub struct SpawnRequest {
     pub task: BeadTask,
     pub runtime: Runtime,
+    pub model: String,
     pub agent_id: usize,
     pub system_prompt: String,
     pub user_prompt: String,
@@ -149,6 +150,9 @@ pub struct App {
 
     // Alert system
     pub alert_message: Option<(String, u64)>, // (message, frame_to_expire)
+
+    // Per-runtime model selection
+    pub model_indices: HashMap<Runtime, usize>,
 }
 
 impl App {
@@ -180,6 +184,11 @@ impl App {
             throughput_history: VecDeque::from(vec![0; 60]),
             lines_this_tick: 0,
             alert_message: None,
+            model_indices: HashMap::from([
+                (Runtime::ClaudeCode, 0),
+                (Runtime::Codex, 0),
+                (Runtime::Copilot, 0),
+            ]),
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -336,6 +345,7 @@ impl App {
 
         let task = self.selected_task()?.clone();
         let runtime = self.selected_runtime;
+        let model = self.selected_model_for(runtime).to_string();
         let unit = self.next_unit;
         self.next_unit += 1;
 
@@ -366,10 +376,11 @@ impl App {
         self.log(
             LogCategory::Deploy,
             format!(
-                "AGENT-{:02} deployed on {} [{}]",
+                "AGENT-{:02} deployed on {} [{}/{}]",
                 unit,
                 task.id,
-                runtime.name()
+                runtime.name(),
+                model
             ),
         );
 
@@ -385,6 +396,7 @@ impl App {
         Some(SpawnRequest {
             task,
             runtime,
+            model,
             agent_id: unit,
             system_prompt,
             user_prompt,
@@ -547,6 +559,24 @@ impl App {
             format!("AGENT-{:02} terminated (SIGTERM)", unit),
         );
         Some(unit)
+    }
+
+    pub fn selected_model(&self) -> &'static str {
+        let idx = self.model_indices.get(&self.selected_runtime).copied().unwrap_or(0);
+        let models = self.selected_runtime.models();
+        models[idx % models.len()]
+    }
+
+    pub fn selected_model_for(&self, runtime: Runtime) -> &'static str {
+        let idx = self.model_indices.get(&runtime).copied().unwrap_or(0);
+        let models = runtime.models();
+        models[idx % models.len()]
+    }
+
+    pub fn cycle_model(&mut self) {
+        let models = self.selected_runtime.models();
+        let idx = self.model_indices.entry(self.selected_runtime).or_insert(0);
+        *idx = (*idx + 1) % models.len();
     }
 
     pub fn completion_rate(&self) -> f64 {

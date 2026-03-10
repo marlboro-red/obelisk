@@ -19,7 +19,7 @@ pub struct BeadTask {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Runtime {
     ClaudeCode,
     Codex,
@@ -40,6 +40,22 @@ impl Runtime {
             Runtime::ClaudeCode => Runtime::Codex,
             Runtime::Codex => Runtime::Copilot,
             Runtime::Copilot => Runtime::ClaudeCode,
+        }
+    }
+
+    pub fn models(&self) -> &'static [&'static str] {
+        match self {
+            Runtime::ClaudeCode => &[
+                "claude-sonnet-4-6",
+                "claude-opus-4-6",
+                "claude-haiku-4-5-20251001",
+            ],
+            Runtime::Codex => &[
+                "gpt-5.4",
+                "gpt-5.3-codex",
+                "gpt-5.3-codex-spark",
+            ],
+            Runtime::Copilot => &["claude-sonnet-4", "gpt-5"],
         }
     }
 }
