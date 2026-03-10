@@ -91,6 +91,7 @@ pub struct AgentInstance {
     pub unit_number: usize,
     pub task: BeadTask,
     pub runtime: Runtime,
+    pub model: String,
     pub status: AgentStatus,
     pub output: VecDeque<String>,
     pub started_at: std::time::Instant,

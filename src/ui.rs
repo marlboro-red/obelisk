@@ -545,6 +545,10 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
             format!("  [{}]", agent.runtime.name()),
             Style::default().fg(PRIMARY),
         ),
+        Span::styled(
+            format!("  {}", agent.model),
+            Style::default().fg(WARN),
+        ),
         Span::styled("  //  ", Style::default().fg(MUTED)),
         Span::styled(
             status_str,

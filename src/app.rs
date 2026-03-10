@@ -363,6 +363,7 @@ impl App {
             unit_number: unit,
             task: task.clone(),
             runtime,
+            model: model.clone(),
             status: AgentStatus::Starting,
             output: VecDeque::new(),
             started_at: std::time::Instant::now(),
@@ -556,7 +557,7 @@ impl App {
         self.total_failed += 1;
         self.log(
             LogCategory::Alert,
-            format!("AGENT-{:02} terminated (SIGTERM)", unit),
+            format!("AGENT-{:02} terminated (killed)", unit),
         );
         Some(unit)
     }

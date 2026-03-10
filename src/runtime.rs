@@ -2,6 +2,20 @@ use crate::types::{BeadTask, Runtime};
 use std::process::Stdio;
 use tokio::process::Command;
 
+/// On Windows, npm-installed CLIs are `.cmd` scripts which `CreateProcessW`
+/// cannot resolve directly. Wrap them through `cmd /C` so they launch correctly.
+#[cfg(windows)]
+fn npm_command(name: &str) -> Command {
+    let mut cmd = Command::new("cmd");
+    cmd.arg("/C").arg(name);
+    cmd
+}
+
+#[cfg(not(windows))]
+fn npm_command(name: &str) -> Command {
+    Command::new(name)
+}
+
 pub struct SpawnedAgent {
     pub child: tokio::process::Child,
     pub stdout: tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
@@ -28,7 +42,7 @@ pub fn build_command(
             cmd
         }
         Runtime::Codex => {
-            let mut cmd = Command::new("codex");
+            let mut cmd = npm_command("codex");
             cmd.arg("--approval-mode")
                 .arg("full-auto")
                 .arg("--model")
@@ -40,7 +54,7 @@ pub fn build_command(
             cmd
         }
         Runtime::Copilot => {
-            let mut cmd = Command::new("copilot");
+            let mut cmd = npm_command("copilot");
             let combined = format!("{}\n\n{}", system_prompt, user_prompt);
             cmd.arg("-p")
                 .arg(&combined)

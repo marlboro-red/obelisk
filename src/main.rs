@@ -91,6 +91,9 @@ async fn run_app(
         }
     });
 
+    // Initial render before entering event loop
+    terminal.draw(|f| ui::render(f, &app))?;
+
     // Main loop — batch all pending events before rendering to keep TUI responsive
     loop {
         // Wait for at least one event
