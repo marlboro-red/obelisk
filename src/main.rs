@@ -132,7 +132,7 @@ async fn run_app(
     Ok(())
 }
 
-async fn handle_key(
+fn handle_key(
     app: &mut App,
     key: event::KeyEvent,
     tx: &mpsc::UnboundedSender<AppEvent>,
@@ -176,7 +176,7 @@ async fn handle_key(
         KeyCode::Enter => app.enter_pressed(),
         KeyCode::Char('s') if app.active_view == View::Dashboard => {
             if let Some(req) = app.get_spawn_info() {
-                spawn_agent_process(tx, req).await;
+                tokio::spawn(spawn_agent_process(tx.clone(), req));
             }
         }
         KeyCode::Char('p') => {
@@ -254,7 +254,7 @@ async fn handle_key(
 }
 
 async fn spawn_agent_process(
-    tx: &mpsc::UnboundedSender<AppEvent>,
+    tx: mpsc::UnboundedSender<AppEvent>,
     req: app::SpawnRequest,
 ) {
     let agent_id = req.agent_id;
