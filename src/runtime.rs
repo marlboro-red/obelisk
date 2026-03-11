@@ -43,19 +43,26 @@ pub fn build_command(
         }
         Runtime::Codex => {
             let mut cmd = npm_command("codex");
-            cmd.arg("--approval-mode")
-                .arg("full-auto")
-                .arg("--model")
+            // Task instruction first, then workflow — so the model follows it
+            // rather than searching for a document by name
+            let combined = format!(
+                "{}\n\nFollow the workflow below exactly.\n\n---\n\n{}",
+                user_prompt, system_prompt
+            );
+            cmd.arg("exec")
+                .arg("--dangerously-bypass-approvals-and-sandbox")
+                .arg("-m")
                 .arg(model)
-                .arg("--instructions")
-                .arg(system_prompt)
-                .arg(user_prompt);
+                .arg(combined);
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             cmd
         }
         Runtime::Copilot => {
             let mut cmd = npm_command("copilot");
-            let combined = format!("{}\n\n{}", system_prompt, user_prompt);
+            let combined = format!(
+                "{}\n\nFollow the workflow below exactly.\n\n---\n\n{}",
+                user_prompt, system_prompt
+            );
             cmd.arg("-p")
                 .arg(&combined)
                 .arg("--model")

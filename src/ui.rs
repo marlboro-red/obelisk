@@ -5,7 +5,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph, Scrollbar,
+        Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Scrollbar,
         ScrollbarOrientation, ScrollbarState, Sparkline, Tabs,
     },
     Frame,
@@ -60,6 +60,8 @@ fn accent_block(title: &str) -> Block<'_> {
 
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
+    // Clear all cells first to prevent artifacts when switching views
+    f.render_widget(Clear, area);
     f.render_widget(
         Block::default().style(Style::default().bg(DARK_BG)),
         area,
@@ -593,12 +595,11 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
     let visible_height = inner.height as usize;
     let total_lines = agent.output.len();
 
-    // Auto-scroll to bottom unless user has scrolled up
-    let scroll = if app.agent_output_scroll == 0 {
-        total_lines.saturating_sub(visible_height)
-    } else {
-        app.agent_output_scroll
-            .min(total_lines.saturating_sub(visible_height))
+    // None = auto-follow (pinned to bottom), Some(n) = manual position
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll = match app.agent_output_scroll {
+        None => max_scroll,
+        Some(pos) => pos.min(max_scroll),
     };
 
     let lines: Vec<Line> = agent
@@ -1027,11 +1028,12 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
         ],
         View::AgentDetail => vec![
             ("↑↓", "scroll"),
+            ("PgUp/Dn", "page"),
+            ("Home/End", "top/bottom"),
             ("←→", "prev/next"),
             ("Esc", "back"),
             ("k", "kill"),
-            ("1-3", "view"),
-            ("q", "quit"),
+            ("q", "back"),
         ],
         View::EventLog => vec![
             ("↑↓", "scroll"),

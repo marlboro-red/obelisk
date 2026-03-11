@@ -92,18 +92,29 @@ async fn run_app(
     });
 
     // Initial render before entering event loop
+    let mut prev_view = app.active_view;
     terminal.draw(|f| ui::render(f, &app))?;
 
-    // Main loop — batch all pending events before rendering to keep TUI responsive
+    // Main loop — only render on tick/input, batch data events between frames
     loop {
+        let mut needs_render = false;
+
         // Wait for at least one event
         match rx.recv().await {
-            Some(event) => process_event(&mut app, event, &tx),
+            Some(event) => {
+                if matches!(event, AppEvent::Tick | AppEvent::Terminal(_)) {
+                    needs_render = true;
+                }
+                process_event(&mut app, event, &tx);
+            }
             None => break,
         }
 
         // Drain all remaining pending events without blocking
         while let Ok(event) = rx.try_recv() {
+            if matches!(event, AppEvent::Tick | AppEvent::Terminal(_)) {
+                needs_render = true;
+            }
             process_event(&mut app, event, &tx);
             if app.should_quit {
                 break;
@@ -114,8 +125,15 @@ async fn run_app(
             break;
         }
 
-        // Render once after processing the entire batch
-        terminal.draw(|f| ui::render(f, &app))?;
+        // Only render on tick (~10 FPS) or user input — not on every data event
+        if needs_render {
+            // Force full redraw when switching views to prevent artifacts
+            if app.active_view != prev_view {
+                terminal.clear()?;
+                prev_view = app.active_view;
+            }
+            terminal.draw(|f| ui::render(f, &app))?;
+        }
     }
 
     Ok(())
@@ -196,6 +214,14 @@ fn handle_key(
         KeyCode::Char('3') => app.active_view = View::EventLog,
         KeyCode::Up => app.navigate_up(),
         KeyCode::Down => app.navigate_down(),
+        KeyCode::PageUp if app.active_view == View::AgentDetail => app.page_up(),
+        KeyCode::PageDown if app.active_view == View::AgentDetail => app.page_down(),
+        KeyCode::Home if app.active_view == View::AgentDetail => {
+            app.agent_output_scroll = Some(0);
+        }
+        KeyCode::End if app.active_view == View::AgentDetail => {
+            app.agent_output_scroll = None; // re-engage auto-follow
+        }
         KeyCode::Char('k') if app.active_view == View::AgentDetail => {
             if let Some(agent_id) = app.selected_agent_id {
                 app.kill_agent(agent_id);
@@ -261,7 +287,7 @@ fn handle_key(
                 if let Some(i) = app.agents.iter().position(|a| a.id == current_id) {
                     if i > 0 {
                         app.selected_agent_id = Some(app.agents[i - 1].id);
-                        app.agent_output_scroll = 0;
+                        app.agent_output_scroll = None;
                     }
                 }
             }
@@ -271,7 +297,7 @@ fn handle_key(
                 if let Some(i) = app.agents.iter().position(|a| a.id == current_id) {
                     if i + 1 < app.agents.len() {
                         app.selected_agent_id = Some(app.agents[i + 1].id);
-                        app.agent_output_scroll = 0;
+                        app.agent_output_scroll = None;
                     }
                 }
             }
