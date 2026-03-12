@@ -40,20 +40,6 @@ fn primary_block(title: &str) -> Block<'_> {
         .style(Style::default().bg(PANEL_BG))
 }
 
-fn accent_block(title: &str) -> Block<'_> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(SECONDARY))
-        .title(Span::styled(
-            format!(" {} ", title),
-            Style::default()
-                .fg(ACCENT)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().bg(PANEL_BG))
-}
-
 // ══════════════════════════════════════════════════════════
 //  MAIN RENDER
 // ══════════════════════════════════════════════════════════
@@ -459,7 +445,7 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
                 AgentStatus::Failed => "FAIL",
             };
 
-            let line_count = agent.output.len();
+            let line_count = app.agent_line_count(agent.id);
 
             ListItem::new(Line::from(vec![
                 sel_indicator,
@@ -588,47 +574,70 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Min(40), Constraint::Length(28)])
         .split(chunks[1]);
 
-    // Output area
-    let output_block = accent_block("LIVE OUTPUT");
+    // Output area — use PseudoTerminal widget if PTY is active, else legacy text view
+    let mode_label = if app.interactive_mode { "INTERACTIVE" } else { "OBSERVE" };
+    let mode_color = if app.interactive_mode { ACCENT } else { MUTED };
+    let output_title = format!("TERMINAL [{}]", mode_label);
 
-    let inner = output_block.inner(output_chunks[0]);
-    let visible_height = inner.height as usize;
-    let total_lines = agent.output.len();
-
-    // None = auto-follow (pinned to bottom), Some(n) = manual position
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    let scroll = match app.agent_output_scroll {
-        None => max_scroll,
-        Some(pos) => pos.min(max_scroll),
-    };
-
-    let lines: Vec<Line> = agent
-        .output
-        .iter()
-        .skip(scroll)
-        .take(visible_height)
-        .enumerate()
-        .map(|(i, line)| {
-            let line_num = scroll + i + 1;
-            Line::from(vec![
-                Span::styled(format!("{:4} │ ", line_num), Style::default().fg(MUTED)),
-                Span::styled(line.as_str(), Style::default().fg(ACCENT)),
-            ])
+    let output_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(if app.interactive_mode {
+            BorderType::Double
+        } else {
+            BorderType::Rounded
         })
-        .collect();
+        .border_style(Style::default().fg(if app.interactive_mode { ACCENT } else { SECONDARY }))
+        .title(Span::styled(
+            format!(" {} ", output_title),
+            Style::default()
+                .fg(mode_color)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
 
-    let paragraph = Paragraph::new(lines).block(output_block);
-    f.render_widget(paragraph, output_chunks[0]);
+    if let Some(pty_state) = app.pty_states.get(&agent.id) {
+        // ── PTY mode: render full terminal emulation ──
+        let inner = output_block.inner(output_chunks[0]);
+        f.render_widget(output_block, output_chunks[0]);
+        render_vt100_screen(f, pty_state.parser.screen(), inner);
+    } else {
+        // ── Legacy fallback: line-based output ──
+        let inner = output_block.inner(output_chunks[0]);
+        let visible_height = inner.height as usize;
+        let total_lines = agent.output.len();
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let scroll = match app.agent_output_scroll {
+            None => max_scroll,
+            Some(pos) => pos.min(max_scroll),
+        };
 
-    // Scrollbar
-    if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll);
-        f.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .style(Style::default().fg(SECONDARY)),
-            output_chunks[0],
-            &mut scrollbar_state,
-        );
+        let lines: Vec<Line> = agent
+            .output
+            .iter()
+            .skip(scroll)
+            .take(visible_height)
+            .enumerate()
+            .map(|(i, line)| {
+                let line_num = scroll + i + 1;
+                Line::from(vec![
+                    Span::styled(format!("{:4} │ ", line_num), Style::default().fg(MUTED)),
+                    Span::styled(line.as_str(), Style::default().fg(ACCENT)),
+                ])
+            })
+            .collect();
+
+        let paragraph = Paragraph::new(lines).block(output_block);
+        f.render_widget(paragraph, output_chunks[0]);
+
+        if total_lines > visible_height {
+            let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll);
+            f.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .style(Style::default().fg(SECONDARY)),
+                output_chunks[0],
+                &mut scrollbar_state,
+            );
+        }
     }
 
     // Stats panel
@@ -648,7 +657,7 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
         ))
         .style(Style::default().bg(PANEL_BG));
 
-    let total_lines = agent.output.len();
+    let total_lines = app.agent_line_count(agent.id);
     let elapsed = agent.elapsed_secs.max(1);
     let lines_per_sec = total_lines as f64 / elapsed as f64;
 
@@ -1026,15 +1035,23 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("1-3", "view"),
             ("q", "quit"),
         ],
-        View::AgentDetail => vec![
-            ("↑↓", "scroll"),
-            ("PgUp/Dn", "page"),
-            ("Home/End", "top/bottom"),
-            ("←→", "prev/next"),
-            ("Esc", "back"),
-            ("k", "kill"),
-            ("q", "back"),
-        ],
+        View::AgentDetail => if app.interactive_mode {
+            vec![
+                ("Ctrl+]", "detach"),
+                ("", "— all other keys forwarded to agent PTY —"),
+            ]
+        } else {
+            vec![
+                ("i", "interact"),
+                ("↑↓", "scroll"),
+                ("PgUp/Dn", "page"),
+                ("Home/End", "top/bottom"),
+                ("←→", "prev/next"),
+                ("Esc", "back"),
+                ("k", "kill"),
+                ("q", "back"),
+            ]
+        },
         View::EventLog => vec![
             ("↑↓", "scroll"),
             ("1-3", "view"),
@@ -1060,6 +1077,98 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
     let line = Line::from(spans);
     let paragraph = Paragraph::new(line).style(Style::default().bg(DARK_BG));
     f.render_widget(paragraph, area);
+}
+
+// ══════════════════════════════════════════════════════════
+//  VT100 TERMINAL RENDERER
+// ══════════════════════════════════════════════════════════
+
+/// Render a vt100 screen directly into the ratatui buffer.
+/// Handles colors, bold/italic/underline, and cursor position.
+fn render_vt100_screen(f: &mut Frame, screen: &vt100::Screen, area: Rect) {
+    let buf = f.buffer_mut();
+    let rows = area.height as usize;
+    let cols = area.width as usize;
+    let (screen_rows, screen_cols) = (screen.size().0 as usize, screen.size().1 as usize);
+
+    for row in 0..rows.min(screen_rows) {
+        for col in 0..cols.min(screen_cols) {
+            let cell = screen.cell(row as u16, col as u16);
+            let x = area.x + col as u16;
+            let y = area.y + row as u16;
+
+            if x >= area.x + area.width || y >= area.y + area.height {
+                continue;
+            }
+
+            if let Some(cell) = cell {
+                let fg = vt100_color_to_ratatui(cell.fgcolor());
+                let bg = vt100_color_to_ratatui(cell.bgcolor());
+                let mut style = Style::default().fg(fg).bg(bg);
+
+                if cell.bold() {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                if cell.italic() {
+                    style = style.add_modifier(Modifier::ITALIC);
+                }
+                if cell.underline() {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                if cell.inverse() {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+
+                let contents = cell.contents();
+                let ch = if contents.is_empty() {
+                    ' '
+                } else {
+                    contents.chars().next().unwrap_or(' ')
+                };
+
+                buf[(x, y)].set_char(ch).set_style(style);
+            }
+        }
+    }
+}
+
+/// Map vt100 color to ratatui Color.
+fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
+    match color {
+        vt100::Color::Default => Color::Reset,
+        vt100::Color::Idx(i) => Color::Indexed(i),
+        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+/// Compute the inner (rows, cols) of the terminal output panel given the full
+/// terminal size. This mirrors the layout chain: main → agent_detail → output_block.
+pub fn compute_pty_area(term_cols: u16, term_rows: u16) -> (u16, u16) {
+    // Main vertical layout (from render()):
+    //   Length(3)  title bar
+    //   Length(1)  tab bar
+    //   Min(10)    main content  ← this is agent_detail area
+    //   Length(3)  status gauges
+    //   Length(3)  info bar
+    //   Length(1)  keybindings
+    // Chrome = 3+1+3+3+1 = 11
+    let content_height = term_rows.saturating_sub(11);
+
+    // Agent detail vertical layout (from render_agent_detail()):
+    //   Length(3)  agent header
+    //   Min(5)    output area
+    let output_height = content_height.saturating_sub(3);
+
+    // Output horizontal split:
+    //   Min(40)      output panel
+    //   Length(28)   stats panel
+    let output_width = term_cols.saturating_sub(28);
+
+    // The output block has Borders::ALL → subtract 2 from each dimension for inner area
+    let inner_rows = output_height.saturating_sub(2);
+    let inner_cols = output_width.saturating_sub(2);
+
+    (inner_rows, inner_cols)
 }
 
 // ══════════════════════════════════════════════════════════

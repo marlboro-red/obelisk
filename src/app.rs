@@ -176,6 +176,8 @@ pub struct SpawnRequest {
     pub agent_id: usize,
     pub system_prompt: String,
     pub user_prompt: String,
+    pub pty_rows: u16,
+    pub pty_cols: u16,
 }
 
 pub struct App {
@@ -220,6 +222,15 @@ pub struct App {
 
     // Per-runtime model selection
     pub model_indices: HashMap<Runtime, usize>,
+
+    // PTY state per agent: terminal parser + writer + master
+    pub pty_states: HashMap<usize, PtyHandle>,
+
+    // Interactive terminal mode — keystrokes go to the agent's PTY
+    pub interactive_mode: bool,
+
+    // Last known PTY inner area (rows, cols) — used to avoid redundant resizes
+    pub last_pty_size: (u16, u16),
 }
 
 impl App {
@@ -256,6 +267,9 @@ impl App {
                 (Runtime::Codex, 0),
                 (Runtime::Copilot, 0),
             ]),
+            pty_states: HashMap::new(),
+            interactive_mode: false,
+            last_pty_size: (24, 120),
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -358,6 +372,11 @@ impl App {
     }
 
     pub fn on_agent_exited(&mut self, agent_id: usize, exit_code: Option<i32>) {
+        // Auto-detach interactive mode if this agent was the one we were attached to
+        if self.interactive_mode && self.selected_agent_id == Some(agent_id) {
+            self.interactive_mode = false;
+        }
+
         let log_info = if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
             agent.exit_code = exit_code;
             agent.elapsed_secs = agent.started_at.elapsed().as_secs();
@@ -468,6 +487,8 @@ impl App {
             agent_id: unit,
             system_prompt,
             user_prompt,
+            pty_rows: self.last_pty_size.0,
+            pty_cols: self.last_pty_size.1,
         })
     }
 
@@ -683,6 +704,19 @@ impl App {
         Some(unit)
     }
 
+    /// Kill all running agent processes (called on shutdown).
+    pub fn kill_all_agents(&mut self) {
+        let active_ids: Vec<usize> = self
+            .agents
+            .iter()
+            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+            .map(|a| a.id)
+            .collect();
+        for id in active_ids {
+            self.kill_agent(id);
+        }
+    }
+
     pub fn selected_model(&self) -> &'static str {
         let idx = self.model_indices.get(&self.selected_runtime).copied().unwrap_or(0);
         let models = self.selected_runtime.models();
@@ -699,6 +733,97 @@ impl App {
         let models = self.selected_runtime.models();
         let idx = self.model_indices.entry(self.selected_runtime).or_insert(0);
         *idx = (*idx + 1) % models.len();
+    }
+
+    /// Store PTY handle for an agent (called when AgentPtyReady arrives).
+    /// Also responds to ConPTY's initial ESC[6n (Device Status Report) query —
+    /// without this response, ConPTY buffers all child output indefinitely.
+    pub fn on_agent_pty_ready(&mut self, agent_id: usize, mut handle: PtyHandle) {
+        use std::io::Write;
+        // ConPTY sends ESC[6n on startup; respond with cursor at (1,1)
+        let _ = handle.writer.write_all(b"\x1b[1;1R");
+        let _ = handle.writer.flush();
+        self.pty_states.insert(agent_id, handle);
+    }
+
+    /// Feed raw PTY bytes into the agent's vt100 parser.
+    pub fn on_agent_pty_data(&mut self, agent_id: usize, data: &[u8]) {
+        if let Some(state) = self.pty_states.get_mut(&agent_id) {
+            state.parser.process(data);
+        }
+        // Transition Starting → Running on first data received
+        if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
+            if agent.status == AgentStatus::Starting {
+                agent.status = AgentStatus::Running;
+            }
+        }
+        // Also count for throughput tracking (approximate: count newlines)
+        let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
+        self.lines_this_tick = self.lines_this_tick.saturating_add(newlines.max(1));
+    }
+
+    /// Write raw bytes to the selected agent's PTY (interactive mode).
+    pub fn write_to_agent(&mut self, bytes: &[u8]) -> bool {
+        if let Some(agent_id) = self.selected_agent_id {
+            if let Some(state) = self.pty_states.get_mut(&agent_id) {
+                use std::io::Write;
+                return state.writer.write_all(bytes).is_ok();
+            }
+        }
+        false
+    }
+
+    /// Resize the PTY for the selected agent.
+    pub fn resize_agent_pty(&mut self, agent_id: usize, rows: u16, cols: u16) {
+        if let Some(state) = self.pty_states.get_mut(&agent_id) {
+            let size = portable_pty::PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+            let _ = state.master.resize(size);
+            state.parser.screen_mut().set_size(rows, cols);
+        }
+    }
+
+    /// Count output lines for an agent. Uses the vt100 screen if a PTY is
+    /// active, otherwise falls back to the legacy line buffer.
+    pub fn agent_line_count(&self, agent_id: usize) -> usize {
+        if let Some(state) = self.pty_states.get(&agent_id) {
+            let screen = state.parser.screen();
+            let (rows, _cols) = screen.size();
+            // Count non-empty rows from the bottom up to find the last used row
+            let mut last_used = 0;
+            for row in 0..rows {
+                let text = screen.contents_between(row, 0, row, screen.size().1);
+                if !text.trim().is_empty() {
+                    last_used = row as usize + 1;
+                }
+            }
+            // Add scrollback: contents above the visible screen
+            let scrollback = screen.scrollback();
+            last_used + scrollback
+        } else if let Some(agent) = self.agents.iter().find(|a| a.id == agent_id) {
+            agent.output.len()
+        } else {
+            0
+        }
+    }
+
+    /// Resize all active PTYs to match the given dimensions, if changed.
+    pub fn sync_pty_sizes(&mut self, rows: u16, cols: u16) {
+        if rows < 2 || cols < 10 {
+            return;
+        }
+        if self.last_pty_size == (rows, cols) {
+            return;
+        }
+        self.last_pty_size = (rows, cols);
+        let ids: Vec<usize> = self.pty_states.keys().copied().collect();
+        for id in ids {
+            self.resize_agent_pty(id, rows, cols);
+        }
     }
 
     pub fn completion_rate(&self) -> f64 {

@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::collections::VecDeque;
+use std::io::Write;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
@@ -143,6 +144,16 @@ pub enum Focus {
     AgentList,
 }
 
+/// Holds PTY master + writer + terminal parser for an agent.
+/// Created in the spawn task, sent to the main thread via AgentPtyReady.
+pub struct PtyHandle {
+    /// Kept alive to prevent PTY close — not read directly.
+    #[allow(dead_code)]
+    pub master: Box<dyn portable_pty::MasterPty + Send>,
+    pub writer: Box<dyn Write + Send>,
+    pub parser: vt100::Parser,
+}
+
 pub enum AppEvent {
     Terminal(crossterm::event::Event),
     Tick,
@@ -150,4 +161,8 @@ pub enum AppEvent {
     AgentOutput { agent_id: usize, line: String },
     AgentExited { agent_id: usize, exit_code: Option<i32> },
     AgentPid { agent_id: usize, pid: u32 },
+    /// Raw bytes from PTY output — fed into vt100 parser on main thread
+    AgentPtyData { agent_id: usize, data: Vec<u8> },
+    /// PTY is ready — carries the master/writer/parser to store in App
+    AgentPtyReady { agent_id: usize, handle: PtyHandle },
 }
