@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, Sparkline, Tabs, Wrap,
+        ScrollbarOrientation, ScrollbarState, Tabs, Wrap,
     },
     Frame,
 };
@@ -347,7 +347,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     let compact_rows = term.height < 40;
     let compact_cols = term.width < 100;
 
-    // When compact: hide sparklines and give full width to event log
+    // When compact: hide charts and give full width to event log
     let show_bottom = !compact_rows || area.height > 12;
     let v_chunks = if show_bottom && !compact_cols {
         Layout::default()
@@ -420,7 +420,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     // Bottom panels
     if v_chunks.len() > 1 {
         if compact_cols {
-            // < 100 cols: hide sparklines, full-width single-line event log
+            // < 100 cols: hide charts, full-width single-line event log
             render_mini_event_log(f, v_chunks[1], app);
         } else {
             let bottom_chunks = Layout::default()
@@ -431,14 +431,14 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
                     Constraint::Percentage(30),
                 ])
                 .split(v_chunks[1]);
-            render_throughput_sparkline(f, bottom_chunks[0], app);
+            render_throughput_chart(f, bottom_chunks[0], app);
             render_completions_feed(f, bottom_chunks[1], app);
             render_mini_event_log(f, bottom_chunks[2], app);
         }
     }
 }
 
-fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
+fn render_throughput_chart(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let data: Vec<u64> = app
         .throughput_history
@@ -447,30 +447,90 @@ fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     let max_val = data.iter().copied().max().unwrap_or(1).max(1);
-    let label = format!("peak: {}/s", max_val);
+    let current = data.last().copied().unwrap_or(0);
+    let label = format!("now: {}/s  peak: {}/s", current, max_val);
 
-    let sparkline = Sparkline::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(t.muted))
-                .title(Span::styled(
-                    " THROUGHPUT ",
-                    Style::default()
-                        .fg(t.bright)
-                        .add_modifier(Modifier::BOLD),
-                ))
-                .title_bottom(Line::from(Span::styled(
-                    format!(" {} ", label),
-                    Style::default().fg(t.muted),
-                )))
-                .style(Style::default().bg(t.panel_bg)),
-        )
-        .data(&data)
-        .style(Style::default().fg(t.primary));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.muted))
+        .title(Span::styled(
+            " THROUGHPUT ",
+            Style::default()
+                .fg(t.bright)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Line::from(Span::styled(
+            format!(" {} ", label),
+            Style::default().fg(t.muted),
+        )))
+        .style(Style::default().bg(t.panel_bg));
 
-    f.render_widget(sparkline, area);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let chart_height = inner.height as u64;
+    // Block elements: space + 8 fractional blocks
+    const BLOCKS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    // Take only the last N data points that fit the width
+    let visible_count = inner.width as usize;
+    let skip = data.len().saturating_sub(visible_count);
+    let visible_data: Vec<u64> = data.iter().skip(skip).copied().collect();
+
+    // Build rows from top to bottom
+    let mut lines: Vec<Line> = Vec::with_capacity(chart_height as usize);
+    for row in 0..chart_height {
+        let row_from_bottom = chart_height - 1 - row;
+        let mut spans: Vec<Span> = Vec::with_capacity(visible_count);
+
+        // Pad left if data is shorter than width
+        let pad = visible_count.saturating_sub(visible_data.len());
+        if pad > 0 {
+            spans.push(Span::styled(
+                " ".repeat(pad),
+                Style::default().bg(t.panel_bg),
+            ));
+        }
+
+        for &val in &visible_data {
+            // How many sub-levels (out of chart_height * 8) does this value fill?
+            let filled_sub = val * chart_height * 8 / max_val;
+            // Sub-level position for the bottom of this row
+            let row_base = row_from_bottom * 8;
+            let level = if filled_sub >= row_base + 8 {
+                8 // Full block
+            } else if filled_sub > row_base {
+                (filled_sub - row_base) as usize
+            } else {
+                0 // Empty
+            };
+
+            // Color gradient based on how high this bar reaches relative to max
+            let ratio = val as f64 / max_val as f64;
+            let fg = if ratio > 0.75 {
+                t.accent
+            } else if ratio > 0.4 {
+                t.primary
+            } else if ratio > 0.0 {
+                t.dim_accent
+            } else {
+                t.panel_bg
+            };
+
+            spans.push(Span::styled(
+                BLOCKS[level].to_string(),
+                Style::default().fg(fg).bg(t.panel_bg),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 
