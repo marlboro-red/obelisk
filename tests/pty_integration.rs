@@ -314,3 +314,40 @@ fn vt100_parser_resize() {
     parser.screen_mut().set_size(40, 120);
     assert_eq!(parser.screen().size(), (40, 120));
 }
+
+/// Regression: vt100 parser resize preserves visible screen content.
+/// Previously, the app replaced the parser with a new instance on resize,
+/// which destroyed all buffer content.
+#[test]
+fn vt100_parser_resize_preserves_scrollback() {
+    let mut parser = vt100::Parser::new(10, 80, 100);
+
+    // Write some content to the screen
+    for i in 0..5 {
+        parser.process(format!("LINE-{}\r\n", i).as_bytes());
+    }
+
+    // Verify content is visible before resize
+    let contents_before = parser.screen().contents();
+    assert!(
+        contents_before.contains("LINE-4"),
+        "expected LINE-4 on screen before resize, got: {:?}",
+        contents_before
+    );
+
+    // Resize — this must preserve content (the bug was replacing the parser)
+    parser.screen_mut().set_size(12, 100);
+
+    // Verify content survives the resize
+    let contents_after = parser.screen().contents();
+    assert!(
+        contents_after.contains("LINE-4"),
+        "content lost after resize: expected LINE-4, got: {:?}",
+        contents_after
+    );
+    assert!(
+        contents_after.contains("LINE-0"),
+        "content lost after resize: expected LINE-0, got: {:?}",
+        contents_after
+    );
+}

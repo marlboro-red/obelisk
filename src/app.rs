@@ -2118,12 +2118,9 @@ impl App {
                 pixel_height: 0,
             };
             let _ = state.master.resize(size);
-            // Replace the parser with a fresh screen at the new dimensions.
-            // Calling set_size() reflows the existing content which can appear
-            // garbled in the window between the resize and the child process
-            // completing its SIGWINCH-triggered full repaint.  A blank parser
-            // avoids that artifact; the child's redraw fills it in correctly.
-            state.parser = vt100::Parser::new(rows, cols, 10000);
+            // Resize the parser in place to preserve scrollback history.
+            // The child process will repaint after receiving SIGWINCH.
+            state.parser.screen_mut().set_size(rows, cols);
         }
     }
 
