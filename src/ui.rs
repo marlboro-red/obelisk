@@ -295,8 +295,8 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(8),    // Top: ready queue + agents
-                Constraint::Length(5), // Bottom: throughput + velocity + mini log
+                Constraint::Min(8),     // Top: ready queue + agents
+                Constraint::Length(10), // Bottom: throughput + completions + mini log
             ])
             .split(area)
     } else if show_bottom && compact_cols {
@@ -368,13 +368,13 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
             let bottom_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(25),
+                    Constraint::Percentage(20),
                     Constraint::Percentage(50),
+                    Constraint::Percentage(30),
                 ])
                 .split(v_chunks[1]);
             render_throughput_sparkline(f, bottom_chunks[0], app);
-            render_velocity_sparkline(f, bottom_chunks[1], app);
+            render_completions_feed(f, bottom_chunks[1], app);
             render_mini_event_log(f, bottom_chunks[2], app);
         }
     }
@@ -414,34 +414,106 @@ fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(sparkline, area);
 }
 
-fn render_velocity_sparkline(f: &mut Frame, area: Rect, app: &App) {
-    let data = app.velocity_sparkline_data();
 
-    let max_val = data.iter().copied().max().unwrap_or(0).max(1);
-    let label = format!("peak: {}/sess", max_val);
+fn render_completions_feed(f: &mut Frame, area: Rect, app: &App) {
+    let count = app.recent_completions.len();
+    let title = format!(" RECENT COMPLETIONS ({}) ", count);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
 
-    let sparkline = Sparkline::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(INFO))
-                .title(Span::styled(
-                    " VELOCITY ",
-                    Style::default()
-                        .fg(INFO)
-                        .add_modifier(Modifier::BOLD),
-                ))
-                .title_bottom(Line::from(Span::styled(
-                    format!(" {} ", label),
+    let inner = block.inner(area);
+    let visible = inner.height as usize;
+
+    if app.recent_completions.is_empty() {
+        let empty = Paragraph::new(Line::from(Span::styled(
+            "No completions yet",
+            Style::default().fg(MUTED),
+        )))
+        .block(block);
+        f.render_widget(empty, area);
+        return;
+    }
+
+    // Show most recent entries (auto-scroll: newest at bottom)
+    let items: Vec<ListItem> = app
+        .recent_completions
+        .iter()
+        .rev()
+        .take(visible)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|rec| {
+            let status_sym = if rec.success { "✓" } else { "✗" };
+            let status_color = if rec.success { ACCENT } else { DANGER };
+
+            // Format duration
+            let duration = if rec.elapsed_secs >= 3600 {
+                format!("{}h{:02}m", rec.elapsed_secs / 3600, (rec.elapsed_secs % 3600) / 60)
+            } else if rec.elapsed_secs >= 60 {
+                format!("{}m{:02}s", rec.elapsed_secs / 60, rec.elapsed_secs % 60)
+            } else {
+                format!("{}s", rec.elapsed_secs)
+            };
+
+            // Truncate title to fit
+            let max_title = 20;
+            let title_display = if rec.title.len() > max_title {
+                format!("{}\u{2026}", &rec.title[..max_title - 1])
+            } else {
+                rec.title.clone()
+            };
+
+            // Short model name (last component)
+            let model_short = rec.model.split('-').last().unwrap_or(&rec.model);
+
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{} ", status_sym),
+                    Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{} ", rec.task_id),
+                    Style::default().fg(BRIGHT),
+                ),
+                Span::styled(
+                    format!("{} ", title_display),
                     Style::default().fg(MUTED),
-                )))
-                .style(Style::default().bg(PANEL_BG)),
-        )
-        .data(&data)
-        .style(Style::default().fg(INFO));
+                ),
+                Span::styled(
+                    format!("[{}] ", rec.runtime),
+                    Style::default().fg(INFO),
+                ),
+                Span::styled(
+                    format!("{} ", model_short),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(
+                    duration,
+                    Style::default().fg(SECONDARY),
+                ),
+                Span::styled(
+                    if rec.cost_usd > 0.0 {
+                        format!(" ${:.2}", rec.cost_usd)
+                    } else {
+                        String::new()
+                    },
+                    Style::default().fg(WARN),
+                ),
+            ]))
+        })
+        .collect();
 
-    f.render_widget(sparkline, area);
+    f.render_widget(List::new(items).block(block), area);
 }
 
 fn render_mini_event_log(f: &mut Frame, area: Rect, app: &App) {

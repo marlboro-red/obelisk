@@ -266,6 +266,18 @@ impl LogCategory {
     }
 }
 
+/// A completed issue entry for the recent completions feed on the Dashboard.
+#[derive(Debug, Clone)]
+pub struct CompletionRecord {
+    pub task_id: String,
+    pub title: String,
+    pub runtime: String,
+    pub model: String,
+    pub elapsed_secs: u64,
+    pub success: bool,
+    pub cost_usd: f64,
+}
+
 /// One agent's outcome within a persisted session record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionAgent {
