@@ -5,6 +5,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 // All valid issue types for cycling the type filter
 const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
 
+/// Seconds to wait after sending /exit before force-killing an auto-completed agent
+const AUTO_EXIT_TIMEOUT_SECS: u64 = 10;
+
+/// Maximum bytes kept in the per-agent completion detection buffer
+const COMPLETION_BUF_MAX: usize = 8192;
+
 const AGENT_PROMPT_TEMPLATE: &str = r#"# Beads Agent Prompt — Worktree Workflow
 
 You are an autonomous coding agent. You will be given a beads issue ID to work on.
@@ -252,6 +258,9 @@ pub struct App {
     pub priority_filter: Option<std::ops::RangeInclusive<i32>>,
     /// Index into ALL_TYPES for the "cycle type filter" keybinding
     pub type_filter_cursor: usize,
+
+    /// When true, auto-send /exit to ClaudeCode agents when completion is detected
+    pub auto_exit_on_completion: bool,
 }
 
 impl App {
@@ -300,6 +309,7 @@ impl App {
             type_filter: HashSet::new(),
             priority_filter: None,
             type_filter_cursor: 0,
+            auto_exit_on_completion: true,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -354,6 +364,24 @@ impl App {
             if self.frame_count > *expires {
                 self.alert_message = None;
             }
+        }
+
+        // Auto-exit timeout: force-complete agents that sent /exit but didn't exit
+        let timeout = std::time::Duration::from_secs(AUTO_EXIT_TIMEOUT_SECS);
+        let timed_out: Vec<usize> = self
+            .agents
+            .iter()
+            .filter(|a| {
+                a.completion_detected
+                    && matches!(a.status, AgentStatus::Starting | AgentStatus::Running)
+                    && a.exit_sent_at
+                        .map(|t| t.elapsed() > timeout)
+                        .unwrap_or(false)
+            })
+            .map(|a| a.id)
+            .collect();
+        for id in timed_out {
+            self.force_complete_agent(id);
         }
     }
 
@@ -618,6 +646,9 @@ impl App {
             exit_code: None,
             pid: None,
             retry_count: 0,
+            completion_detected: false,
+            exit_sent_at: None,
+            completion_buf: String::new(),
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -993,6 +1024,9 @@ impl App {
             exit_code: None,
             pid: None,
             retry_count: new_retry_count,
+            completion_detected: false,
+            exit_sent_at: None,
+            completion_buf: String::new(),
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -1063,6 +1097,99 @@ impl App {
         // Also count for throughput tracking (approximate: count newlines)
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
         self.lines_this_tick = self.lines_this_tick.saturating_add(newlines.max(1));
+
+        // Completion detection: scan PTY output for beads issue closure markers
+        if self.auto_exit_on_completion {
+            self.check_completion_in_pty_data(agent_id, data);
+        }
+    }
+
+    /// Scan incoming PTY bytes for beads issue closure patterns.
+    /// When detected, sends /exit to the agent's PTY and starts the force-kill timer.
+    /// Only applies to ClaudeCode runtime (Codex/Copilot exit naturally after their task).
+    fn check_completion_in_pty_data(&mut self, agent_id: usize, data: &[u8]) {
+        let agent = match self.agents.iter_mut().find(|a| a.id == agent_id) {
+            Some(a) => a,
+            None => return,
+        };
+        if agent.runtime != Runtime::ClaudeCode { return; }
+        if !matches!(agent.status, AgentStatus::Running | AgentStatus::Starting) { return; }
+        if agent.completion_detected { return; }
+
+        // Accumulate text into the rolling buffer
+        let text = String::from_utf8_lossy(data);
+        agent.completion_buf.push_str(&text);
+        if agent.completion_buf.len() > COMPLETION_BUF_MAX {
+            let excess = agent.completion_buf.len() - COMPLETION_BUF_MAX;
+            // Advance to a valid char boundary to avoid splitting multi-byte chars
+            let drain_to = (excess..)
+                .find(|&i| agent.completion_buf.is_char_boundary(i))
+                .unwrap_or(excess);
+            agent.completion_buf.drain(..drain_to);
+        }
+
+        // Check for bd close/show JSON output indicating the issue is closed
+        let closed = agent.completion_buf.contains("\"status\": \"closed\"")
+            || agent.completion_buf.contains("\"status\":\"closed\"")
+            || agent.completion_buf.contains("status: closed");
+        if !closed { return; }
+
+        agent.completion_detected = true;
+        agent.exit_sent_at = Some(std::time::Instant::now());
+        let unit = agent.unit_number;
+        // agent borrow ends here
+
+        self.log(
+            LogCategory::Complete,
+            format!("AGENT-{:02} auto-completed: detected issue closure", unit),
+        );
+
+        // Gracefully exit the Claude Code REPL
+        if let Some(state) = self.pty_states.get_mut(&agent_id) {
+            use std::io::Write;
+            let _ = state.writer.write_all(b"/exit\r");
+            let _ = state.writer.flush();
+        }
+    }
+
+    /// Force-complete an agent that ignored the /exit command after the timeout.
+    /// Marks it as Completed (task finished) and sends SIGTERM.
+    fn force_complete_agent(&mut self, agent_id: usize) {
+        let (unit, pid) = {
+            let agent = match self.agents.iter_mut().find(|a| a.id == agent_id) {
+                Some(a) => a,
+                None => return,
+            };
+            if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+                return;
+            }
+            agent.status = AgentStatus::Completed;
+            agent.elapsed_secs = agent.started_at.elapsed().as_secs();
+            (agent.unit_number, agent.pid)
+        };
+
+        self.total_completed += 1;
+
+        if let Some(pid) = pid {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            #[cfg(windows)]
+            {
+                use std::process::Command;
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+
+        self.log(
+            LogCategory::Alert,
+            format!("AGENT-{:02} force-terminated after auto-exit timeout", unit),
+        );
     }
 
     /// Write raw bytes to the selected agent's PTY (interactive mode).

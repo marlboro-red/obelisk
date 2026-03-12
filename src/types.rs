@@ -128,6 +128,12 @@ pub struct AgentInstance {
     pub exit_code: Option<i32>,
     pub pid: Option<u32>,
     pub retry_count: u32,
+    /// Set when PTY output reveals the beads issue has been closed
+    pub completion_detected: bool,
+    /// Timestamp when /exit was sent; used to enforce force-kill timeout
+    pub exit_sent_at: Option<std::time::Instant>,
+    /// Rolling buffer of recent PTY text used for completion pattern matching
+    pub completion_buf: String,
 }
 
 #[derive(Debug, Clone)]
