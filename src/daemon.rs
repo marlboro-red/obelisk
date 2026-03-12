@@ -1,0 +1,470 @@
+//! Headless daemon mode — runs the orchestrator without the TUI.
+//!
+//! Listens on a Unix domain socket (`.beads/obelisk.sock`) for JSON commands
+//! from CLI clients. Manages agent spawning, polling, and lifecycle identically
+//! to the TUI mode but logs to stdout/file instead of rendering.
+
+use crate::app::{App, SpawnRequest};
+use crate::runtime;
+use crate::types::{AgentStatus, AppEvent};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixListener;
+use tokio::sync::mpsc;
+use tracing::{error, info, warn};
+
+const SOCK_NAME: &str = ".beads/obelisk.sock";
+
+/// JSON command sent by CLI clients over the socket.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "cmd")]
+pub enum DaemonCmd {
+    #[serde(rename = "status")]
+    Status,
+    #[serde(rename = "agents")]
+    Agents,
+    #[serde(rename = "spawn")]
+    Spawn { issue_id: String },
+    #[serde(rename = "kill")]
+    Kill { agent_id: usize },
+    #[serde(rename = "stop")]
+    Stop,
+}
+
+/// JSON response returned to CLI clients.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DaemonResp {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+/// Socket path for the daemon, relative to the working directory.
+pub fn socket_path() -> PathBuf {
+    PathBuf::from(SOCK_NAME)
+}
+
+/// Run the daemon event loop. Blocks until a `stop` command is received or the
+/// process is signalled.
+pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let sock = socket_path();
+    // Clean up stale socket
+    if sock.exists() {
+        std::fs::remove_file(&sock)?;
+    }
+    // Ensure parent directory exists
+    if let Some(parent) = sock.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let listener = UnixListener::bind(&sock)?;
+    info!("daemon listening on {}", sock.display());
+    eprintln!("obelisk daemon listening on {}", sock.display());
+
+    let mut app = App::new();
+    // Daemon uses a fixed PTY size (no terminal to measure)
+    app.last_pty_size = (40, 120);
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
+
+    // Poller task
+    let tx_poll = tx.clone();
+    let poll_interval = app.poll_interval_secs;
+    tokio::spawn(async move {
+        loop {
+            match runtime::poll_ready().await {
+                Ok(tasks) => {
+                    if tx_poll.send(AppEvent::PollResult(tasks)).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx_poll.send(AppEvent::PollFailed(e));
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval)).await;
+        }
+    });
+
+    // Tick timer (slower than TUI — 1s ticks are fine for headless)
+    let tx_tick = tx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            if tx_tick.send(AppEvent::Tick).is_err() {
+                break;
+            }
+        }
+    });
+
+    // Socket accept loop runs in its own task, forwarding commands via a channel.
+    let (cmd_tx, mut cmd_rx) =
+        mpsc::unbounded_channel::<(DaemonCmd, tokio::sync::oneshot::Sender<DaemonResp>)>();
+
+    tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((mut stream, _)) => {
+                    let cmd_tx = cmd_tx.clone();
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 8192];
+                        let n = match stream.read(&mut buf).await {
+                            Ok(n) => n,
+                            Err(_) => return,
+                        };
+                        let cmd: DaemonCmd = match serde_json::from_slice(&buf[..n]) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let resp = DaemonResp {
+                                    ok: false,
+                                    message: Some(format!("invalid command: {}", e)),
+                                    data: None,
+                                };
+                                let _ = stream
+                                    .write_all(serde_json::to_string(&resp).unwrap().as_bytes())
+                                    .await;
+                                return;
+                            }
+                        };
+                        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                        if cmd_tx.send((cmd, resp_tx)).is_err() {
+                            return;
+                        }
+                        if let Ok(resp) = resp_rx.await {
+                            let _ = stream
+                                .write_all(serde_json::to_string(&resp).unwrap().as_bytes())
+                                .await;
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("socket accept error: {}", e);
+                }
+            }
+        }
+    });
+
+    // Main event loop
+    loop {
+        tokio::select! {
+            event = rx.recv() => {
+                match event {
+                    Some(ev) => process_daemon_event(&mut app, ev, &tx),
+                    None => break,
+                }
+            }
+            cmd = cmd_rx.recv() => {
+                match cmd {
+                    Some((daemon_cmd, resp_tx)) => {
+                        let (resp, should_stop) = handle_daemon_cmd(&mut app, daemon_cmd, &tx);
+                        let _ = resp_tx.send(resp);
+                        if should_stop {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+
+    // Shutdown
+    info!("daemon shutting down");
+    eprintln!("obelisk daemon shutting down");
+    app.save_config();
+    app.kill_all_agents();
+    app.save_session();
+
+    // Clean up socket
+    let _ = std::fs::remove_file(&sock);
+
+    Ok(())
+}
+
+/// Process internal events (agent output, poll results, ticks).
+fn process_daemon_event(
+    app: &mut App,
+    event: AppEvent,
+    tx: &mpsc::UnboundedSender<AppEvent>,
+) {
+    match event {
+        AppEvent::Tick => {
+            app.on_tick();
+            // Auto-spawn if enabled
+            if app.auto_spawn {
+                while let Some(req) = app.get_auto_spawn_info() {
+                    let unit = req.agent_id;
+                    let task_id = req.task.id.clone();
+                    info!(unit, task_id, "auto-spawning agent");
+                    tokio::spawn(spawn_agent_process(tx.clone(), req));
+                }
+            }
+        }
+        AppEvent::PollResult(tasks) => {
+            let count = tasks.len();
+            app.on_poll_result(tasks);
+            if count > 0 {
+                info!(count, "poll: {} ready tasks", count);
+            }
+        }
+        AppEvent::PollFailed(error) => {
+            warn!(%error, "poll failed");
+            app.on_poll_failed(error);
+        }
+        AppEvent::AgentOutput { agent_id, line } => {
+            app.on_agent_output(agent_id, line);
+        }
+        AppEvent::AgentExited { agent_id, exit_code } => {
+            let status = if exit_code == Some(0) { "completed" } else { "failed" };
+            info!(agent_id, ?exit_code, status, "agent exited");
+            app.on_agent_exited(agent_id, exit_code);
+        }
+        AppEvent::AgentPid { agent_id, pid } => {
+            app.on_agent_pid(agent_id, pid);
+        }
+        AppEvent::AgentPtyData { agent_id, data } => {
+            app.on_agent_pty_data(agent_id, &data);
+        }
+        AppEvent::AgentPtyReady { agent_id, handle } => {
+            app.on_agent_pty_ready(agent_id, handle);
+        }
+        AppEvent::WorktreeOrphans(paths) => {
+            warn!(count = paths.len(), "orphaned worktrees");
+            app.on_worktree_orphans(paths);
+        }
+        AppEvent::WorktreeCleaned { cleaned, failed } => {
+            app.on_worktree_cleaned(cleaned, failed);
+        }
+        AppEvent::DiffResult { agent_id, diff } => {
+            app.on_diff_result(agent_id, diff);
+        }
+        AppEvent::WorktreeScanned(worktrees) => {
+            app.on_worktree_scanned(worktrees);
+        }
+        AppEvent::DepGraphResult(nodes) => {
+            app.on_dep_graph_result(nodes);
+        }
+        AppEvent::DepGraphFailed(error) => {
+            warn!(%error, "dep graph poll failed");
+            app.on_dep_graph_failed(error);
+        }
+        AppEvent::Terminal(_) => {} // no TUI in daemon mode
+    }
+}
+
+/// Handle a command from a CLI client. Returns (response, should_stop).
+fn handle_daemon_cmd(
+    app: &mut App,
+    cmd: DaemonCmd,
+    tx: &mpsc::UnboundedSender<AppEvent>,
+) -> (DaemonResp, bool) {
+    match cmd {
+        DaemonCmd::Status => {
+            let data = serde_json::json!({
+                "running": true,
+                "active_agents": app.active_agent_count(),
+                "max_concurrent": app.max_concurrent,
+                "total_completed": app.total_completed,
+                "total_failed": app.total_failed,
+                "auto_spawn": app.auto_spawn,
+                "runtime": app.selected_runtime.name(),
+                "ready_tasks": app.ready_tasks.len(),
+                "agents_total": app.agents.len(),
+                "session_id": app.session_id,
+            });
+            (DaemonResp { ok: true, message: None, data: Some(data) }, false)
+        }
+        DaemonCmd::Agents => {
+            let agents: Vec<serde_json::Value> = app
+                .agents
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "id": a.id,
+                        "task_id": a.task.id,
+                        "title": a.task.title,
+                        "status": format!("{}", a.status.symbol()),
+                        "status_label": match a.status {
+                            AgentStatus::Starting => "starting",
+                            AgentStatus::Running => "running",
+                            AgentStatus::Completed => "completed",
+                            AgentStatus::Failed => "failed",
+                        },
+                        "phase": a.phase.label(),
+                        "runtime": a.runtime.name(),
+                        "model": a.model,
+                        "elapsed_secs": a.elapsed_secs,
+                        "cost_usd": a.estimated_cost_usd,
+                        "pid": a.pid,
+                    })
+                })
+                .collect();
+            let data = serde_json::json!({ "agents": agents });
+            (DaemonResp { ok: true, message: None, data: Some(data) }, false)
+        }
+        DaemonCmd::Spawn { issue_id } => {
+            match spawn_task_by_id(app, &issue_id, tx) {
+                Ok(agent_id) => (
+                    DaemonResp {
+                        ok: true,
+                        message: Some(format!("spawned agent #{} for {}", agent_id, issue_id)),
+                        data: Some(serde_json::json!({ "agent_id": agent_id })),
+                    },
+                    false,
+                ),
+                Err(e) => (
+                    DaemonResp { ok: false, message: Some(e), data: None },
+                    false,
+                ),
+            }
+        }
+        DaemonCmd::Kill { agent_id } => {
+            match app.kill_agent(agent_id) {
+                Some((unit, _)) => (
+                    DaemonResp {
+                        ok: true,
+                        message: Some(format!("killed agent #{}", unit)),
+                        data: None,
+                    },
+                    false,
+                ),
+                None => (
+                    DaemonResp {
+                        ok: false,
+                        message: Some(format!("agent {} not found or not running", agent_id)),
+                        data: None,
+                    },
+                    false,
+                ),
+            }
+        }
+        DaemonCmd::Stop => (
+            DaemonResp { ok: true, message: Some("daemon stopping".into()), data: None },
+            true,
+        ),
+    }
+}
+
+/// Spawn an agent for a specific issue ID. Looks up the task in the ready queue,
+/// creates the agent instance, and kicks off the PTY process.
+fn spawn_task_by_id(
+    app: &mut App,
+    issue_id: &str,
+    tx: &mpsc::UnboundedSender<AppEvent>,
+) -> Result<usize, String> {
+    if app.active_agent_count() >= app.max_concurrent {
+        return Err("max concurrent agents reached".into());
+    }
+
+    // Find task in ready queue
+    let task_idx = app
+        .ready_tasks
+        .iter()
+        .position(|t| t.id == issue_id)
+        .ok_or_else(|| format!("issue '{}' not found in ready queue", issue_id))?;
+
+    // Select it and use get_spawn_info
+    app.task_list_state.select(Some(task_idx));
+    let req = app
+        .get_spawn_info()
+        .ok_or_else(|| "failed to create spawn request".to_string())?;
+
+    let agent_id = req.agent_id;
+    tokio::spawn(spawn_agent_process(tx.clone(), req));
+    Ok(agent_id)
+}
+
+/// Spawn an agent process in a PTY — identical to the TUI version.
+async fn spawn_agent_process(
+    tx: mpsc::UnboundedSender<AppEvent>,
+    req: SpawnRequest,
+) {
+    let agent_id = req.agent_id;
+    let runtime = req.runtime;
+    let model = req.model.clone();
+    let system_prompt = req.system_prompt.clone();
+    let user_prompt = req.user_prompt.clone();
+    let task = req.task.clone();
+    let pty_rows = req.pty_rows;
+    let pty_cols = req.pty_cols;
+
+    let task_id = task.id.clone();
+    let runtime_name = runtime.to_string();
+    let model_name = model.clone();
+    info!(agent_id, task_id, runtime = %runtime_name, model = %model_name, "spawning agent");
+
+    let spawn_result = tokio::task::spawn_blocking(move || {
+        runtime::spawn_agent_pty(runtime, &model, &task, &system_prompt, &user_prompt, pty_rows, pty_cols)
+    })
+    .await;
+
+    let (handle, reader, child) = match spawn_result {
+        Ok(Ok(tuple)) => tuple,
+        Ok(Err(e)) => {
+            error!(agent_id, %e, "PTY spawn failed");
+            let _ = tx.send(AppEvent::AgentOutput {
+                agent_id,
+                line: format!("[ERROR] PTY spawn failed: {}", e),
+            });
+            let _ = tx.send(AppEvent::AgentExited { agent_id, exit_code: Some(1) });
+            return;
+        }
+        Err(e) => {
+            error!(agent_id, %e, "spawn_blocking panicked");
+            let _ = tx.send(AppEvent::AgentOutput {
+                agent_id,
+                line: format!("[ERROR] spawn_blocking panicked: {}", e),
+            });
+            let _ = tx.send(AppEvent::AgentExited { agent_id, exit_code: Some(1) });
+            return;
+        }
+    };
+
+    if let Some(pid) = child.process_id() {
+        let _ = tx.send(AppEvent::AgentPid { agent_id, pid });
+    }
+
+    let _ = tx.send(AppEvent::AgentPtyReady { agent_id, handle });
+
+    // Reader task
+    let tx_reader = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut reader = reader;
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx_reader
+                        .send(AppEvent::AgentPtyData {
+                            agent_id,
+                            data: buf[..n].to_vec(),
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Exit watcher
+    let tx_exit = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut child = child;
+        let exit_code = match child.wait() {
+            Ok(status) => {
+                if status.success() { Some(0) } else { Some(1) }
+            }
+            Err(_) => None,
+        };
+        let _ = tx_exit.send(AppEvent::AgentExited { agent_id, exit_code });
+    });
+}
