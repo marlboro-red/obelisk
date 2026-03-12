@@ -46,6 +46,8 @@ pub struct BeadTask {
     pub labels: Option<Vec<String>>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
