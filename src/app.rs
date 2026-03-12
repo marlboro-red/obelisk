@@ -1,5 +1,6 @@
 use crate::types::*;
 use ratatui::widgets::ListState;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 // All valid issue types for cycling the type filter
@@ -171,6 +172,29 @@ git log --oneline $DEFAULT_BRANCH~3..$DEFAULT_BRANCH   # should show your merge 
 | Issue is blocked | STOP. Report back. Do not work on blocked issues |
 | Already claimed by another agent | Run `bd ready --json` and pick different work |
 "#;
+
+const CONFIG_FILE: &str = "obelisk.toml";
+
+#[derive(Serialize, Deserialize, Default)]
+struct OrchestratorConfig {
+    runtime: Option<String>,
+    max_concurrent: Option<usize>,
+    auto_spawn: Option<bool>,
+    poll_interval_secs: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ModelsConfig {
+    claude: Option<String>,
+    codex: Option<String>,
+    copilot: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ObeliskConfig {
+    orchestrator: Option<OrchestratorConfig>,
+    models: Option<ModelsConfig>,
+}
 
 pub struct SpawnRequest {
     pub task: BeadTask,
@@ -447,6 +471,64 @@ fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, us
 
 impl App {
     pub fn new() -> Self {
+        let config_exists = std::path::Path::new(CONFIG_FILE).exists();
+        let config = if config_exists {
+            std::fs::read_to_string(CONFIG_FILE)
+                .ok()
+                .and_then(|s| toml::from_str::<ObeliskConfig>(&s).ok())
+                .unwrap_or_default()
+        } else {
+            ObeliskConfig::default()
+        };
+
+        let mut selected_runtime = Runtime::ClaudeCode;
+        let mut max_concurrent = 10usize;
+        let mut auto_spawn = false;
+        let mut poll_interval_secs = 30u64;
+        let mut model_indices: HashMap<Runtime, usize> = HashMap::from([
+            (Runtime::ClaudeCode, 0),
+            (Runtime::Codex, 0),
+            (Runtime::Copilot, 0),
+        ]);
+
+        if let Some(orch) = &config.orchestrator {
+            if let Some(r) = &orch.runtime {
+                selected_runtime = match r.as_str() {
+                    "claude" => Runtime::ClaudeCode,
+                    "codex" => Runtime::Codex,
+                    "copilot" => Runtime::Copilot,
+                    _ => Runtime::ClaudeCode,
+                };
+            }
+            if let Some(mc) = orch.max_concurrent {
+                max_concurrent = mc;
+            }
+            if let Some(asp) = orch.auto_spawn {
+                auto_spawn = asp;
+            }
+            if let Some(pi) = orch.poll_interval_secs {
+                poll_interval_secs = pi;
+            }
+        }
+
+        if let Some(models) = &config.models {
+            let pairs: &[(Runtime, &Option<String>)] = &[
+                (Runtime::ClaudeCode, &models.claude),
+                (Runtime::Codex, &models.codex),
+                (Runtime::Copilot, &models.copilot),
+            ];
+            for (runtime, model_opt) in pairs {
+                if let Some(model_str) = model_opt {
+                    let idx = runtime
+                        .models()
+                        .iter()
+                        .position(|m| *m == model_str.as_str())
+                        .unwrap_or(0);
+                    model_indices.insert(*runtime, idx);
+                }
+            }
+        }
+
         let session_id = generate_session_id();
         let history_sessions = load_history_sessions();
         let last_session_summary = history_sessions.last().map(|last| format!(
@@ -457,6 +539,7 @@ impl App {
             last.agents.len(),
         ));
 
+        let poll_countdown = poll_interval_secs as f64;
         let mut app = Self {
             ready_tasks: Vec::new(),
             agents: Vec::new(),
@@ -466,11 +549,11 @@ impl App {
             task_list_state: ListState::default(),
             agent_list_state: ListState::default(),
             log_scroll: 0,
-            selected_runtime: Runtime::ClaudeCode,
-            auto_spawn: false,
-            max_concurrent: 10,
-            poll_interval_secs: 30,
-            poll_countdown: 30.0,
+            selected_runtime,
+            auto_spawn,
+            max_concurrent,
+            poll_interval_secs,
+            poll_countdown,
             should_quit: false,
             next_unit: 0,
             claimed_task_ids: HashSet::new(),
@@ -486,11 +569,7 @@ impl App {
             throughput_history: VecDeque::from(vec![0; 60]),
             lines_this_tick: 0,
             alert_message: None,
-            model_indices: HashMap::from([
-                (Runtime::ClaudeCode, 0),
-                (Runtime::Codex, 0),
-                (Runtime::Copilot, 0),
-            ]),
+            model_indices,
             pty_states: HashMap::new(),
             interactive_mode: false,
             last_pty_size: (24, 120),
@@ -518,11 +597,45 @@ impl App {
             diff_last_poll_frame: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
+        if config_exists {
+            app.log(LogCategory::System, format!("Config loaded from {}", CONFIG_FILE));
+        } else {
+            app.log(LogCategory::System, "No config file found, using defaults".into());
+        }
         app.log(LogCategory::System, "System online".into());
         if let Some(summary) = last_session_summary {
             app.log(LogCategory::System, summary);
         }
         app
+    }
+
+    pub fn save_config(&mut self) {
+        let runtime_str = match self.selected_runtime {
+            Runtime::ClaudeCode => "claude",
+            Runtime::Codex => "codex",
+            Runtime::Copilot => "copilot",
+        };
+        let config = ObeliskConfig {
+            orchestrator: Some(OrchestratorConfig {
+                runtime: Some(runtime_str.to_string()),
+                max_concurrent: Some(self.max_concurrent),
+                auto_spawn: Some(self.auto_spawn),
+                poll_interval_secs: Some(self.poll_interval_secs),
+            }),
+            models: Some(ModelsConfig {
+                claude: Some(self.selected_model_for(Runtime::ClaudeCode).to_string()),
+                codex: Some(self.selected_model_for(Runtime::Codex).to_string()),
+                copilot: Some(self.selected_model_for(Runtime::Copilot).to_string()),
+            }),
+        };
+        match toml::to_string_pretty(&config) {
+            Ok(toml_str) => {
+                if std::fs::write(CONFIG_FILE, toml_str).is_ok() {
+                    self.log(LogCategory::System, format!("Config saved to {}", CONFIG_FILE));
+                }
+            }
+            Err(_) => {}
+        }
     }
 
     /// Build a SessionRecord from the current session and append it to the

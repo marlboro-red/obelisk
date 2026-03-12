@@ -163,7 +163,8 @@ async fn run_app(
         }
     }
 
-    // Kill all running agent processes before exiting
+    // Save settings and kill all running agent processes before exiting
+    app.save_config();
     app.kill_all_agents();
 
     // Persist session record
