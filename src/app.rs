@@ -686,6 +686,27 @@ impl App {
             .count()
     }
 
+    pub fn count_running(&self) -> usize {
+        self.agents
+            .iter()
+            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+            .count()
+    }
+
+    pub fn count_completed(&self) -> usize {
+        self.agents
+            .iter()
+            .filter(|a| matches!(a.status, AgentStatus::Completed))
+            .count()
+    }
+
+    pub fn count_failed(&self) -> usize {
+        self.agents
+            .iter()
+            .filter(|a| matches!(a.status, AgentStatus::Failed))
+            .count()
+    }
+
     pub fn on_tick(&mut self) {
         self.frame_count += 1;
         self.wave_offset = (self.wave_offset + 0.15) % (std::f64::consts::TAU * 100.0);
