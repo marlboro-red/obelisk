@@ -135,6 +135,7 @@ pub fn spawn_agent_pty(
         parser,
         prev_scrollback: 0,
         cumulative_scrollback: 0,
+        cumulative_newlines: 0,
     };
 
     Ok((handle, reader, child))

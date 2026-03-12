@@ -403,6 +403,9 @@ pub struct PtyHandle {
     pub prev_scrollback: usize,
     /// Cumulative scrollback lines that have ever scrolled off the visible area.
     pub cumulative_scrollback: usize,
+    /// Cumulative newline count from raw PTY data — platform-independent fallback
+    /// for line counting when vt100 scrollback doesn't work (e.g. Windows ConPTY).
+    pub cumulative_newlines: usize,
 }
 
 /// Parsed git diff data for an agent's worktree.
