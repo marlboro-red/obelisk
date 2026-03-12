@@ -1,5 +1,6 @@
 use crate::app::{self, App};
 use crate::types::*;
+use chrono::Utc;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -314,6 +315,40 @@ fn render_mini_event_log(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(List::new(items).block(block), area);
 }
 
+/// Returns (age_label, age_color) based on how old the issue is.
+/// Color bands: <1d neutral, 1-3d yellow, 3-7d orange, 7d+ red.
+fn age_badge(created_at: Option<&str>) -> (String, Color) {
+    let Some(ts) = created_at else {
+        return (String::new(), MUTED);
+    };
+
+    let Ok(created) = chrono::DateTime::parse_from_rfc3339(ts) else {
+        return (String::new(), MUTED);
+    };
+
+    let age = Utc::now().signed_duration_since(created);
+    let days = age.num_days();
+    let hours = age.num_hours();
+
+    let label = if days >= 1 {
+        format!("{}d", days)
+    } else {
+        format!("{}h", hours.max(0))
+    };
+
+    let color = if days >= 7 {
+        DANGER // red
+    } else if days >= 3 {
+        PRIMARY // orange
+    } else if days >= 1 {
+        WARN // yellow
+    } else {
+        MUTED // neutral
+    };
+
+    (label, color)
+}
+
 fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
     let is_focused = app.focus == Focus::ReadyQueue && app.active_view == View::Dashboard;
     let border_color = if is_focused { ACCENT } else { MUTED };
@@ -406,13 +441,23 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled("   ", Style::default())
             };
 
-            ListItem::new(Line::from(vec![
+            let (age_label, age_color) = age_badge(task.created_at.as_deref());
+
+            let mut spans = vec![
                 sel_indicator,
                 Span::styled(format!("P{} ", priority), p_style),
                 Span::styled(format!("[{}] ", type_str), Style::default().fg(INFO)),
-                Span::styled(format!("{}: ", task.id), Style::default().fg(SECONDARY)),
-                Span::styled(truncate_str(&task.title, 30), Style::default().fg(BRIGHT)),
-            ]))
+            ];
+            if !age_label.is_empty() {
+                spans.push(Span::styled(
+                    format!("{} ", age_label),
+                    Style::default().fg(age_color).add_modifier(Modifier::BOLD),
+                ));
+            }
+            spans.push(Span::styled(format!("{}: ", task.id), Style::default().fg(SECONDARY)));
+            spans.push(Span::styled(truncate_str(&task.title, 30), Style::default().fg(BRIGHT)));
+
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
