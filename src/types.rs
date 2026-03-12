@@ -236,6 +236,8 @@ pub struct AgentInstance {
     pub output_tokens: u64,
     /// Estimated cost in USD, computed from tokens x model pricing
     pub estimated_cost_usd: f64,
+    /// Running total of output lines (newlines received), survives PTY resizes
+    pub total_lines: usize,
 }
 
 #[derive(Debug, Clone)]

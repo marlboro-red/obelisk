@@ -1080,6 +1080,7 @@ impl App {
             output_tokens: 0,
             estimated_cost_usd: 0.0,
             template_name: template_name.clone(),
+            total_lines: 0,
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -1561,6 +1562,7 @@ impl App {
             output_tokens: 0,
             estimated_cost_usd: 0.0,
             template_name: template_name.clone(),
+            total_lines: 0,
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -1944,6 +1946,8 @@ impl App {
                     }
                 }
             }
+            // Track total output lines (newlines received) — survives PTY resizes
+            agent.total_lines += data.iter().filter(|&&b| b == b'\n').count();
         }
         // Recalculate cost for this agent after potential token update
         self.recalculate_agent_cost(agent_id);
@@ -2061,25 +2065,17 @@ impl App {
         }
     }
 
-    /// Count output lines for an agent. Uses the vt100 screen if a PTY is
-    /// active, otherwise falls back to the legacy line buffer.
+    /// Count total output lines for an agent. Uses the running `total_lines`
+    /// counter (incremented on each newline received), which survives PTY
+    /// resizes and is not capped by terminal dimensions.
     pub fn agent_line_count(&self, agent_id: usize) -> usize {
-        if let Some(state) = self.pty_states.get(&agent_id) {
-            let screen = state.parser.screen();
-            let (rows, _cols) = screen.size();
-            // Count non-empty rows from the bottom up to find the last used row
-            let mut last_used = 0;
-            for row in 0..rows {
-                let text = screen.contents_between(row, 0, row, screen.size().1);
-                if !text.trim().is_empty() {
-                    last_used = row as usize + 1;
-                }
+        if let Some(agent) = self.agents.iter().find(|a| a.id == agent_id) {
+            if agent.total_lines > 0 || self.pty_states.contains_key(&agent_id) {
+                agent.total_lines
+            } else {
+                // Legacy fallback for agents without PTY
+                agent.output.len()
             }
-            // Add scrollback: contents above the visible screen
-            let scrollback = screen.scrollback();
-            last_used + scrollback
-        } else if let Some(agent) = self.agents.iter().find(|a| a.id == agent_id) {
-            agent.output.len()
         } else {
             0
         }
