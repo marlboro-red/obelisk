@@ -72,6 +72,7 @@ pub fn render(f: &mut Frame, app: &App) {
         View::Dashboard => render_dashboard(f, chunks[2], app),
         View::AgentDetail => render_agent_detail(f, chunks[2], app),
         View::EventLog => render_event_log(f, chunks[2], app),
+        View::History => render_history(f, chunks[2], app),
     }
 
     render_status_gauges(f, chunks[3], app);
@@ -153,12 +154,14 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         Line::from(" 1:DASHBOARD "),
         Line::from(" 2:AGENTS "),
         Line::from(" 3:EVENT LOG "),
+        Line::from(" 4:HISTORY "),
     ];
 
     let selected = match app.active_view {
         View::Dashboard => 0,
         View::AgentDetail => 1,
         View::EventLog => 2,
+        View::History => 3,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -925,6 +928,140 @@ fn render_event_log(f: &mut Frame, area: Rect, app: &App) {
 }
 
 // ══════════════════════════════════════════════════════════
+//  HISTORY VIEW
+// ══════════════════════════════════════════════════════════
+
+fn render_history(f: &mut Frame, area: Rect, app: &App) {
+    let (total_sessions, all_completed, all_failed, avg_duration) = app.aggregate_stats();
+    let all_time_total = all_completed + all_failed;
+    let success_rate = if all_time_total > 0 {
+        all_completed as f64 / all_time_total as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    let v_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(7), // Aggregate stats panel
+            Constraint::Min(5),    // Session list
+        ])
+        .split(area);
+
+    // ── Aggregate stats ──
+    let stats_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(PRIMARY))
+        .title(Span::styled(
+            " ◆ ALL-TIME STATISTICS ",
+            Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    let stats_lines = vec![
+        Line::from(vec![
+            Span::styled("  SESSIONS        ", Style::default().fg(MUTED)),
+            Span::styled(format!("{}", total_sessions), Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  COMPLETED       ", Style::default().fg(MUTED)),
+            Span::styled(format!("{}", all_completed), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  FAILED          ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!("{}", all_failed),
+                if all_failed > 0 {
+                    Style::default().fg(DANGER).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(MUTED)
+                },
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  SUCCESS RATE    ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!("{:.1}%", success_rate),
+                if success_rate >= 80.0 {
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                } else if success_rate >= 50.0 {
+                    Style::default().fg(WARN).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(DANGER).add_modifier(Modifier::BOLD)
+                },
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  AVG DURATION    ", Style::default().fg(MUTED)),
+            Span::styled(
+                App::format_elapsed(avg_duration as u64).to_string(),
+                Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ];
+
+    f.render_widget(Paragraph::new(stats_lines).block(stats_block), v_chunks[0]);
+
+    // ── Session list ──
+    let sessions_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(SECONDARY))
+        .title(Span::styled(
+            format!(" ◆ SESSION LOG [{}] ", app.history_sessions.len()),
+            Style::default().fg(SECONDARY).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    if app.history_sessions.is_empty() {
+        let empty = Paragraph::new(Line::from(vec![
+            Span::styled("  No sessions recorded yet — ", Style::default().fg(MUTED)),
+            Span::styled("run some agents and quit to record your first session", Style::default().fg(WARN)),
+        ]))
+        .block(sessions_block);
+        f.render_widget(empty, v_chunks[1]);
+        return;
+    }
+
+    let inner = sessions_block.inner(v_chunks[1]);
+    let visible = inner.height as usize;
+
+    // Sessions are stored oldest-first; display newest-first
+    let sessions_newest_first: Vec<_> = app.history_sessions.iter().rev().collect();
+
+    let items: Vec<ListItem> = sessions_newest_first
+        .iter()
+        .skip(app.history_scroll)
+        .take(visible)
+        .map(|session| {
+            let total = session.total_completed + session.total_failed;
+            let rate = if total > 0 {
+                session.total_completed as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            let rate_color = if rate >= 80.0 { ACCENT } else if rate >= 50.0 { WARN } else { DANGER };
+            let short_id = if session.session_id.len() > 16 {
+                &session.session_id[..16]
+            } else {
+                &session.session_id
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("  {:16} ", short_id), Style::default().fg(SECONDARY)),
+                Span::styled(format!("started: {:<22} ", &session.started_at[..session.started_at.len().min(19)]), Style::default().fg(MUTED)),
+                Span::styled(format!("done:{:>4} ", session.total_completed), Style::default().fg(ACCENT)),
+                Span::styled(format!("fail:{:>3} ", session.total_failed), Style::default().fg(if session.total_failed > 0 { DANGER } else { MUTED })),
+                Span::styled(format!("{:>5.1}%", rate), Style::default().fg(rate_color).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("  {:>3} agents", session.agents.len()), Style::default().fg(MUTED)),
+            ]))
+        })
+        .collect();
+
+    f.render_widget(List::new(items).block(sessions_block), v_chunks[1]);
+}
+
+// ══════════════════════════════════════════════════════════
 //  STATUS GAUGES
 // ══════════════════════════════════════════════════════════
 
@@ -1191,7 +1328,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("x", "dismiss"),
             ("X", "dismiss all"),
             ("+/-", "slots"),
-            ("1-3", "view"),
+            ("1-4", "view"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -1210,13 +1347,21 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("←→", "prev/next"),
                 ("Esc", "back"),
                 ("k", "kill"),
+                ("1-4", "view"),
                 ("?", "help"),
                 ("q", "back"),
             ]
         },
         View::EventLog => vec![
             ("↑↓", "scroll"),
-            ("1-3", "view"),
+            ("1-4", "view"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        View::History => vec![
+            ("↑↓", "scroll"),
+            ("PgUp/Dn", "page"),
+            ("1-4", "view"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -1306,7 +1451,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("x", "Dismiss selected finished agent (focus: Agents)"));
     lines.push(key_line("X", "Dismiss ALL finished agents (focus: Agents)"));
     lines.push(key_line("+/-", "Increase/decrease max concurrent slots"));
-    lines.push(key_line("1-3", "Switch view"));
+    lines.push(key_line("1-4", "Switch view"));
     lines.push(key_line("q", "Quit"));
     lines.push(Line::from(""));
 
@@ -1334,7 +1479,15 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     // ── Event Log ──
     lines.push(section_header("EVENT LOG"));
     lines.push(key_line("↑↓", "Scroll log"));
-    lines.push(key_line("1-3", "Switch view"));
+    lines.push(key_line("1-4", "Switch view"));
+    lines.push(key_line("q", "Quit"));
+    lines.push(Line::from(""));
+
+    // ── History ──
+    lines.push(section_header("HISTORY"));
+    lines.push(key_line("↑↓", "Scroll session list"));
+    lines.push(key_line("PgUp/PgDn", "Scroll by 10 sessions"));
+    lines.push(key_line("1-4", "Switch view"));
     lines.push(key_line("q", "Quit"));
     lines.push(Line::from(""));
 

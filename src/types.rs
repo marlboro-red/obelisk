@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::io::Write;
 
@@ -160,11 +160,33 @@ impl LogCategory {
     }
 }
 
+/// One agent's outcome within a persisted session record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionAgent {
+    pub task_id: String,
+    pub runtime: String,
+    pub model: String,
+    pub elapsed_secs: u64,
+    pub status: String,
+}
+
+/// A single session record appended to `.beads/obelisk_sessions.jsonl` on exit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRecord {
+    pub session_id: String,
+    pub started_at: String,
+    pub ended_at: String,
+    pub total_completed: u32,
+    pub total_failed: u32,
+    pub agents: Vec<SessionAgent>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Dashboard,
     AgentDetail,
     EventLog,
+    History,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
