@@ -318,6 +318,12 @@ pub struct App {
     pub agent_timeout_secs: u64,
     /// Agent IDs that have already received an 80% warning (cleared on kill/complete)
     pub timeout_warned_ids: HashSet<usize>,
+
+    /// Layout rectangles from last render — used for mouse hit-testing
+    pub layout_areas: LayoutAreas,
+
+    /// Whether mouse support is enabled (toggle with 'M' on dashboard)
+    pub mouse_enabled: bool,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -488,6 +494,8 @@ impl App {
             cost_threshold: Some(5.0),
             agent_timeout_secs: 1800,
             timeout_warned_ids: HashSet::new(),
+            layout_areas: LayoutAreas::default(),
+            mouse_enabled: true,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {

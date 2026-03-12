@@ -45,7 +45,7 @@ fn primary_block(title: &str) -> Block<'_> {
 //  MAIN RENDER
 // ══════════════════════════════════════════════════════════
 
-pub fn render(f: &mut Frame, app: &App) {
+pub fn render(f: &mut Frame, app: &mut App) {
     let area = f.area();
     // Clear all cells first to prevent artifacts when switching views
     f.render_widget(Clear, area);
@@ -65,6 +65,14 @@ pub fn render(f: &mut Frame, app: &App) {
             Constraint::Length(1), // Keybindings
         ])
         .split(area);
+
+    // Store tab bar rect for mouse hit-testing
+    app.layout_areas.tab_bar = Some(chunks[1]);
+    // Clear per-view areas before rendering
+    app.layout_areas.ready_queue = None;
+    app.layout_areas.agent_panel = None;
+    app.layout_areas.agent_detail_output = None;
+    app.layout_areas.split_panes = [None; 4];
 
     render_title_bar(f, chunks[0], app);
     render_tab_bar(f, chunks[1], app);
@@ -185,7 +193,7 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
 //  DASHBOARD VIEW
 // ══════════════════════════════════════════════════════════
 
-fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
+fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     let v_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -226,6 +234,10 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(4), Constraint::Length(9)])
         .split(h_chunks[0]);
+
+    // Store areas for mouse hit-testing
+    app.layout_areas.ready_queue = Some(left_chunks[0]);
+    app.layout_areas.agent_panel = Some(h_chunks[1]);
 
     render_ready_queue(f, left_chunks[0], app);
     render_task_preview(f, left_chunks[1], app);
@@ -878,7 +890,7 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
 //  AGENT DETAIL VIEW
 // ══════════════════════════════════════════════════════════
 
-fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
+fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let agent = app
         .selected_agent_id
         .and_then(|id| app.agents.iter().find(|a| a.id == id));
@@ -984,6 +996,9 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
             .split(chunks[1])
     };
 
+    // Store output area for mouse scrolling
+    app.layout_areas.agent_detail_output = Some(output_chunks[0]);
+
     // Output area — use PseudoTerminal widget if PTY is active, else legacy text view
     let mode_label = if app.interactive_mode { "INTERACTIVE" } else { "OBSERVE" };
     let mode_color = if app.interactive_mode { ACCENT } else { MUTED };
@@ -1070,7 +1085,7 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
 //  SPLIT-PANE VIEW
 // ══════════════════════════════════════════════════════════
 
-fn render_split_pane(f: &mut Frame, area: Rect, app: &App) {
+fn render_split_pane(f: &mut Frame, area: Rect, app: &mut App) {
     let pane_count = app.split_pane_count(area.width);
 
     if pane_count <= 1 {
@@ -1103,6 +1118,11 @@ fn render_split_pane(f: &mut Frame, area: Rect, app: &App) {
             .split(rows[1]);
         vec![top[0], top[1], bot[0], bot[1]]
     };
+
+    // Store pane rects for mouse hit-testing
+    for (slot, &rect) in pane_rects.iter().enumerate() {
+        app.layout_areas.split_panes[slot] = Some(rect);
+    }
 
     for (slot, &pane_rect) in pane_rects.iter().enumerate() {
         let agent_id = app.split_pane_agents[slot];
@@ -2155,7 +2175,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
 fn render_help_overlay(f: &mut Frame, area: Rect) {
     // Center a popup of fixed size
     let popup_width = 64u16.min(area.width.saturating_sub(4));
-    let popup_height = 30u16.min(area.height.saturating_sub(4));
+    let popup_height = 34u16.min(area.height.saturating_sub(4));
     let popup = Rect {
         x: area.x + (area.width.saturating_sub(popup_width)) / 2,
         y: area.y + (area.height.saturating_sub(popup_height)) / 2,
@@ -2268,6 +2288,12 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("Enter", "Open Agent Detail for focused pane"));
     lines.push(key_line("g", "Pin/unpin agent to focused pane"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
+    lines.push(Line::from(""));
+    // ── Mouse ──
+    lines.push(section_header("MOUSE"));
+    lines.push(key_line("Click", "Select items in lists, switch tabs, focus panes"));
+    lines.push(key_line("Scroll", "Navigate lists and scroll output"));
+    lines.push(key_line("M", "Toggle mouse support on/off (Dashboard)"));
     lines.push(Line::from(""));
     // ── Global ──
     lines.push(section_header("GLOBAL"));

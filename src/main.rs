@@ -7,7 +7,7 @@ mod ui;
 
 use app::App;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind, MouseButton},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -111,7 +111,7 @@ async fn run_app(
     // Initial render before entering event loop
     let mut prev_view = app.active_view;
     let mut prev_term_size = terminal.size()?;
-    terminal.draw(|f| ui::render(f, &app))?;
+    terminal.draw(|f| ui::render(f, &mut app))?;
 
     // Main loop — only render on tick/input, batch data events between frames
     loop {
@@ -161,7 +161,7 @@ async fn run_app(
                 prev_term_size = term_size;
             }
 
-            terminal.draw(|f| ui::render(f, &app))?;
+            terminal.draw(|f| ui::render(f, &mut app))?;
         }
     }
 
@@ -183,6 +183,11 @@ fn process_event(
     match event {
         AppEvent::Terminal(Event::Key(key)) => {
             handle_key(app, key, tx);
+        }
+        AppEvent::Terminal(Event::Mouse(mouse)) => {
+            if app.mouse_enabled {
+                handle_mouse(app, mouse, tx);
+            }
         }
         AppEvent::Tick => {
             app.on_tick();
@@ -544,6 +549,16 @@ fn handle_key(
                 ),
             );
         }
+        KeyCode::Char('M') if app.active_view == View::Dashboard => {
+            app.mouse_enabled = !app.mouse_enabled;
+            app.log(
+                LogCategory::System,
+                format!(
+                    "Mouse support {}",
+                    if app.mouse_enabled { "ENABLED" } else { "DISABLED" }
+                ),
+            );
+        }
         // Sort mode cycling — 'f' on Dashboard with ReadyQueue focus
         KeyCode::Char('f')
             if app.active_view == View::Dashboard && app.focus == Focus::ReadyQueue =>
@@ -686,6 +701,206 @@ fn handle_key(
             }
         }
         _ => {}
+    }
+}
+
+fn handle_mouse(
+    app: &mut App,
+    mouse: event::MouseEvent,
+    _tx: &mpsc::UnboundedSender<AppEvent>,
+) {
+    // Don't process mouse events in interactive mode
+    if app.interactive_mode {
+        return;
+    }
+
+    let col = mouse.column;
+    let row = mouse.row;
+
+    // Helper: check if (col, row) is inside a Rect
+    let in_rect = |r: &ratatui::layout::Rect| -> bool {
+        col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+    };
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // ── Tab bar clicks ──
+            if let Some(tab_area) = app.layout_areas.tab_bar {
+                if in_rect(&tab_area) {
+                    // Tabs are laid out evenly with dividers
+                    // Tab titles: " 1:DASHBOARD ", " 2:AGENTS ", " 3:EVENT LOG ", " 4:HISTORY ", " 5:SPLIT "
+                    let rel_x = col.saturating_sub(tab_area.x) as usize;
+                    // Each tab is ~15 chars + 3 char divider; estimate positions
+                    // Use proportional split: divide width by 5
+                    let tab_width = tab_area.width as usize / 5;
+                    if tab_width > 0 {
+                        let tab_idx = (rel_x / tab_width).min(4);
+                        match tab_idx {
+                            0 => { app.interactive_mode = false; app.active_view = View::Dashboard; }
+                            1 => {
+                                if app.selected_agent_id.is_none() && !app.agents.is_empty() {
+                                    app.selected_agent_id = Some(app.agents[0].id);
+                                }
+                                app.active_view = View::AgentDetail;
+                            }
+                            2 => app.active_view = View::EventLog,
+                            3 => app.active_view = View::History,
+                            4 => {
+                                app.auto_fill_split_panes();
+                                app.active_view = View::SplitPane;
+                            }
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // ── Dashboard: click on ready queue items ──
+            if app.active_view == View::Dashboard {
+                if let Some(queue_area) = app.layout_areas.ready_queue {
+                    if in_rect(&queue_area) {
+                        app.focus = Focus::ReadyQueue;
+                        // Account for border (1 row top)
+                        let inner_y = row.saturating_sub(queue_area.y + 1) as usize;
+                        let filtered_len = app.filtered_tasks().len();
+                        if inner_y < filtered_len {
+                            app.task_list_state.select(Some(inner_y));
+                        }
+                        return;
+                    }
+                }
+
+                if let Some(agent_area) = app.layout_areas.agent_panel {
+                    if in_rect(&agent_area) {
+                        app.focus = Focus::AgentList;
+                        // Account for border (1 row top)
+                        let inner_y = row.saturating_sub(agent_area.y + 1) as usize;
+                        let visible_len = app.filtered_agents().len();
+                        if inner_y < visible_len {
+                            app.agent_list_state.select(Some(inner_y));
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // ── Dashboard: double-click to enter agent detail ──
+            // (single click selects, Enter enters — consistent with keyboard)
+
+            // ── Split pane: click to focus a pane ──
+            if app.active_view == View::SplitPane {
+                for (slot, pane_rect) in app.layout_areas.split_panes.iter().enumerate() {
+                    if let Some(rect) = pane_rect {
+                        if in_rect(rect) {
+                            app.split_pane_focus = slot;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Scroll wheel ──
+        MouseEventKind::ScrollUp => {
+            match app.active_view {
+                View::Dashboard => {
+                    if let Some(queue_area) = app.layout_areas.ready_queue {
+                        if in_rect(&queue_area) {
+                            app.focus = Focus::ReadyQueue;
+                            app.navigate_up();
+                            return;
+                        }
+                    }
+                    if let Some(agent_area) = app.layout_areas.agent_panel {
+                        if in_rect(&agent_area) {
+                            app.focus = Focus::AgentList;
+                            app.navigate_up();
+                            return;
+                        }
+                    }
+                }
+                View::AgentDetail => {
+                    if let Some(output_area) = app.layout_areas.agent_detail_output {
+                        if in_rect(&output_area) {
+                            // Scroll output up by 3 lines
+                            for _ in 0..3 {
+                                app.navigate_up();
+                            }
+                            return;
+                        }
+                    }
+                }
+                View::EventLog => {
+                    app.navigate_up();
+                }
+                View::History => {
+                    app.navigate_up();
+                }
+                View::SplitPane => {
+                    for (slot, pane_rect) in app.layout_areas.split_panes.iter().enumerate() {
+                        if let Some(rect) = pane_rect {
+                            if in_rect(rect) {
+                                app.split_pane_focus = slot;
+                                app.split_pane_scroll_up();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        MouseEventKind::ScrollDown => {
+            match app.active_view {
+                View::Dashboard => {
+                    if let Some(queue_area) = app.layout_areas.ready_queue {
+                        if in_rect(&queue_area) {
+                            app.focus = Focus::ReadyQueue;
+                            app.navigate_down();
+                            return;
+                        }
+                    }
+                    if let Some(agent_area) = app.layout_areas.agent_panel {
+                        if in_rect(&agent_area) {
+                            app.focus = Focus::AgentList;
+                            app.navigate_down();
+                            return;
+                        }
+                    }
+                }
+                View::AgentDetail => {
+                    if let Some(output_area) = app.layout_areas.agent_detail_output {
+                        if in_rect(&output_area) {
+                            // Scroll output down by 3 lines
+                            for _ in 0..3 {
+                                app.navigate_down();
+                            }
+                            return;
+                        }
+                    }
+                }
+                View::EventLog => {
+                    app.navigate_down();
+                }
+                View::History => {
+                    app.navigate_down();
+                }
+                View::SplitPane => {
+                    for (slot, pane_rect) in app.layout_areas.split_panes.iter().enumerate() {
+                        if let Some(rect) = pane_rect {
+                            if in_rect(rect) {
+                                app.split_pane_focus = slot;
+                                app.split_pane_scroll_down();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        _ => {} // Ignore other mouse events (drag, move, etc.)
     }
 }
 
