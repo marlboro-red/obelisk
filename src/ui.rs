@@ -814,7 +814,30 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
         MUTED
     };
 
-    let lines = vec![
+    let worktree_line = agent.worktree_path.as_deref().map(|wt_path| {
+        let (wt_label, wt_color) = if agent.worktree_cleaned {
+            ("(cleaned)", MUTED)
+        } else {
+            match agent.status {
+                AgentStatus::Starting | AgentStatus::Running => ("(active)", ACCENT),
+                _ => ("(pending)", WARN),
+            }
+        };
+        Line::from(vec![
+            Span::styled(" WRKTR   ", Style::default().fg(MUTED)),
+            Span::styled(format!(" {} ", wt_label), Style::default().fg(wt_color)),
+            Span::styled(
+                std::path::Path::new(wt_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(wt_path)
+                    .to_string(),
+                Style::default().fg(MUTED),
+            ),
+        ])
+    });
+
+    let mut lines = vec![
         Line::from(Span::styled(
             hex_row,
             Style::default().fg(Color::Rgb(30, 30, 50)),
@@ -853,6 +876,11 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
                 Style::default().fg(retry_color),
             ),
         ]),
+    ];
+    if let Some(wl) = worktree_line {
+        lines.push(wl);
+    }
+    lines.extend([
         Line::from(""),
         Line::from(vec![
             Span::styled(" ELAPSED ", Style::default().fg(MUTED)),
@@ -874,7 +902,7 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             hex_row,
             Style::default().fg(Color::Rgb(30, 30, 50)),
         )),
-    ];
+    ]);
 
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -1180,6 +1208,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
         View::Dashboard => vec![
             ("s", "spawn"),
             ("p", "poll"),
+            ("c", "cleanup"),
             ("r", "runtime"),
             ("m", "model"),
             ("a", "auto"),
@@ -1298,6 +1327,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("r", "Cycle runtime (Claude/Codex/Copilot)"));
     lines.push(key_line("m", "Cycle model for current runtime"));
     lines.push(key_line("a", "Toggle auto-spawn mode"));
+    lines.push(key_line("c", "Scan and clean up orphaned worktrees"));
     lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
     lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));
     lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));
@@ -1318,7 +1348,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("PgUp/PgDn", "Scroll output by page"));
     lines.push(key_line("Home/End", "Jump to top / re-engage auto-follow"));
     lines.push(key_line("←/→", "Previous / next agent"));
-    lines.push(key_line("k", "Kill (SIGTERM) current agent"));
+    lines.push(key_line("k", "Kill (SIGTERM) current agent + clean up worktree"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
     lines.push(Line::from(""));
 

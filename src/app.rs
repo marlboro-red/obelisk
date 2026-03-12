@@ -618,6 +618,8 @@ impl App {
             exit_code: None,
             pid: None,
             retry_count: 0,
+            worktree_path: Some(format!("../worktree-{}", task.id)),
+            worktree_cleaned: false,
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -837,8 +839,8 @@ impl App {
         }
     }
 
-    /// Kill agent process via SIGTERM. Returns unit number for logging.
-    pub fn kill_agent(&mut self, agent_id: usize) -> Option<usize> {
+    /// Kill agent process via SIGTERM. Returns (unit_number, worktree_path) for logging/cleanup.
+    pub fn kill_agent(&mut self, agent_id: usize) -> Option<(usize, Option<String>)> {
         let agent = self.agents.iter_mut().find(|a| a.id == agent_id)?;
         if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
             return None;
@@ -861,12 +863,13 @@ impl App {
         agent.status = AgentStatus::Failed;
         agent.elapsed_secs = agent.started_at.elapsed().as_secs();
         let unit = agent.unit_number;
+        let worktree = agent.worktree_path.clone();
         self.total_failed += 1;
         self.log(
             LogCategory::Alert,
             format!("AGENT-{:02} terminated (killed)", unit),
         );
-        Some(unit)
+        Some((unit, worktree))
     }
 
     /// Dismiss (remove) the currently selected agent if it is completed or failed.
@@ -993,6 +996,8 @@ impl App {
             exit_code: None,
             pid: None,
             retry_count: new_retry_count,
+            worktree_path: Some(format!("../worktree-{}", task.id)),
+            worktree_cleaned: false,
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -1018,6 +1023,62 @@ impl App {
             pty_rows: self.last_pty_size.0,
             pty_cols: self.last_pty_size.1,
         })
+    }
+
+    /// Returns the set of task IDs that have actively running agents.
+    /// Used to distinguish orphaned worktrees from in-use ones.
+    pub fn active_task_ids(&self) -> std::collections::HashSet<String> {
+        self.agents
+            .iter()
+            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+            .map(|a| a.task.id.clone())
+            .collect()
+    }
+
+    /// Log warnings about orphaned worktrees found on startup and show an alert.
+    pub fn on_worktree_orphans(&mut self, paths: Vec<String>) {
+        for path in &paths {
+            self.log(
+                LogCategory::Alert,
+                format!("Orphaned worktree: {}  (press 'c' on dashboard to clean up)", path),
+            );
+        }
+        if !paths.is_empty() {
+            self.alert_message = Some((
+                format!(
+                    "{} ORPHANED WORKTREE(S) — press 'c' to clean up",
+                    paths.len()
+                ),
+                self.frame_count + 100,
+            ));
+        }
+    }
+
+    /// Update agent state and log after a worktree cleanup operation.
+    pub fn on_worktree_cleaned(&mut self, cleaned: Vec<String>, failed: Vec<String>) {
+        for path in &cleaned {
+            // Mark the corresponding agent as cleaned up
+            if let Some(agent) = self
+                .agents
+                .iter_mut()
+                .find(|a| a.worktree_path.as_deref() == Some(path.as_str()))
+            {
+                agent.worktree_cleaned = true;
+            }
+            self.log(LogCategory::System, format!("Worktree cleaned: {}", path));
+        }
+        for path in &failed {
+            self.log(
+                LogCategory::Alert,
+                format!("Worktree cleanup failed: {}", path),
+            );
+        }
+        if !cleaned.is_empty() {
+            self.alert_message = Some((
+                format!("{} WORKTREE(S) CLEANED UP", cleaned.len()),
+                self.frame_count + 50,
+            ));
+        }
     }
 
     pub fn selected_model(&self) -> &'static str {
