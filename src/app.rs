@@ -203,6 +203,7 @@ pub struct App {
 
     pub total_completed: u32,
     pub total_failed: u32,
+    pub max_retries: u32,
 
     pub selected_agent_id: Option<usize>,
     /// None = auto-follow (pinned to bottom), Some(n) = manual scroll at line n from top
@@ -257,6 +258,7 @@ impl App {
             claimed_task_ids: HashSet::new(),
             total_completed: 0,
             total_failed: 0,
+            max_retries: 3,
             selected_agent_id: None,
             agent_output_scroll: None,
             prompt_template: AGENT_PROMPT_TEMPLATE.to_string(),
@@ -460,6 +462,7 @@ impl App {
             elapsed_secs: 0,
             exit_code: None,
             pid: None,
+            retry_count: 0,
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -719,6 +722,85 @@ impl App {
         for id in active_ids {
             self.kill_agent(id);
         }
+    }
+
+    /// Retry a failed agent: create a new AgentInstance for the same task.
+    /// Returns None if the agent is not failed, max retries exceeded, or at capacity.
+    pub fn retry_agent(&mut self, agent_id: usize) -> Option<SpawnRequest> {
+        let (task, runtime, model, retry_count) = {
+            let agent = self.agents.iter().find(|a| a.id == agent_id)?;
+            if agent.status != AgentStatus::Failed {
+                return None;
+            }
+            if agent.retry_count >= self.max_retries {
+                self.log(
+                    LogCategory::Alert,
+                    format!(
+                        "AGENT-{:02} reached max retries ({}) — not retrying",
+                        agent.unit_number, self.max_retries
+                    ),
+                );
+                return None;
+            }
+            (agent.task.clone(), agent.runtime, agent.model.clone(), agent.retry_count)
+        };
+
+        if self.active_agent_count() >= self.max_concurrent {
+            self.log(LogCategory::Alert, "Max concurrent agents reached — cannot retry".into());
+            return None;
+        }
+
+        let unit = self.next_unit;
+        self.next_unit += 1;
+        let new_retry_count = retry_count + 1;
+
+        let system_prompt = self
+            .prompt_template
+            .replace("{id}", &task.id)
+            .replace("{title}", &task.title);
+        let user_prompt = format!(
+            "Work on beads issue {}. Follow the workflow in the Beads Agent Prompt exactly.",
+            task.id
+        );
+
+        let new_agent = AgentInstance {
+            id: unit,
+            unit_number: unit,
+            task: task.clone(),
+            runtime,
+            model: model.clone(),
+            status: AgentStatus::Starting,
+            output: VecDeque::new(),
+            started_at: std::time::Instant::now(),
+            elapsed_secs: 0,
+            exit_code: None,
+            pid: None,
+            retry_count: new_retry_count,
+        };
+
+        // task ID remains in claimed_task_ids (the new agent owns it)
+        self.agents.push(new_agent);
+        self.selected_agent_id = Some(unit);
+        self.agent_output_scroll = None;
+
+        self.log(
+            LogCategory::Deploy,
+            format!(
+                "AGENT-{:02} RETRY #{} on {} [{}/{}]",
+                unit, new_retry_count, task.id, runtime.name(), model
+            ),
+        );
+
+        Some(SpawnRequest {
+            task,
+            runtime,
+            model,
+            agent_id: unit,
+            system_prompt,
+            user_prompt,
+            pty_rows: self.last_pty_size.0,
+            pty_cols: self.last_pty_size.1,
+        })
     }
 
     pub fn selected_model(&self) -> &'static str {

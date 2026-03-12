@@ -99,6 +99,7 @@ pub struct AgentInstance {
     pub elapsed_secs: u64,
     pub exit_code: Option<i32>,
     pub pid: Option<u32>,
+    pub retry_count: u32,
 }
 
 #[derive(Debug, Clone)]
