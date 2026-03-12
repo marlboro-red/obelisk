@@ -3,3 +3,6 @@
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Agent PTY logs (runtime artifacts)
+.obelisk/logs/

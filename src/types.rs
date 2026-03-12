@@ -234,6 +234,8 @@ pub struct AgentInstance {
     pub total_lines: usize,
     /// Raw PTY bytes captured for log export
     pub raw_pty_log: Vec<u8>,
+    /// Number of raw_pty_log bytes already flushed to disk
+    pub pty_log_flushed_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
