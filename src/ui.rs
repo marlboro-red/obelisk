@@ -75,18 +75,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ])
             .split(area);
 
-<<<<<<< HEAD
-    match app.active_view {
-        View::Dashboard => render_dashboard(f, chunks[2], app),
-        View::AgentDetail => render_agent_detail(f, chunks[2], app),
-        View::EventLog => render_event_log(f, chunks[2], app),
-        View::History => render_history(f, chunks[2], app),
-        View::SplitPane => render_split_pane(f, chunks[2], app),
-        View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
-    }
-=======
         app.layout_areas.tab_bar = Some(chunks[1]);
+<<<<<<< HEAD
 >>>>>>> 6d5ce78 (feat: compact mode for small terminals (obelisk-0ys))
+=======
+>>>>>>> a4ac150 (fix: resolve merge conflict in ui.rs, add WorktreeOverview to both view matches (obelisk-pz9))
 
         render_title_bar(f, chunks[0], app);
         render_tab_bar(f, chunks[1], app);
@@ -97,6 +90,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             View::EventLog => render_event_log(f, chunks[2], app),
             View::History => render_history(f, chunks[2], app),
             View::SplitPane => render_split_pane(f, chunks[2], app),
+            View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
         }
 
         render_info_bar_compact(f, chunks[3], app);
@@ -133,6 +127,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             View::EventLog => render_event_log(f, chunks[2], app),
             View::History => render_history(f, chunks[2], app),
             View::SplitPane => render_split_pane(f, chunks[2], app),
+            View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
         }
 
         render_status_gauges(f, chunks[3], app);
