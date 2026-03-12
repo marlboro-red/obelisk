@@ -1603,3 +1603,28 @@ time="2026-03-13T00:33:15+11:00" level=info msg=NewConnection DisableClientMulti
 time="2026-03-13T00:33:15+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=307
 time="2026-03-13T00:33:15+11:00" level=info msg=ConnectionClosed connectionID=306
 time="2026-03-13T00:33:15+11:00" level=info msg=ConnectionClosed connectionID=307
+time="2026-03-13T00:33:26+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=308
+time="2026-03-13T00:33:26+11:00" level=info msg=ConnectionClosed connectionID=308
+time="2026-03-13T00:33:26+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=309
+time="2026-03-13T00:33:26+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=310
+time="2026-03-13T00:33:26+11:00" level=info msg=ConnectionClosed connectionID=309
+time="2026-03-13T00:33:26+11:00" level=info msg=ConnectionClosed connectionID=310
+time="2026-03-13T00:33:31+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=311
+time="2026-03-13T00:33:31+11:00" level=info msg=ConnectionClosed connectionID=311
+time="2026-03-13T00:33:31+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=312
+time="2026-03-13T00:33:31+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=313
+time="2026-03-13T00:33:31+11:00" level=info msg=ConnectionClosed connectionID=312
+time="2026-03-13T00:33:31+11:00" level=info msg=ConnectionClosed connectionID=313
+time="2026-03-13T00:33:34+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=314
+time="2026-03-13T00:33:34+11:00" level=info msg=ConnectionClosed connectionID=314
+time="2026-03-13T00:33:34+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=315
+time="2026-03-13T00:33:34+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=316
+time="2026-03-13T00:33:34+11:00" level=info msg=ConnectionClosed connectionID=315
+time="2026-03-13T00:33:34+11:00" level=warning msg="error running query" connectTime="2026-03-13 00:33:34.510148 +1100 AEDT m=+746.117451543" connectionDb=bdOrc connectionID=316 error="nothing to commit" queryTime="2026-03-13 00:33:34.515758 +1100 AEDT m=+746.123062084"
+time="2026-03-13T00:33:34+11:00" level=info msg=ConnectionClosed connectionID=316
+time="2026-03-13T00:33:35+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=317
+time="2026-03-13T00:33:35+11:00" level=info msg=ConnectionClosed connectionID=317
+time="2026-03-13T00:33:35+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=318
+time="2026-03-13T00:33:35+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=319
+time="2026-03-13T00:33:35+11:00" level=info msg=ConnectionClosed connectionID=318
+time="2026-03-13T00:33:35+11:00" level=info msg=ConnectionClosed connectionID=319
