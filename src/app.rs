@@ -2608,4 +2608,50 @@ mod tests {
             "exit watcher must not overwrite Failed status"
         );
     }
+
+    #[test]
+    fn token_regex_parses_input_tokens() {
+        let text = "Input tokens: 1,234";
+        let caps = RE_INPUT_TOKENS.captures(text).unwrap();
+        assert_eq!(parse_token_count(caps.get(1).unwrap().as_str()), 1234);
+    }
+
+    #[test]
+    fn token_regex_parses_output_tokens() {
+        let text = "Output tokens: 56,789";
+        let caps = RE_OUTPUT_TOKENS.captures(text).unwrap();
+        assert_eq!(parse_token_count(caps.get(1).unwrap().as_str()), 56789);
+    }
+
+    #[test]
+    fn token_regex_case_insensitive() {
+        let text = "INPUT TOKENS: 100";
+        assert!(RE_INPUT_TOKENS.captures(text).is_some());
+        let text = "output_token: 200";
+        assert!(RE_OUTPUT_TOKENS.captures(text).is_some());
+    }
+
+    #[test]
+    fn token_regex_no_match_on_unrelated_text() {
+        assert!(RE_INPUT_TOKENS.captures("hello world").is_none());
+        assert!(RE_OUTPUT_TOKENS.captures("no tokens here").is_none());
+    }
+
+    #[test]
+    fn detect_phase_ordering() {
+        assert_eq!(detect_phase("bd close obelisk-1"), Some(AgentPhase::Closing));
+        assert_eq!(detect_phase("git merge --no-ff"), Some(AgentPhase::Merging));
+        assert_eq!(detect_phase("cargo test"), Some(AgentPhase::Verifying));
+        assert_eq!(detect_phase("bd update x --notes 'done'"), Some(AgentPhase::Implementing));
+        assert_eq!(detect_phase("git worktree add ../wt"), Some(AgentPhase::Worktree));
+        assert_eq!(detect_phase("bd update x --claim"), Some(AgentPhase::Claiming));
+        assert_eq!(detect_phase("just some text"), None);
+    }
+
+    #[test]
+    fn detect_phase_highest_wins() {
+        // Text containing both claim and close markers — close is checked first
+        let text = "--claim and bd close";
+        assert_eq!(detect_phase(text), Some(AgentPhase::Closing));
+    }
 }
