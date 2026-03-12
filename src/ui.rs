@@ -573,6 +573,17 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
 
             let line_count = app.agent_line_count(agent.id);
 
+            let phase_badge = if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+                Span::styled(
+                    format!(" [{}]", agent.phase.short()),
+                    Style::default()
+                        .fg(phase_color(agent.phase))
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled("", Style::default())
+            };
+
             ListItem::new(Line::from(vec![
                 sel_indicator,
                 Span::styled(agent.status.symbol(), status_style),
@@ -585,6 +596,7 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(format!("{} ", agent.task.id), Style::default().fg(BRIGHT)),
                 Span::styled(format!("[{}] ", agent.runtime.name()), runtime_style),
                 Span::styled(status_text.to_string(), status_style),
+                phase_badge,
                 Span::styled(
                     format!("  ({} lines)", line_count),
                     Style::default().fg(MUTED),
@@ -646,7 +658,7 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     // Agent header
-    let header_line = Line::from(vec![
+    let mut header_spans = vec![
         Span::styled(
             format!("  AGENT-{:02}", agent.unit_number),
             Style::default()
@@ -675,7 +687,12 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
             App::format_elapsed(agent.elapsed_secs),
             Style::default().fg(WARN),
         ),
-    ]);
+    ];
+    if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+        header_spans.push(Span::styled("  //  ", Style::default().fg(MUTED)));
+        header_spans.extend(render_phase_indicator(agent.phase));
+    }
+    let header_line = Line::from(header_spans);
 
     let header_block = Block::default()
         .borders(Borders::ALL)
@@ -851,6 +868,15 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             Span::styled(
                 format!(" {}/{}", agent.retry_count, app.max_retries),
                 Style::default().fg(retry_color),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(" PHASE   ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!(" {} {}", agent.phase.short(), agent.phase.label()),
+                Style::default()
+                    .fg(phase_color(agent.phase))
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(""),
@@ -1531,6 +1557,55 @@ fn log_category_color(cat: LogCategory) -> Color {
         LogCategory::Alert => DANGER,
         LogCategory::Poll => SECONDARY,
     }
+}
+
+fn phase_color(phase: AgentPhase) -> Color {
+    match phase {
+        AgentPhase::Detecting | AgentPhase::Claiming | AgentPhase::Worktree => INFO,
+        AgentPhase::Implementing => WARN,
+        AgentPhase::Verifying | AgentPhase::Merging | AgentPhase::Closing | AgentPhase::Done => {
+            ACCENT
+        }
+    }
+}
+
+/// Render a compact phase step indicator: P0·P1·P2·[P3]·P4·P5·P6·P7
+fn render_phase_indicator(phase: AgentPhase) -> Vec<Span<'static>> {
+    let all = [
+        AgentPhase::Detecting,
+        AgentPhase::Claiming,
+        AgentPhase::Worktree,
+        AgentPhase::Implementing,
+        AgentPhase::Verifying,
+        AgentPhase::Merging,
+        AgentPhase::Closing,
+        AgentPhase::Done,
+    ];
+    let mut spans = Vec::new();
+    for (i, p) in all.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("·", Style::default().fg(MUTED)));
+        }
+        if *p == phase {
+            spans.push(Span::styled(
+                format!("[{}]", p.short()),
+                Style::default()
+                    .fg(phase_color(phase))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else if *p < phase {
+            spans.push(Span::styled(
+                p.short().to_string(),
+                Style::default().fg(MUTED),
+            ));
+        } else {
+            spans.push(Span::styled(
+                p.short().to_string(),
+                Style::default().fg(Color::Rgb(40, 40, 55)),
+            ));
+        }
+    }
+    spans
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
