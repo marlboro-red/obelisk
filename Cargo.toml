@@ -18,3 +18,6 @@ toml = "0.8"
 notify-rust = "4"
 regex = "1"
 arboard = "3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"

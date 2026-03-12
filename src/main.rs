@@ -15,12 +15,30 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 use types::{AppEvent, LogCategory, View, Focus};
 
 const TICK_RATE_MS: u64 = 100;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up structured logging to file — TUI owns stdout/stderr so we log to
+    // .beads/logs/obelisk.log (non-blocking, auto-flushed on drop).
+    let log_dir = std::path::Path::new(".beads").join("logs");
+    std::fs::create_dir_all(&log_dir).ok();
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "obelisk.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_target(false)
+        .init();
+
+    info!("obelisk starting");
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -38,8 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     terminal.show_cursor()?;
 
     if let Err(e) = result {
+        error!(%e, "fatal error");
         eprintln!("Error: {}", e);
     }
+
+    info!("obelisk shutdown");
 
     Ok(())
 }
@@ -167,6 +188,12 @@ async fn run_app(
     }
 
     // Save settings and kill all running agent processes before exiting
+    info!(
+        completed = app.total_completed,
+        failed = app.total_failed,
+        agents = app.agents.len(),
+        "shutting down"
+    );
     app.save_config();
     app.kill_all_agents();
 
@@ -248,9 +275,11 @@ fn process_event(
             }
         }
         AppEvent::PollResult(tasks) => {
+            debug!(count = tasks.len(), "poll result");
             app.on_poll_result(tasks);
         }
         AppEvent::PollFailed(error) => {
+            warn!(%error, "poll failed");
             app.on_poll_failed(error);
         }
         AppEvent::AgentOutput { agent_id, line } => {
@@ -260,6 +289,7 @@ fn process_event(
             agent_id,
             exit_code,
         } => {
+            info!(agent_id, ?exit_code, "agent exited");
             app.on_agent_exited(agent_id, exit_code);
         }
         AppEvent::AgentPid { agent_id, pid } => {
@@ -272,6 +302,7 @@ fn process_event(
             app.on_agent_pty_ready(agent_id, handle);
         }
         AppEvent::WorktreeOrphans(paths) => {
+            warn!(count = paths.len(), "orphaned worktrees found");
             app.on_worktree_orphans(paths);
         }
         AppEvent::WorktreeCleaned { cleaned, failed } => {
@@ -287,6 +318,7 @@ fn process_event(
             app.on_dep_graph_result(nodes);
         }
         AppEvent::DepGraphFailed(error) => {
+            warn!(%error, "dep graph poll failed");
             app.on_dep_graph_failed(error);
         }
         AppEvent::Terminal(Event::Resize(_, _)) => {
@@ -1116,6 +1148,11 @@ async fn spawn_agent_process(
     let pty_rows = req.pty_rows;
     let pty_cols = req.pty_cols;
 
+    let task_id = task.id.clone();
+    let runtime_name = runtime.to_string();
+    let model_name = model.clone();
+    info!(agent_id, task_id, runtime = %runtime_name, model = %model_name, "spawning agent");
+
     // PTY creation is blocking — run in spawn_blocking
     let spawn_result = tokio::task::spawn_blocking(move || {
         runtime::spawn_agent_pty(runtime, &model, &task, &system_prompt, &user_prompt, pty_rows, pty_cols)
@@ -1125,6 +1162,7 @@ async fn spawn_agent_process(
     let (handle, reader, child) = match spawn_result {
         Ok(Ok(tuple)) => tuple,
         Ok(Err(e)) => {
+            error!(agent_id, %e, "PTY spawn failed");
             let _ = tx.send(AppEvent::AgentOutput {
                 agent_id,
                 line: format!("[ERROR] PTY spawn failed: {}", e),
@@ -1136,6 +1174,7 @@ async fn spawn_agent_process(
             return;
         }
         Err(e) => {
+            error!(agent_id, %e, "spawn_blocking panicked");
             let _ = tx.send(AppEvent::AgentOutput {
                 agent_id,
                 line: format!("[ERROR] spawn_blocking panicked: {}", e),
