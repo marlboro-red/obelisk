@@ -427,6 +427,20 @@ fn handle_key(
         return;
     }
 
+    // ── Quit confirmation dialog: intercept y/n/Esc ──
+    if app.confirm_quit {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                app.should_quit = true;
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                app.confirm_quit = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // ── Mark-complete confirmation dialog: intercept y/n/Esc ──
     if app.confirm_complete_agent_id.is_some() {
         match key.code {
@@ -517,6 +531,8 @@ fn handle_key(
                 app.search_query.clear();
                 app.search_matches.clear();
                 app.active_view = View::Dashboard;
+            } else if app.active_agent_count() > 0 {
+                app.confirm_quit = true;
             } else {
                 app.should_quit = true;
             }
