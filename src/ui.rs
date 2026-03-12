@@ -3383,3 +3383,84 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         format!("{}…", truncated)
     }
 }
+
+// ══════════════════════════════════════════════════════════
+//  TESTS — Compact-mode breakpoints (obelisk-0ys)
+// ══════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::compute_pty_area;
+
+    /// 80x24 — the classic "small terminal" target.
+    /// Compact rows (<40) → chrome=6, no sidebar (<120 cols).
+    #[test]
+    fn pty_area_80x24() {
+        let (rows, cols) = compute_pty_area(80, 24);
+        // content=18, output=15, inner=13×78
+        assert_eq!(rows, 13);
+        assert_eq!(cols, 78);
+    }
+
+    /// 120x40 — just above compact thresholds on both axes.
+    /// Normal chrome (11), sidebar present (>=120 cols, 28 cols wide).
+    #[test]
+    fn pty_area_120x40() {
+        let (rows, cols) = compute_pty_area(120, 40);
+        // content=29, output=26, inner=24×(120-28-2)=90
+        assert_eq!(rows, 24);
+        assert_eq!(cols, 90);
+    }
+
+    /// 100x30 — compact rows, no sidebar.
+    #[test]
+    fn pty_area_100x30() {
+        let (rows, cols) = compute_pty_area(100, 30);
+        // compact chrome=6, content=24, output=21, inner=19×98
+        assert_eq!(rows, 19);
+        assert_eq!(cols, 98);
+    }
+
+    /// 200x50 — large terminal: normal chrome, sidebar present.
+    #[test]
+    fn pty_area_large_terminal() {
+        let (rows, cols) = compute_pty_area(200, 50);
+        // chrome=11, content=39, output=36, inner=34×(200-28-2)=170
+        assert_eq!(rows, 34);
+        assert_eq!(cols, 170);
+    }
+
+    /// Very small terminal — saturating_sub prevents underflow.
+    #[test]
+    fn pty_area_tiny_terminal() {
+        let (rows, cols) = compute_pty_area(20, 10);
+        // compact chrome=6, content=4, output=1, inner=0×18
+        // (saturating_sub keeps it at 0, not negative)
+        assert!(rows <= 1, "rows should be ≤1 at 10 rows high, got {rows}");
+        assert!(cols > 0, "cols should be positive at 20 cols wide, got {cols}");
+    }
+
+    /// At exactly 119 cols, sidebar should be hidden (< 120 threshold).
+    #[test]
+    fn pty_area_sidebar_threshold() {
+        let (_, cols_119) = compute_pty_area(119, 50);
+        let (_, cols_120) = compute_pty_area(120, 50);
+        // 119: no sidebar → inner = 119-2 = 117
+        // 120: sidebar → inner = 120-28-2 = 90
+        assert_eq!(cols_119, 117);
+        assert_eq!(cols_120, 90);
+    }
+
+    /// At exactly 39 rows, compact mode; at 40, normal mode.
+    #[test]
+    fn pty_area_compact_row_threshold() {
+        let (rows_39, _) = compute_pty_area(80, 39);
+        let (rows_40, _) = compute_pty_area(80, 40);
+        // 39: compact chrome=6, content=33, output=30, inner=28
+        // 40: normal chrome=11, content=29, output=26, inner=24
+        assert_eq!(rows_39, 28);
+        assert_eq!(rows_40, 24);
+        // Compact mode gives MORE content rows because chrome is smaller
+        assert!(rows_39 > rows_40);
+    }
+}
