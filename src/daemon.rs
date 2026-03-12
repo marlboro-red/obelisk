@@ -263,6 +263,9 @@ fn process_daemon_event(
             warn!(%error, "dep graph poll failed");
             app.on_dep_graph_failed(error);
         }
+        AppEvent::BlockedPollResult(tasks) => {
+            app.on_blocked_poll_result(tasks);
+        }
         AppEvent::Terminal(_) => {} // no TUI in daemon mode
     }
 }

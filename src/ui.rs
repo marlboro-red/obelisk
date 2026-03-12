@@ -390,17 +390,47 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(v_chunks[0]);
 
-    // Left column: queue list on top, task detail preview on bottom (hidden when compact rows)
+    // Left column: queue list on top, blocked panel, task detail preview on bottom
     if compact_rows {
-        // No task preview — give full height to ready queue
-        render_ready_queue(f, h_chunks[0], app);
+        if app.blocked_tasks.is_empty() {
+            app.layout_areas.ready_queue = Some(h_chunks[0]);
+            app.layout_areas.blocked_queue = None;
+            render_ready_queue(f, h_chunks[0], app);
+        } else {
+            let left_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(4), Constraint::Length(6)])
+                .split(h_chunks[0]);
+            app.layout_areas.ready_queue = Some(left_chunks[0]);
+            render_ready_queue(f, left_chunks[0], app);
+            app.layout_areas.blocked_queue = Some(left_chunks[1]);
+            render_blocked_queue(f, left_chunks[1], app);
+        }
     } else {
-        let left_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(4), Constraint::Length(9)])
-            .split(h_chunks[0]);
-        render_ready_queue(f, left_chunks[0], app);
-        render_task_preview(f, left_chunks[1], app);
+        if app.blocked_tasks.is_empty() {
+            let left_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(4), Constraint::Length(9)])
+                .split(h_chunks[0]);
+            app.layout_areas.ready_queue = Some(left_chunks[0]);
+            app.layout_areas.blocked_queue = None;
+            render_ready_queue(f, left_chunks[0], app);
+            render_task_preview(f, left_chunks[1], app);
+        } else {
+            let left_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(4),
+                    Constraint::Length(6),
+                    Constraint::Length(9),
+                ])
+                .split(h_chunks[0]);
+            app.layout_areas.ready_queue = Some(left_chunks[0]);
+            render_ready_queue(f, left_chunks[0], app);
+            app.layout_areas.blocked_queue = Some(left_chunks[1]);
+            render_blocked_queue(f, left_chunks[1], app);
+            render_task_preview(f, left_chunks[2], app);
+        }
     }
     render_agent_panel(f, h_chunks[1], app);
 
@@ -806,6 +836,85 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
     );
 
     f.render_stateful_widget(list, area, &mut app.task_list_state.clone());
+}
+
+fn render_blocked_queue(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let is_focused = app.focus == Focus::BlockedQueue && app.active_view == View::Dashboard;
+    let border_color = if is_focused { t.accent } else { t.muted };
+
+    let count = app.blocked_tasks.len();
+    let title = format!("BLOCKED [{}]", count);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(
+            format!(" {} ", title),
+            Style::default()
+                .fg(if is_focused { t.danger } else { t.muted })
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(t.panel_bg));
+
+    if app.blocked_tasks.is_empty() {
+        let empty = Paragraph::new(Line::from(Span::styled(
+            "  No blocked issues",
+            Style::default().fg(t.muted),
+        )))
+        .block(block);
+        f.render_widget(empty, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .blocked_tasks
+        .iter()
+        .enumerate()
+        .map(|(i, bt)| {
+            let task = &bt.task;
+            let priority = task.priority.unwrap_or(3);
+            let p_style = match priority {
+                0 => Style::default().fg(t.danger).add_modifier(Modifier::BOLD),
+                1 => Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
+                2 => Style::default().fg(t.bright),
+                _ => Style::default().fg(t.muted),
+            };
+
+            let sel_indicator = if Some(i) == app.blocked_list_state.selected() && is_focused {
+                Span::styled(
+                    " \u{25b8} ",
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled("   ", Style::default())
+            };
+
+            let dep_badge = format!("({} dep{}) ", bt.remaining_deps, if bt.remaining_deps == 1 { "" } else { "s" });
+
+            let spans = vec![
+                sel_indicator,
+                Span::styled(format!("P{} ", priority), p_style),
+                Span::styled(
+                    dep_badge,
+                    Style::default().fg(t.danger),
+                ),
+                Span::styled(format!("{}: ", task.id), Style::default().fg(t.secondary)),
+                Span::styled(truncate_str(&task.title, 26), Style::default().fg(t.muted)),
+            ];
+
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(Color::Rgb(25, 25, 35))
+            .add_modifier(Modifier::BOLD),
+    );
+
+    f.render_stateful_widget(list, area, &mut app.blocked_list_state.clone());
 }
 
 fn render_task_preview(f: &mut Frame, area: Rect, app: &App) {

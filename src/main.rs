@@ -10,7 +10,7 @@ mod ui;
 
 use app::App;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -170,6 +170,7 @@ async fn run_app(
 
     // Poller
     let tx_poll = tx.clone();
+    let tx_blocked_poll = tx.clone();
     let poll_interval = app.poll_interval_secs;
     tokio::spawn(async move {
         loop {
@@ -182,6 +183,10 @@ async fn run_app(
                 Err(e) => {
                     let _ = tx_poll.send(AppEvent::PollFailed(e.to_string()));
                 }
+            }
+            // Poll blocked issues on the same cycle
+            if let Ok(blocked) = runtime::poll_blocked().await {
+                let _ = tx_blocked_poll.send(AppEvent::BlockedPollResult(blocked));
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval)).await;
         }
@@ -383,6 +388,9 @@ fn process_event(
         AppEvent::DepGraphFailed(error) => {
             warn!(%error, "dep graph poll failed");
             app.on_dep_graph_failed(error);
+        }
+        AppEvent::BlockedPollResult(tasks) => {
+            app.on_blocked_poll_result(tasks);
         }
         AppEvent::Terminal(Event::Resize(_, _)) => {
             // PTY resize is handled in the render loop via sync_pty_sizes,
@@ -748,6 +756,7 @@ fn handle_key(
             app.log(LogCategory::Poll, "Manual scan initiated".into());
             app.poll_countdown = 0.0;
             let tx = tx.clone();
+            let tx_blocked = tx.clone();
             tokio::spawn(async move {
                 match runtime::poll_ready().await {
                     Ok(tasks) => {
@@ -756,6 +765,9 @@ fn handle_key(
                     Err(e) => {
                         let _ = tx.send(AppEvent::PollFailed(e.to_string()));
                     }
+                }
+                if let Ok(blocked) = runtime::poll_blocked().await {
+                    let _ = tx_blocked.send(AppEvent::BlockedPollResult(blocked));
                 }
             });
         }
@@ -978,6 +990,243 @@ fn handle_key(
             }
         }
         _ => {}
+    }
+}
+
+fn handle_mouse(
+    app: &mut App,
+    mouse: event::MouseEvent,
+    _tx: &mpsc::UnboundedSender<AppEvent>,
+) {
+    // Don't process mouse events in interactive mode
+    if app.interactive_mode {
+        return;
+    }
+
+    let col = mouse.column;
+    let row = mouse.row;
+
+    // Helper: check if (col, row) is inside a Rect
+    let in_rect = |r: &ratatui::layout::Rect| -> bool {
+        col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+    };
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // ── Tab bar clicks ──
+            if let Some(tab_area) = app.layout_areas.tab_bar {
+                if in_rect(&tab_area) {
+                    // Tabs are laid out evenly with dividers
+                    // Tab titles: " 1:DASHBOARD ", " 2:AGENTS ", " 3:EVENT LOG ", " 4:HISTORY ", " 5:SPLIT ", " 6:WORKTREES ", " 7:DEPS "
+                    let rel_x = col.saturating_sub(tab_area.x) as usize;
+                    // Each tab is ~15 chars + 3 char divider; estimate positions
+                    // Use proportional split: divide width by 7
+                    let tab_width = tab_area.width as usize / 7;
+                    if tab_width > 0 {
+                        let tab_idx = (rel_x / tab_width).min(6);
+                        match tab_idx {
+                            0 => { app.interactive_mode = false; app.active_view = View::Dashboard; }
+                            1 => {
+                                if app.selected_agent_id.is_none() && !app.agents.is_empty() {
+                                    app.selected_agent_id = Some(app.agents[0].id);
+                                }
+                                app.active_view = View::AgentDetail;
+                            }
+                            2 => {
+                                app.active_view = View::EventLog;
+                                app.event_log_seen_count = app.event_log.len();
+                            }
+                            3 => app.active_view = View::History,
+                            4 => {
+                                app.auto_fill_split_panes();
+                                app.active_view = View::SplitPane;
+                            }
+                            5 => {
+                                app.active_view = View::WorktreeOverview;
+                                app.worktree_last_scan_frame = 0;
+                            }
+                            6 => {
+                                app.active_view = View::DepGraph;
+                                app.dep_graph_last_poll_frame = 0;
+                            }
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // ── Dashboard: click on ready queue items ──
+            if app.active_view == View::Dashboard {
+                if let Some(queue_area) = app.layout_areas.ready_queue {
+                    if in_rect(&queue_area) {
+                        app.focus = Focus::ReadyQueue;
+                        // Account for border (1 row top)
+                        let inner_y = row.saturating_sub(queue_area.y + 1) as usize;
+                        let filtered_len = app.filtered_tasks().len();
+                        if inner_y < filtered_len {
+                            app.task_list_state.select(Some(inner_y));
+                        }
+                        return;
+                    }
+                }
+
+                if let Some(blocked_area) = app.layout_areas.blocked_queue {
+                    if in_rect(&blocked_area) {
+                        app.focus = Focus::BlockedQueue;
+                        let inner_y = row.saturating_sub(blocked_area.y + 1) as usize;
+                        let blocked_len = app.blocked_tasks.len();
+                        if inner_y < blocked_len {
+                            app.blocked_list_state.select(Some(inner_y));
+                        }
+                        return;
+                    }
+                }
+
+                if let Some(agent_area) = app.layout_areas.agent_panel {
+                    if in_rect(&agent_area) {
+                        app.focus = Focus::AgentList;
+                        // Account for border (1 row top)
+                        let inner_y = row.saturating_sub(agent_area.y + 1) as usize;
+                        let visible_len = app.filtered_agents().len();
+                        if inner_y < visible_len {
+                            app.agent_list_state.select(Some(inner_y));
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // ── Dashboard: double-click to enter agent detail ──
+            // (single click selects, Enter enters — consistent with keyboard)
+
+            // ── Split pane: click to focus a pane ──
+            if app.active_view == View::SplitPane {
+                for (slot, pane_rect) in app.layout_areas.split_panes.iter().enumerate() {
+                    if let Some(rect) = pane_rect {
+                        if in_rect(rect) {
+                            app.split_pane_focus = slot;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Scroll wheel ──
+        MouseEventKind::ScrollUp => {
+            match app.active_view {
+                View::Dashboard => {
+                    if let Some(queue_area) = app.layout_areas.ready_queue {
+                        if in_rect(&queue_area) {
+                            app.focus = Focus::ReadyQueue;
+                            app.navigate_up();
+                            return;
+                        }
+                    }
+                    if let Some(blocked_area) = app.layout_areas.blocked_queue {
+                        if in_rect(&blocked_area) {
+                            app.focus = Focus::BlockedQueue;
+                            app.navigate_up();
+                            return;
+                        }
+                    }
+                    if let Some(agent_area) = app.layout_areas.agent_panel {
+                        if in_rect(&agent_area) {
+                            app.focus = Focus::AgentList;
+                            app.navigate_up();
+                        }
+                    }
+                }
+                View::AgentDetail => {
+                    if let Some(output_area) = app.layout_areas.agent_detail_output {
+                        if in_rect(&output_area) {
+                            // Scroll output up by 3 lines
+                            for _ in 0..3 {
+                                app.navigate_up();
+                            }
+                        }
+                    }
+                }
+                View::EventLog => {
+                    app.navigate_up();
+                }
+                View::History => {
+                    app.navigate_up();
+                }
+                View::SplitPane => {
+                    for (slot, pane_rect) in app.layout_areas.split_panes.iter().enumerate() {
+                        if let Some(rect) = pane_rect {
+                            if in_rect(rect) {
+                                app.split_pane_focus = slot;
+                                app.split_pane_scroll_up();
+                                return;
+                            }
+                        }
+                    }
+                }
+                View::WorktreeOverview => { app.navigate_up(); }
+                View::DepGraph => { app.navigate_up(); }
+            }
+        }
+
+        MouseEventKind::ScrollDown => {
+            match app.active_view {
+                View::Dashboard => {
+                    if let Some(queue_area) = app.layout_areas.ready_queue {
+                        if in_rect(&queue_area) {
+                            app.focus = Focus::ReadyQueue;
+                            app.navigate_down();
+                            return;
+                        }
+                    }
+                    if let Some(blocked_area) = app.layout_areas.blocked_queue {
+                        if in_rect(&blocked_area) {
+                            app.focus = Focus::BlockedQueue;
+                            app.navigate_down();
+                            return;
+                        }
+                    }
+                    if let Some(agent_area) = app.layout_areas.agent_panel {
+                        if in_rect(&agent_area) {
+                            app.focus = Focus::AgentList;
+                            app.navigate_down();
+                        }
+                    }
+                }
+                View::AgentDetail => {
+                    if let Some(output_area) = app.layout_areas.agent_detail_output {
+                        if in_rect(&output_area) {
+                            // Scroll output down by 3 lines
+                            for _ in 0..3 {
+                                app.navigate_down();
+                            }
+                        }
+                    }
+                }
+                View::EventLog => {
+                    app.navigate_down();
+                }
+                View::History => {
+                    app.navigate_down();
+                }
+                View::SplitPane => {
+                    for (slot, pane_rect) in app.layout_areas.split_panes.iter().enumerate() {
+                        if let Some(rect) = pane_rect {
+                            if in_rect(rect) {
+                                app.split_pane_focus = slot;
+                                app.split_pane_scroll_down();
+                                return;
+                            }
+                        }
+                    }
+                }
+                View::WorktreeOverview => { app.navigate_down(); }
+                View::DepGraph => { app.navigate_down(); }
+            }
+        }
+
+        _ => {} // Ignore other mouse events (drag, move, etc.)
     }
 }
 
