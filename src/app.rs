@@ -869,6 +869,65 @@ impl App {
         Some(unit)
     }
 
+    /// Dismiss (remove) the currently selected agent if it is completed or failed.
+    /// Returns Some(message) describing the outcome; None if no agent was selected.
+    pub fn dismiss_selected_agent(&mut self) -> Option<String> {
+        let sel = self.agent_list_state.selected()?;
+        if sel >= self.agents.len() {
+            return None;
+        }
+        let agent = &self.agents[sel];
+        if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+            return Some(format!(
+                "AGENT-{:02} is active — cannot dismiss",
+                agent.unit_number
+            ));
+        }
+        let agent_id = agent.id;
+        let unit = agent.unit_number;
+        self.agents.remove(sel);
+        self.pty_states.remove(&agent_id);
+        if self.selected_agent_id == Some(agent_id) {
+            self.selected_agent_id = None;
+        }
+        if self.agents.is_empty() {
+            self.agent_list_state.select(None);
+        } else if sel >= self.agents.len() {
+            self.agent_list_state.select(Some(self.agents.len() - 1));
+        }
+        Some(format!("AGENT-{:02} dismissed", unit))
+    }
+
+    /// Dismiss all completed and failed agents at once. Returns the count removed.
+    pub fn dismiss_all_finished(&mut self) -> usize {
+        let finished_ids: Vec<usize> = self
+            .agents
+            .iter()
+            .filter(|a| matches!(a.status, AgentStatus::Completed | AgentStatus::Failed))
+            .map(|a| a.id)
+            .collect();
+        let count = finished_ids.len();
+        for id in &finished_ids {
+            self.pty_states.remove(id);
+        }
+        if self
+            .selected_agent_id
+            .map(|id| finished_ids.contains(&id))
+            .unwrap_or(false)
+        {
+            self.selected_agent_id = None;
+        }
+        self.agents.retain(|a| !finished_ids.contains(&a.id));
+        if self.agents.is_empty() {
+            self.agent_list_state.select(None);
+        } else if let Some(sel) = self.agent_list_state.selected() {
+            if sel >= self.agents.len() {
+                self.agent_list_state.select(Some(self.agents.len() - 1));
+            }
+        }
+        count
+    }
+
     /// Kill all running agent processes (called on shutdown).
     pub fn kill_all_agents(&mut self) {
         let active_ids: Vec<usize> = self
