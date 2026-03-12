@@ -333,6 +333,9 @@ pub struct App {
     // Velocity sparkline — configurable window (number of data points)
     pub velocity_window_size: usize,
 
+    // Kill confirmation dialog — Some(agent_id) means dialog is visible
+    pub confirm_kill_agent_id: Option<usize>,
+
     // Worktree overview panel state
     pub worktree_entries: Vec<WorktreeEntry>,
     pub worktree_list_state: ListState,
@@ -518,6 +521,7 @@ impl App {
             jump_active: false,
             jump_query: String::new(),
             velocity_window_size,
+            confirm_kill_agent_id: None,
             worktree_entries: Vec::new(),
             worktree_list_state: ListState::default(),
             worktree_sort_mode: WorktreeSortMode::Age,

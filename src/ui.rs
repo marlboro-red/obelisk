@@ -76,10 +76,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .split(area);
 
         app.layout_areas.tab_bar = Some(chunks[1]);
-<<<<<<< HEAD
->>>>>>> 6d5ce78 (feat: compact mode for small terminals (obelisk-0ys))
-=======
->>>>>>> a4ac150 (fix: resolve merge conflict in ui.rs, add WorktreeOverview to both view matches (obelisk-pz9))
 
         render_title_bar(f, chunks[0], app);
         render_tab_bar(f, chunks[1], app);
@@ -145,6 +141,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     if app.show_help {
         render_help_overlay(f, area);
+    }
+
+    if let Some(agent_id) = app.confirm_kill_agent_id {
+        render_kill_confirm_dialog(f, area, app, agent_id);
     }
 }
 
@@ -2700,6 +2700,71 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     let display: Vec<Line> = lines.into_iter().take(visible).collect();
 
     f.render_widget(Paragraph::new(display).style(Style::default().bg(PANEL_BG)), inner);
+}
+
+// ══════════════════════════════════════════════════════════
+//  KILL CONFIRMATION DIALOG
+// ══════════════════════════════════════════════════════════
+
+fn render_kill_confirm_dialog(f: &mut Frame, area: Rect, app: &App, agent_id: usize) {
+    let (agent_label, issue_id) = app
+        .agents
+        .iter()
+        .find(|a| a.id == agent_id)
+        .map(|a| (format!("AGENT-{:02}", a.unit_number), a.task.id.clone()))
+        .unwrap_or_else(|| (format!("AGENT-{}", agent_id), String::from("?")));
+
+    let popup_width = 58u16.min(area.width.saturating_sub(4));
+    let popup_height = 7u16.min(area.height.saturating_sub(4));
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+        y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(DANGER))
+        .title(Span::styled(
+            " ⚠ CONFIRM KILL ",
+            Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                format!("  Kill {} ({})? ", agent_label, issue_id),
+                Style::default().fg(BRIGHT),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  This will terminate the process and clean up the worktree.",
+                Style::default().fg(MUTED),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  [y] ", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
+            Span::styled("Confirm   ", Style::default().fg(BRIGHT)),
+            Span::styled("[n/Esc] ", Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD)),
+            Span::styled("Cancel", Style::default().fg(BRIGHT)),
+        ]),
+    ];
+
+    f.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(PANEL_BG)),
+        inner,
+    );
 }
 
 // ══════════════════════════════════════════════════════════
