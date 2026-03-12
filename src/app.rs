@@ -408,7 +408,7 @@ impl App {
                 };
             }
             if let Some(mc) = orch.max_concurrent {
-                max_concurrent = mc;
+                max_concurrent = mc.clamp(1, 20);
             }
             if let Some(asp) = orch.auto_spawn {
                 auto_spawn = asp;
