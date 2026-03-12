@@ -2,6 +2,34 @@ use serde::Deserialize;
 use std::collections::VecDeque;
 use std::io::Write;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    Priority,
+    Type,
+    Age,
+    Name,
+}
+
+impl SortMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortMode::Priority => "priority",
+            SortMode::Type => "type",
+            SortMode::Age => "age",
+            SortMode::Name => "name",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            SortMode::Priority => SortMode::Type,
+            SortMode::Type => SortMode::Age,
+            SortMode::Age => SortMode::Name,
+            SortMode::Name => SortMode::Priority,
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct BeadTask {

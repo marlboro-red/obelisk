@@ -312,7 +312,29 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
     let is_focused = app.focus == Focus::ReadyQueue && app.active_view == View::Dashboard;
     let border_color = if is_focused { ACCENT } else { MUTED };
 
-    let title = format!("◆ READY QUEUE [{}]", app.ready_tasks.len());
+    let filtered = app.filtered_tasks();
+    let total = app.ready_tasks.len();
+    let shown = filtered.len();
+
+    // Build the sort/filter indicator suffixes for the title
+    let sort_label = format!("[sort: {}]", app.sort_mode.label());
+    let filter_label = if app.type_filter.is_empty() {
+        String::new()
+    } else {
+        let mut types: Vec<&str> = app.type_filter.iter().map(|s| s.as_str()).collect();
+        types.sort_unstable();
+        format!(" [filter: {}]", types.join(","))
+    };
+    let count_label = if shown == total {
+        format!("{}", total)
+    } else {
+        format!("{}/{}", shown, total)
+    };
+    let title = format!(
+        "◆ READY QUEUE [{}] {} {}",
+        count_label, sort_label, filter_label
+    );
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(if is_focused {
@@ -322,25 +344,31 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
         })
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(
-            format!(" {} ", title),
+            format!(" {} ", title.trim_end()),
             Style::default()
                 .fg(if is_focused { ACCENT } else { MUTED })
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(PANEL_BG));
 
-    if app.ready_tasks.is_empty() {
-        let empty = Paragraph::new(Line::from(vec![
-            Span::styled("  No ready tasks — ", Style::default().fg(MUTED)),
-            Span::styled("STANDBY", Style::default().fg(WARN)),
-        ]))
-        .block(block);
+    if filtered.is_empty() {
+        let empty_msg = if app.ready_tasks.is_empty() {
+            Line::from(vec![
+                Span::styled("  No ready tasks — ", Style::default().fg(MUTED)),
+                Span::styled("STANDBY", Style::default().fg(WARN)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("  No tasks match filter — ", Style::default().fg(MUTED)),
+                Span::styled("press F to change", Style::default().fg(WARN)),
+            ])
+        };
+        let empty = Paragraph::new(empty_msg).block(block);
         f.render_widget(empty, area);
         return;
     }
 
-    let items: Vec<ListItem> = app
-        .ready_tasks
+    let items: Vec<ListItem> = filtered
         .iter()
         .enumerate()
         .map(|(i, task)| {
@@ -1155,6 +1183,8 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("r", "runtime"),
             ("m", "model"),
             ("a", "auto"),
+            ("f", "sort"),
+            ("F", "filter"),
             ("Tab", "focus"),
             ("j/k", "nav"),
             ("Enter", "detail"),
@@ -1266,6 +1296,8 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("r", "Cycle runtime (Claude/Codex/Copilot)"));
     lines.push(key_line("m", "Cycle model for current runtime"));
     lines.push(key_line("a", "Toggle auto-spawn mode"));
+    lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
+    lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));
     lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));
     lines.push(key_line("↑↓ / j/k", "Navigate list  (detail panel updates)"));
     lines.push(key_line("Enter", "Open Agent Detail for selected"));

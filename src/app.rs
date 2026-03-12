@@ -2,6 +2,9 @@ use crate::types::*;
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet, VecDeque};
 
+// All valid issue types for cycling the type filter
+const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
+
 const AGENT_PROMPT_TEMPLATE: &str = r#"# Beads Agent Prompt — Worktree Workflow
 
 You are an autonomous coding agent. You will be given a beads issue ID to work on.
@@ -240,6 +243,15 @@ pub struct App {
     pub last_poll_ok: bool,
     pub last_poll_error: Option<String>,
     pub consecutive_poll_failures: u32,
+
+    // Ready queue sort/filter state
+    pub sort_mode: SortMode,
+    /// Active type filters — empty means "show all"
+    pub type_filter: HashSet<String>,
+    /// Active priority range filter — None means "show all"
+    pub priority_filter: Option<std::ops::RangeInclusive<i32>>,
+    /// Index into ALL_TYPES for the "cycle type filter" keybinding
+    pub type_filter_cursor: usize,
 }
 
 impl App {
@@ -284,6 +296,10 @@ impl App {
             last_poll_ok: true,
             last_poll_error: None,
             consecutive_poll_failures: 0,
+            sort_mode: SortMode::Priority,
+            type_filter: HashSet::new(),
+            priority_filter: None,
+            type_filter_cursor: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -389,6 +405,7 @@ impl App {
             ));
         }
         self.ready_tasks = new_tasks;
+        self.sort_ready_tasks();
         self.log(
             LogCategory::Poll,
             format!(
@@ -397,6 +414,109 @@ impl App {
                 self.active_agent_count()
             ),
         );
+    }
+
+    /// Sort `ready_tasks` in-place according to the current `sort_mode`.
+    /// Secondary sort is always by creation time (id lexicographically, which
+    /// uses a timestamp prefix in the bead ID scheme).
+    pub fn sort_ready_tasks(&mut self) {
+        match self.sort_mode {
+            SortMode::Priority => {
+                self.ready_tasks.sort_by(|a, b| {
+                    let pa = a.priority.unwrap_or(3);
+                    let pb = b.priority.unwrap_or(3);
+                    pa.cmp(&pb).then_with(|| a.id.cmp(&b.id))
+                });
+            }
+            SortMode::Type => {
+                self.ready_tasks.sort_by(|a, b| {
+                    let ta = a.issue_type.as_deref().unwrap_or("task");
+                    let tb = b.issue_type.as_deref().unwrap_or("task");
+                    ta.cmp(tb)
+                        .then_with(|| a.priority.unwrap_or(3).cmp(&b.priority.unwrap_or(3)))
+                        .then_with(|| a.id.cmp(&b.id))
+                });
+            }
+            SortMode::Age => {
+                // Smaller id ≈ older task (id contains a timestamp token)
+                self.ready_tasks.sort_by(|a, b| a.id.cmp(&b.id));
+            }
+            SortMode::Name => {
+                self.ready_tasks.sort_by(|a, b| {
+                    a.title.to_lowercase().cmp(&b.title.to_lowercase())
+                });
+            }
+        }
+    }
+
+    /// Cycle to the next sort mode and re-sort.
+    pub fn cycle_sort_mode(&mut self) {
+        self.sort_mode = self.sort_mode.next();
+        self.sort_ready_tasks();
+        self.log(
+            LogCategory::System,
+            format!("Queue sort: {}", self.sort_mode.label()),
+        );
+    }
+
+    /// Toggle the type filter for the next type in the cycle.
+    /// Pressing 'F' toggles each type one at a time. When all types have been
+    /// toggled on, the next press clears the filter (show all).
+    pub fn cycle_type_filter(&mut self) {
+        let all_count = ALL_TYPES.len();
+        if self.type_filter.len() == all_count {
+            // All selected → clear filter
+            self.type_filter.clear();
+            self.type_filter_cursor = 0;
+            self.log(LogCategory::System, "Queue filter: all types".into());
+        } else {
+            let t = ALL_TYPES[self.type_filter_cursor % all_count].to_string();
+            if self.type_filter.contains(&t) {
+                self.type_filter.remove(&t);
+            } else {
+                self.type_filter.insert(t.clone());
+            }
+            self.type_filter_cursor = (self.type_filter_cursor + 1) % all_count;
+            if self.type_filter.is_empty() {
+                self.log(LogCategory::System, "Queue filter: all types".into());
+            } else {
+                let mut types: Vec<&str> = self
+                    .type_filter
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                types.sort_unstable();
+                self.log(
+                    LogCategory::System,
+                    format!("Queue filter: {}", types.join(",")),
+                );
+            }
+        }
+    }
+
+    /// Return the filtered view of `ready_tasks` according to current filters.
+    /// The returned slice preserves the already-sorted order.
+    pub fn filtered_tasks(&self) -> Vec<&BeadTask> {
+        self.ready_tasks
+            .iter()
+            .filter(|t| {
+                // Type filter
+                if !self.type_filter.is_empty() {
+                    let itype = t.issue_type.as_deref().unwrap_or("task");
+                    if !self.type_filter.contains(itype) {
+                        return false;
+                    }
+                }
+                // Priority filter
+                if let Some(ref range) = self.priority_filter {
+                    let p = t.priority.unwrap_or(3);
+                    if !range.contains(&p) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
     }
 
     pub fn on_agent_output(&mut self, agent_id: usize, line: String) {
@@ -458,7 +578,7 @@ impl App {
     pub fn selected_task(&self) -> Option<&BeadTask> {
         self.task_list_state
             .selected()
-            .and_then(|i| self.ready_tasks.get(i))
+            .and_then(|i| self.filtered_tasks().into_iter().nth(i))
     }
 
     pub fn get_spawn_info(&mut self) -> Option<SpawnRequest> {
@@ -514,10 +634,11 @@ impl App {
         );
 
         self.ready_tasks.retain(|t| t.id != task.id);
+        let filtered_len = self.filtered_tasks().len();
         if let Some(sel) = self.task_list_state.selected() {
-            if sel >= self.ready_tasks.len() && !self.ready_tasks.is_empty() {
-                self.task_list_state.select(Some(self.ready_tasks.len() - 1));
-            } else if self.ready_tasks.is_empty() {
+            if sel >= filtered_len && filtered_len > 0 {
+                self.task_list_state.select(Some(filtered_len - 1));
+            } else if filtered_len == 0 {
                 self.task_list_state.select(None);
             }
         }
@@ -535,10 +656,12 @@ impl App {
     }
 
     pub fn get_auto_spawn_info(&mut self) -> Option<SpawnRequest> {
-        if !self.auto_spawn
-            || self.active_agent_count() >= self.max_concurrent
-            || self.ready_tasks.is_empty()
-        {
+        if !self.auto_spawn || self.active_agent_count() >= self.max_concurrent {
+            return None;
+        }
+        // Respect filters — only auto-spawn from the visible filtered set.
+        // The filtered set is already sorted by priority (highest first).
+        if self.filtered_tasks().is_empty() {
             return None;
         }
         self.task_list_state.select(Some(0));
@@ -549,7 +672,7 @@ impl App {
         match self.active_view {
             View::Dashboard => match self.focus {
                 Focus::ReadyQueue => {
-                    let len = self.ready_tasks.len();
+                    let len = self.filtered_tasks().len();
                     if len == 0 {
                         return;
                     }
@@ -605,7 +728,7 @@ impl App {
         match self.active_view {
             View::Dashboard => match self.focus {
                 Focus::ReadyQueue => {
-                    let len = self.ready_tasks.len();
+                    let len = self.filtered_tasks().len();
                     if len == 0 {
                         return;
                     }
