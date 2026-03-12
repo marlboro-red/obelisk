@@ -408,26 +408,14 @@ fn handle_key(
         return;
     }
 
-    // ── Interactive mode: forward everything to PTY except double-Escape (detach) ──
+    // ── Interactive mode: forward everything to PTY except F2 (detach) ──
     if app.interactive_mode {
-        // Double-Escape = detach from interactive mode (two Esc within 300ms)
-        if key.code == KeyCode::Esc {
-            let now = std::time::Instant::now();
-            if let Some(prev) = app.last_esc_press {
-                if now.duration_since(prev).as_millis() <= 300 {
-                    app.interactive_mode = false;
-                    app.last_esc_press = None;
-                    app.log(LogCategory::System, "Detached from interactive session".into());
-                    return;
-                }
-            }
-            app.last_esc_press = Some(now);
-            // Forward single Esc to the PTY
-            app.write_to_agent(&[0x1b]);
+        // F2 = detach from interactive mode
+        if key.code == KeyCode::F(2) {
+            app.interactive_mode = false;
+            app.log(LogCategory::System, "Detached from interactive session".into());
             return;
         }
-        // Any non-Esc key resets the double-Esc timer
-        app.last_esc_press = None;
         // Forward keystroke to the agent's PTY
         if let Some(bytes) = key_to_pty_bytes(&key) {
             app.write_to_agent(&bytes);
@@ -674,7 +662,7 @@ fn handle_key(
                         app.interactive_mode = true;
                         app.log(
                             LogCategory::System,
-                            format!("Attached to AGENT-{:02} — double-Esc to detach", agent_id),
+                            format!("Attached to AGENT-{:02} — F2 to detach", agent_id),
                         );
                     }
                 }
