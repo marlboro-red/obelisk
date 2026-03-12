@@ -102,7 +102,7 @@ PTY as terminal escape sequences.
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+]` | Detach (return to observe mode) |
+| `Esc Esc` | Detach (return to observe mode) |
 | All other keys | Forwarded to PTY |
 
 PTY key mappings:

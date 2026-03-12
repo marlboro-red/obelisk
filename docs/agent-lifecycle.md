@@ -232,7 +232,7 @@ is forwarded to the PTY — normal obelisk keybindings are bypassed.
 
 ### Detach
 
-Press `Ctrl+]` (the classic telnet escape sequence). Also auto-detaches when
+Press `Esc` twice quickly (double-tap within 300ms). Also auto-detaches when
 the agent exits.
 
 ### Key Translation
