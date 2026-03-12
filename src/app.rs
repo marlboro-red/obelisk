@@ -291,6 +291,46 @@ pub struct App {
 
     // Agent list status filter
     pub agent_status_filter: AgentStatusFilter,
+
+    // Search state (in AgentDetail observe mode)
+    pub search_active: bool,
+    pub search_query: String,
+    pub search_matches: Vec<(usize, usize)>, // (screen_row, screen_col)
+    pub search_current_idx: usize,
+}
+
+fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let query_lower = query.to_lowercase();
+    let (rows, cols) = screen.size();
+    let mut matches = Vec::new();
+
+    for row in 0..rows as usize {
+        let row_text: String = (0..cols)
+            .map(|col| {
+                screen
+                    .cell(row as u16, col)
+                    .and_then(|c| c.contents().chars().next())
+                    .unwrap_or(' ')
+            })
+            .collect();
+
+        let row_lower = row_text.to_lowercase();
+        let mut byte_start = 0usize;
+        while byte_start < row_lower.len() {
+            if let Some(byte_idx) = row_lower[byte_start..].find(&query_lower) {
+                let abs_byte = byte_start + byte_idx;
+                let char_col = row_lower[..abs_byte].chars().count();
+                matches.push((row, char_col));
+                byte_start = abs_byte + 1;
+            } else {
+                break;
+            }
+        }
+    }
+    matches
 }
 
 impl App {
@@ -354,6 +394,10 @@ impl App {
             history_sessions,
             history_scroll: 0,
             agent_status_filter: AgentStatusFilter::All,
+            search_active: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_current_idx: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());

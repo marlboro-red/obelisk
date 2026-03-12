@@ -272,10 +272,36 @@ fn handle_key(
         return;
     }
 
+    // ── Search mode: intercept keys when search bar is active in agent detail ──
+    if app.search_active && app.active_view == View::AgentDetail {
+        match key.code {
+            KeyCode::Esc => {
+                app.search_active = false;
+                app.search_query.clear();
+                app.search_matches.clear();
+            }
+            KeyCode::Char('n') => app.search_next(),
+            KeyCode::Char('N') => app.search_prev(),
+            KeyCode::Backspace => {
+                app.search_query.pop();
+                app.update_search_matches();
+            }
+            KeyCode::Char(c) => {
+                app.search_query.push(c);
+                app.update_search_matches();
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') => {
             if app.active_view == View::AgentDetail {
                 app.interactive_mode = false;
+                app.search_active = false;
+                app.search_query.clear();
+                app.search_matches.clear();
                 app.active_view = View::Dashboard;
             } else {
                 app.should_quit = true;
@@ -284,6 +310,9 @@ fn handle_key(
         KeyCode::Esc => {
             if app.active_view != View::Dashboard {
                 app.interactive_mode = false;
+                app.search_active = false;
+                app.search_query.clear();
+                app.search_matches.clear();
                 app.active_view = View::Dashboard;
             }
         }
@@ -336,6 +365,15 @@ fn handle_key(
         }
         KeyCode::End if app.active_view == View::AgentDetail => {
             app.agent_output_scroll = None; // re-engage auto-follow
+        }
+        KeyCode::Char('/') if app.active_view == View::AgentDetail => {
+            if !app.interactive_mode {
+                app.search_active = true;
+                app.search_query.clear();
+                app.search_matches.clear();
+                app.search_current_idx = 0;
+                app.update_search_matches();
+            }
         }
         KeyCode::Char('k') if app.active_view == View::AgentDetail => {
             if let Some(agent_id) = app.selected_agent_id {
@@ -496,6 +534,9 @@ fn handle_key(
                 if let Some(i) = app.agents.iter().position(|a| a.id == current_id) {
                     if i > 0 {
                         app.interactive_mode = false;
+                        app.search_active = false;
+                        app.search_query.clear();
+                        app.search_matches.clear();
                         app.selected_agent_id = Some(app.agents[i - 1].id);
                         app.agent_output_scroll = None;
                     }
@@ -507,6 +548,9 @@ fn handle_key(
                 if let Some(i) = app.agents.iter().position(|a| a.id == current_id) {
                     if i + 1 < app.agents.len() {
                         app.interactive_mode = false;
+                        app.search_active = false;
+                        app.search_query.clear();
+                        app.search_matches.clear();
                         app.selected_agent_id = Some(app.agents[i + 1].id);
                         app.agent_output_scroll = None;
                     }
