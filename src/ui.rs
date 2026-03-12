@@ -748,11 +748,18 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
         chunks[0],
     );
 
-    // Split output area: output on left, stats on right
-    let output_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(40), Constraint::Length(28)])
-        .split(chunks[1]);
+    // Split output area: output on left, stats/diff on right
+    let output_chunks = if app.show_diff_panel {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[1])
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(40), Constraint::Length(28)])
+            .split(chunks[1])
+    };
 
     // Output area — use PseudoTerminal widget if PTY is active, else legacy text view
     let mode_label = if app.interactive_mode { "INTERACTIVE" } else { "OBSERVE" };
@@ -820,8 +827,12 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    // Stats panel
-    render_agent_stats(f, output_chunks[1], agent, app);
+    // Right panel: diff or stats
+    if app.show_diff_panel {
+        render_diff_panel(f, output_chunks[1], app);
+    } else {
+        render_agent_stats(f, output_chunks[1], agent, app);
+    }
 }
 
 fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &App) {
@@ -968,6 +979,125 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
     ]);
 
     f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ══════════════════════════════════════════════════════════
+//  DIFF PANEL
+// ══════════════════════════════════════════════════════════
+
+fn render_diff_panel(f: &mut Frame, area: Rect, app: &App) {
+    let title = match &app.diff_data {
+        Some(d) => format!(
+            "GIT DIFF  {} file{}, +{} -{}",
+            d.files_changed,
+            if d.files_changed == 1 { "" } else { "s" },
+            d.insertions,
+            d.deletions,
+        ),
+        None => "GIT DIFF  loading...".to_string(),
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(INFO))
+        .title(Span::styled(
+            format!(" {} ", title),
+            Style::default()
+                .fg(INFO)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    let inner = block.inner(area);
+    let visible_height = inner.height as usize;
+
+    let diff_data = match &app.diff_data {
+        Some(d) => d,
+        None => {
+            // No data yet — show a loading indicator
+            let loading = Paragraph::new(Line::from(Span::styled(
+                "  Fetching diff...",
+                Style::default().fg(MUTED),
+            )))
+            .block(block);
+            f.render_widget(loading, area);
+            return;
+        }
+    };
+
+    if diff_data.lines.is_empty() {
+        // No changes
+        let no_changes = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No uncommitted changes",
+                Style::default().fg(MUTED),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Worktree is clean",
+                Style::default().fg(DIM_ACCENT),
+            )),
+        ])
+        .block(block);
+        f.render_widget(no_changes, area);
+        return;
+    }
+
+    // Build header: changed file list
+    let mut lines: Vec<Line> = Vec::new();
+    for file in &diff_data.changed_files {
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled("M ", Style::default().fg(WARN).add_modifier(Modifier::BOLD)),
+            Span::styled(file.as_str(), Style::default().fg(BRIGHT)),
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        "─".repeat(inner.width.saturating_sub(0) as usize),
+        Style::default().fg(MUTED),
+    )));
+
+    // Build diff lines with color coding
+    for diff_line in &diff_data.lines {
+        let (style, prefix) = if diff_line.starts_with('+') && !diff_line.starts_with("+++") {
+            (Style::default().fg(ACCENT), "")
+        } else if diff_line.starts_with('-') && !diff_line.starts_with("---") {
+            (Style::default().fg(DANGER), "")
+        } else if diff_line.starts_with("@@") {
+            (Style::default().fg(SECONDARY).add_modifier(Modifier::BOLD), "")
+        } else if diff_line.starts_with("diff --git") {
+            (Style::default().fg(INFO).add_modifier(Modifier::BOLD), "")
+        } else if diff_line.starts_with("index ") || diff_line.starts_with("---") || diff_line.starts_with("+++") {
+            (Style::default().fg(MUTED), "")
+        } else {
+            (Style::default().fg(Color::Rgb(140, 140, 160)), " ")
+        };
+
+        let display = format!("{}{}", prefix, diff_line);
+        lines.push(Line::from(Span::styled(display, style)));
+    }
+
+    let total_lines = lines.len();
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll = app.diff_scroll.min(max_scroll);
+
+    let visible_lines: Vec<Line> = lines.into_iter().skip(scroll).take(visible_height).collect();
+
+    let paragraph = Paragraph::new(visible_lines).block(block);
+    f.render_widget(paragraph, area);
+
+    // Scrollbar
+    if total_lines > visible_height {
+        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .style(Style::default().fg(INFO)),
+            area,
+            &mut scrollbar_state,
+        );
+    }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1442,19 +1572,24 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("", "— all other keys forwarded to agent PTY —"),
             ]
         } else {
-            vec![
+            let mut keys = vec![
                 ("i", "interact"),
+                ("d", "diff"),
                 ("r", "retry"),
                 ("↑↓", "scroll"),
+            ];
+            if app.show_diff_panel {
+                keys.push(("J/K", "diff scroll"));
+            }
+            keys.extend([
                 ("PgUp/Dn", "page"),
-                ("Home/End", "top/bottom"),
                 ("←→", "prev/next"),
                 ("Esc", "back"),
                 ("k", "kill"),
-                ("1-4", "view"),
                 ("?", "help"),
                 ("q", "back"),
-            ]
+            ]);
+            keys
         },
         View::EventLog => vec![
             ("↑↓", "scroll"),
@@ -1564,6 +1699,8 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     // ── Agent Detail — Observe ──
     lines.push(section_header("AGENT DETAIL  (Observe mode)"));
     lines.push(key_line("i", "Attach interactive PTY session"));
+    lines.push(key_line("d", "Toggle live git diff panel"));
+    lines.push(key_line("J/K", "Scroll diff panel (when visible)"));
     lines.push(key_line("r", "Retry failed agent (spawn fresh PTY)"));
     lines.push(key_line("↑↓", "Scroll output one line"));
     lines.push(key_line("PgUp/PgDn", "Scroll output by page"));

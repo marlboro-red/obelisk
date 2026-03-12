@@ -1,4 +1,4 @@
-use crate::types::{BeadTask, PtyHandle, Runtime};
+use crate::types::{BeadTask, DiffData, PtyHandle, Runtime};
 use portable_pty::{CommandBuilder, PtySize};
 use tokio::process::Command;
 
@@ -214,4 +214,123 @@ pub async fn poll_ready() -> Result<Vec<crate::types::BeadTask>, String> {
 
     serde_json::from_str(trimmed)
         .map_err(|e| format!("Failed to parse bd ready JSON: {}", e))
+}
+
+/// Run `git diff` + `git diff --cached` in an agent's worktree and parse the result
+/// into a structured `DiffData`. Returns an empty diff if the worktree doesn't exist.
+pub async fn poll_worktree_diff(worktree_path: &str) -> DiffData {
+    let empty = DiffData {
+        lines: Vec::new(),
+        files_changed: 0,
+        insertions: 0,
+        deletions: 0,
+        changed_files: Vec::new(),
+    };
+
+    // Check worktree exists
+    if !std::path::Path::new(worktree_path).exists() {
+        return empty;
+    }
+
+    // Get unstaged diff
+    let unstaged = Command::new("git")
+        .args(["diff"])
+        .current_dir(worktree_path)
+        .output()
+        .await;
+
+    // Get staged diff
+    let staged = Command::new("git")
+        .args(["diff", "--cached"])
+        .current_dir(worktree_path)
+        .output()
+        .await;
+
+    let mut all_diff = String::new();
+    if let Ok(ref out) = unstaged {
+        all_diff.push_str(&String::from_utf8_lossy(&out.stdout));
+    }
+    if let Ok(ref out) = staged {
+        let staged_text = String::from_utf8_lossy(&out.stdout);
+        if !staged_text.is_empty() {
+            if !all_diff.is_empty() {
+                all_diff.push('\n');
+            }
+            all_diff.push_str(&staged_text);
+        }
+    }
+
+    // Get stat summary
+    let stat_output = Command::new("git")
+        .args(["diff", "--stat", "--stat-width=200"])
+        .current_dir(worktree_path)
+        .output()
+        .await;
+
+    let stat_cached = Command::new("git")
+        .args(["diff", "--cached", "--stat", "--stat-width=200"])
+        .current_dir(worktree_path)
+        .output()
+        .await;
+
+    let mut changed_files = Vec::new();
+    let mut insertions = 0usize;
+    let mut deletions = 0usize;
+
+    // Parse stat lines to extract file names and summary
+    for stat_out in [&stat_output, &stat_cached] {
+        if let Ok(ref out) = stat_out {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let trimmed = line.trim();
+                // Summary line looks like: "3 files changed, 10 insertions(+), 5 deletions(-)"
+                if trimmed.contains("files changed")
+                    || trimmed.contains("file changed")
+                {
+                    if let Some(ins) = extract_stat_number(trimmed, "insertion") {
+                        insertions += ins;
+                    }
+                    if let Some(del) = extract_stat_number(trimmed, "deletion") {
+                        deletions += del;
+                    }
+                } else if trimmed.contains('|') {
+                    // File stat line: " src/main.rs | 10 ++---"
+                    if let Some(file) = trimmed.split('|').next() {
+                        let file = file.trim().to_string();
+                        if !file.is_empty() && !changed_files.contains(&file) {
+                            changed_files.push(file);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let files_changed = changed_files.len();
+
+    let lines: Vec<String> = all_diff.lines().map(|l| l.to_string()).collect();
+
+    DiffData {
+        lines,
+        files_changed,
+        insertions,
+        deletions,
+        changed_files,
+    }
+}
+
+fn extract_stat_number(line: &str, keyword: &str) -> Option<usize> {
+    // Find "N insertion(s)" or "N deletion(s)" in a stat summary line
+    let parts: Vec<&str> = line.split(',').collect();
+    for part in parts {
+        let part = part.trim();
+        if part.contains(keyword) {
+            // Extract leading number
+            let num_str: String = part.chars().take_while(|c| c.is_ascii_digit() || c.is_whitespace()).collect();
+            if let Ok(n) = num_str.trim().parse::<usize>() {
+                return Some(n);
+            }
+        }
+    }
+    None
 }

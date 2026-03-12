@@ -189,6 +189,22 @@ fn process_event(
                     tokio::spawn(spawn_agent_process(tx.clone(), req));
                 }
             }
+
+            // Periodic diff refresh (~every 3s = 30 ticks at 100ms)
+            if app.show_diff_panel
+                && app.active_view == View::AgentDetail
+                && app.frame_count.saturating_sub(app.diff_last_poll_frame) >= 30
+            {
+                if let Some(wt_path) = app.selected_agent_worktree() {
+                    let agent_id = app.selected_agent_id.unwrap();
+                    app.diff_last_poll_frame = app.frame_count;
+                    let tx_diff = tx.clone();
+                    tokio::spawn(async move {
+                        let diff = runtime::poll_worktree_diff(&wt_path).await;
+                        let _ = tx_diff.send(AppEvent::DiffResult { agent_id, diff });
+                    });
+                }
+            }
         }
         AppEvent::PollResult(tasks) => {
             app.on_poll_result(tasks);
@@ -219,6 +235,9 @@ fn process_event(
         }
         AppEvent::WorktreeCleaned { cleaned, failed } => {
             app.on_worktree_cleaned(cleaned, failed);
+        }
+        AppEvent::DiffResult { agent_id, diff } => {
+            app.on_diff_result(agent_id, diff);
         }
         AppEvent::Terminal(Event::Resize(_, _)) => {
             // PTY resize is handled in the render loop via sync_pty_sizes,
@@ -491,6 +510,28 @@ fn handle_key(
                 let _ = tx_clean.send(AppEvent::WorktreeCleaned { cleaned, failed });
             });
         }
+        // 'd' toggles diff panel in Agent Detail view
+        KeyCode::Char('d') if app.active_view == View::AgentDetail => {
+            app.toggle_diff_panel();
+            if app.show_diff_panel {
+                // Fire immediate diff poll
+                if let Some(wt_path) = app.selected_agent_worktree() {
+                    let agent_id = app.selected_agent_id.unwrap();
+                    let tx_diff = tx.clone();
+                    tokio::spawn(async move {
+                        let diff = runtime::poll_worktree_diff(&wt_path).await;
+                        let _ = tx_diff.send(AppEvent::DiffResult { agent_id, diff });
+                    });
+                }
+            }
+        }
+        // Diff panel scroll (Ctrl+Up/Down to not conflict with output scroll)
+        KeyCode::Char('J') if app.active_view == View::AgentDetail && app.show_diff_panel => {
+            app.diff_scroll = app.diff_scroll.saturating_add(1);
+        }
+        KeyCode::Char('K') if app.active_view == View::AgentDetail && app.show_diff_panel => {
+            app.diff_scroll = app.diff_scroll.saturating_sub(1);
+        }
         KeyCode::Left if app.active_view == View::AgentDetail => {
             if let Some(current_id) = app.selected_agent_id {
                 if let Some(i) = app.agents.iter().position(|a| a.id == current_id) {
@@ -498,6 +539,9 @@ fn handle_key(
                         app.interactive_mode = false;
                         app.selected_agent_id = Some(app.agents[i - 1].id);
                         app.agent_output_scroll = None;
+                        app.diff_data = None;
+                        app.diff_scroll = 0;
+                        app.diff_last_poll_frame = 0;
                     }
                 }
             }
@@ -509,6 +553,9 @@ fn handle_key(
                         app.interactive_mode = false;
                         app.selected_agent_id = Some(app.agents[i + 1].id);
                         app.agent_output_scroll = None;
+                        app.diff_data = None;
+                        app.diff_scroll = 0;
+                        app.diff_last_poll_frame = 0;
                     }
                 }
             }
