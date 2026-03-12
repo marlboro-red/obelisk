@@ -157,6 +157,48 @@ impl AgentStatus {
     }
 }
 
+/// Filter for the agent list panel. Cycles through All → Running → Failed → Completed → Starting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentStatusFilter {
+    All,
+    Running,
+    Failed,
+    Completed,
+    Starting,
+}
+
+impl AgentStatusFilter {
+    pub fn next(&self) -> Self {
+        match self {
+            AgentStatusFilter::All => AgentStatusFilter::Running,
+            AgentStatusFilter::Running => AgentStatusFilter::Failed,
+            AgentStatusFilter::Failed => AgentStatusFilter::Completed,
+            AgentStatusFilter::Completed => AgentStatusFilter::Starting,
+            AgentStatusFilter::Starting => AgentStatusFilter::All,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            AgentStatusFilter::All => "ALL",
+            AgentStatusFilter::Running => "▶ RUNNING",
+            AgentStatusFilter::Failed => "✗ FAILED",
+            AgentStatusFilter::Completed => "✓ DONE",
+            AgentStatusFilter::Starting => "◐ INIT",
+        }
+    }
+
+    pub fn matches(&self, status: AgentStatus) -> bool {
+        match self {
+            AgentStatusFilter::All => true,
+            AgentStatusFilter::Running => status == AgentStatus::Running,
+            AgentStatusFilter::Failed => status == AgentStatus::Failed,
+            AgentStatusFilter::Completed => status == AgentStatus::Completed,
+            AgentStatusFilter::Starting => status == AgentStatus::Starting,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct AgentInstance {
     pub id: usize,

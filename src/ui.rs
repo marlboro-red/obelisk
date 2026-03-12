@@ -510,7 +510,28 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
     let border_color = if is_focused { ACCENT } else { MUTED };
 
     let active = app.active_agent_count();
-    let title = format!("◆ ACTIVE AGENTS [{}/{}]", active, app.max_concurrent);
+    let total = app.agents.len();
+    let visible_agents = app.filtered_agents();
+    let visible_count = visible_agents.len();
+
+    // Build title: count section + optional filter badge
+    let count_part = if app.agent_status_filter == AgentStatusFilter::All {
+        format!("◆ ACTIVE AGENTS [{}/{}]", active, app.max_concurrent)
+    } else {
+        format!(
+            "◆ ACTIVE AGENTS [{}/{}] [{}/{}]",
+            active,
+            app.max_concurrent,
+            visible_count,
+            total,
+        )
+    };
+    let filter_badge = if app.agent_status_filter != AgentStatusFilter::All {
+        format!(" [{}]", app.agent_status_filter.label())
+    } else {
+        String::new()
+    };
+    let title = format!("{}{}", count_part, filter_badge);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -538,11 +559,24 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let items: Vec<ListItem> = app
-        .agents
+    if visible_agents.is_empty() {
+        // Filter active but no agents match
+        let msg = format!(
+            "  No {} agents",
+            app.agent_status_filter.label()
+        );
+        let empty = Paragraph::new(Line::from(vec![
+            Span::styled(msg, Style::default().fg(MUTED)),
+        ]))
+        .block(block);
+        f.render_widget(empty, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = visible_agents
         .iter()
         .enumerate()
-        .map(|(i, agent)| {
+        .map(|(i, (_raw_idx, agent))| {
             let status_style = match agent.status {
                 AgentStatus::Starting => Style::default().fg(WARN),
                 AgentStatus::Running => Style::default().fg(ACCENT),
@@ -1368,25 +1402,40 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
     let keys = match app.active_view {
-        View::Dashboard => vec![
-            ("s", "spawn"),
-            ("p", "poll"),
-            ("c", "cleanup"),
-            ("r", "runtime"),
-            ("m", "model"),
-            ("a", "auto"),
-            ("f", "sort"),
-            ("F", "filter"),
-            ("Tab", "focus"),
-            ("j/k", "nav"),
-            ("Enter", "detail"),
-            ("x", "dismiss"),
-            ("X", "dismiss all"),
-            ("+/-", "slots"),
-            ("1-4", "view"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
+        View::Dashboard => if app.focus == Focus::AgentList {
+            vec![
+                ("f", "filter"),
+                ("Tab", "focus"),
+                ("j/k", "nav"),
+                ("Enter", "detail"),
+                ("x", "dismiss"),
+                ("X", "dismiss all"),
+                ("+/-", "slots"),
+                ("1-4", "view"),
+                ("?", "help"),
+                ("q", "quit"),
+            ]
+        } else {
+            vec![
+                ("s", "spawn"),
+                ("p", "poll"),
+                ("c", "cleanup"),
+                ("r", "runtime"),
+                ("m", "model"),
+                ("a", "auto"),
+                ("f", "sort"),
+                ("F", "filter"),
+                ("Tab", "focus"),
+                ("j/k", "nav"),
+                ("Enter", "detail"),
+                ("x", "dismiss"),
+                ("X", "dismiss all"),
+                ("+/-", "slots"),
+                ("1-4", "view"),
+                ("?", "help"),
+                ("q", "quit"),
+            ]
+        },
         View::AgentDetail => if app.interactive_mode {
             vec![
                 ("Ctrl+]", "detach"),
@@ -1504,6 +1553,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));
     lines.push(key_line("↑↓ / j/k", "Navigate list  (detail panel updates)"));
     lines.push(key_line("Enter", "Open Agent Detail for selected"));
+    lines.push(key_line("f", "Cycle agent status filter: All→Running→Failed→Done→Init (focus: Agents)"));
     lines.push(key_line("x", "Dismiss selected finished agent (focus: Agents)"));
     lines.push(key_line("X", "Dismiss ALL finished agents (focus: Agents)"));
     lines.push(key_line("+/-", "Increase/decrease max concurrent slots"));

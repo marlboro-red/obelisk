@@ -436,6 +436,12 @@ fn handle_key(
         {
             app.cycle_type_filter();
         }
+        // Agent status filter cycling — 'f' on Dashboard with AgentList focus
+        KeyCode::Char('f')
+            if app.active_view == View::Dashboard && app.focus == Focus::AgentList =>
+        {
+            app.cycle_agent_status_filter();
+        }
         KeyCode::Char('x')
             if app.active_view == View::Dashboard
                 && app.focus == Focus::AgentList =>
