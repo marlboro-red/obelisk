@@ -237,13 +237,14 @@ fn process_event(
                 && app.frame_count.saturating_sub(app.diff_last_poll_frame) >= 30
             {
                 if let Some(wt_path) = app.selected_agent_worktree() {
-                    let agent_id = app.selected_agent_id.unwrap();
-                    app.diff_last_poll_frame = app.frame_count;
-                    let tx_diff = tx.clone();
-                    tokio::spawn(async move {
-                        let diff = runtime::poll_worktree_diff(&wt_path).await;
-                        let _ = tx_diff.send(AppEvent::DiffResult { agent_id, diff });
-                    });
+                    if let Some(agent_id) = app.selected_agent_id {
+                        app.diff_last_poll_frame = app.frame_count;
+                        let tx_diff = tx.clone();
+                        tokio::spawn(async move {
+                            let diff = runtime::poll_worktree_diff(&wt_path).await;
+                            let _ = tx_diff.send(AppEvent::DiffResult { agent_id, diff });
+                        });
+                    }
                 }
             }
         }
@@ -397,25 +398,26 @@ fn handle_key(
     if app.confirm_kill_agent_id.is_some() {
         match key.code {
             KeyCode::Char('y') | KeyCode::Enter => {
-                let agent_id = app.confirm_kill_agent_id.take().unwrap();
-                if let Some((_, worktree)) = app.kill_agent(agent_id) {
-                    if let Some(worktree_path) = worktree {
-                        let branch = std::path::Path::new(&worktree_path)
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .and_then(|n| n.strip_prefix("worktree-"))
-                            .unwrap_or("")
-                            .to_string();
-                        let tx_kill = tx.clone();
-                        tokio::spawn(async move {
-                            let mut cleaned = Vec::new();
-                            let mut failed = Vec::new();
-                            match runtime::cleanup_worktree(&worktree_path, &branch).await {
-                                Ok(()) => cleaned.push(worktree_path),
-                                Err(_) => failed.push(worktree_path),
-                            }
-                            let _ = tx_kill.send(AppEvent::WorktreeCleaned { cleaned, failed });
-                        });
+                if let Some(agent_id) = app.confirm_kill_agent_id.take() {
+                    if let Some((_, worktree)) = app.kill_agent(agent_id) {
+                        if let Some(worktree_path) = worktree {
+                            let branch = std::path::Path::new(&worktree_path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .and_then(|n| n.strip_prefix("worktree-"))
+                                .unwrap_or("")
+                                .to_string();
+                            let tx_kill = tx.clone();
+                            tokio::spawn(async move {
+                                let mut cleaned = Vec::new();
+                                let mut failed = Vec::new();
+                                match runtime::cleanup_worktree(&worktree_path, &branch).await {
+                                    Ok(()) => cleaned.push(worktree_path),
+                                    Err(_) => failed.push(worktree_path),
+                                }
+                                let _ = tx_kill.send(AppEvent::WorktreeCleaned { cleaned, failed });
+                            });
+                        }
                     }
                 }
             }
@@ -729,12 +731,13 @@ fn handle_key(
             if app.show_diff_panel {
                 // Fire immediate diff poll
                 if let Some(wt_path) = app.selected_agent_worktree() {
-                    let agent_id = app.selected_agent_id.unwrap();
-                    let tx_diff = tx.clone();
-                    tokio::spawn(async move {
-                        let diff = runtime::poll_worktree_diff(&wt_path).await;
-                        let _ = tx_diff.send(AppEvent::DiffResult { agent_id, diff });
-                    });
+                    if let Some(agent_id) = app.selected_agent_id {
+                        let tx_diff = tx.clone();
+                        tokio::spawn(async move {
+                            let diff = runtime::poll_worktree_diff(&wt_path).await;
+                            let _ = tx_diff.send(AppEvent::DiffResult { agent_id, diff });
+                        });
+                    }
                 }
             }
         }
