@@ -466,7 +466,10 @@ fn handle_key(
             }
             app.active_view = View::AgentDetail;
         }
-        KeyCode::Char('3') => app.active_view = View::EventLog,
+        KeyCode::Char('3') => {
+            app.active_view = View::EventLog;
+            app.event_log_seen_count = app.event_log.len();
+        }
         KeyCode::Char('4') => app.active_view = View::History,
         KeyCode::Char('5') => {
             app.auto_fill_split_panes();
@@ -871,7 +874,10 @@ fn handle_mouse(
                                 }
                                 app.active_view = View::AgentDetail;
                             }
-                            2 => app.active_view = View::EventLog,
+                            2 => {
+                                app.active_view = View::EventLog;
+                                app.event_log_seen_count = app.event_log.len();
+                            }
                             3 => app.active_view = View::History,
                             4 => {
                                 app.auto_fill_split_panes();
