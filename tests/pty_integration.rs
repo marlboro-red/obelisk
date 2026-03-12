@@ -188,10 +188,15 @@ fn pty_write_input_and_read_response() {
         }
     });
 
-    // ConPTY sends ESC[6n on startup — respond to unblock output
-    std::thread::sleep(Duration::from_millis(200));
-    let _ = writer.write_all(b"\x1b[1;1R");
-    let _ = writer.flush();
+    // ConPTY sends ESC[6n on startup — respond to unblock output.
+    // On macOS/Linux no such query exists, so sending the CPR would leak
+    // visible text into the child's stdin (the bug obelisk-frt fixes).
+    #[cfg(windows)]
+    {
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = writer.write_all(b"\x1b[1;1R");
+        let _ = writer.flush();
+    }
 
     // Give the process time to start and show its prompt
     std::thread::sleep(Duration::from_millis(500));

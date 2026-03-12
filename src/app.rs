@@ -2043,19 +2043,24 @@ impl App {
     }
 
     /// Store PTY handle for an agent (called when AgentPtyReady arrives).
-    /// Also responds to ConPTY's initial ESC[6n (Device Status Report) query —
-    /// without this response, ConPTY buffers all child output indefinitely.
-    pub fn on_agent_pty_ready(&mut self, agent_id: usize, mut handle: PtyHandle) {
-        use std::io::Write;
-        // ConPTY sends ESC[6n on startup; respond with cursor at (1,1)
-        let _ = handle.writer.write_all(b"\x1b[1;1R");
-        let _ = handle.writer.flush();
+    pub fn on_agent_pty_ready(&mut self, agent_id: usize, handle: PtyHandle) {
         self.pty_states.insert(agent_id, handle);
     }
 
     /// Feed raw PTY bytes into the agent's vt100 parser.
+    /// Also intercepts ESC[6n (Device Status Report) queries from the PTY and
+    /// responds with a CPR so that ConPTY on Windows doesn't stall.
     pub fn on_agent_pty_data(&mut self, agent_id: usize, data: &[u8]) {
         if let Some(state) = self.pty_states.get_mut(&agent_id) {
+            // Intercept DSR query (ESC[6n) from child process and reply with CPR.
+            // ConPTY on Windows sends this on startup; without a response it buffers
+            // all output indefinitely. On macOS/Linux this sequence is not sent, so
+            // no spurious response leaks into the terminal.
+            if data.windows(4).any(|w| w == b"\x1b[6n") {
+                use std::io::Write;
+                let _ = state.writer.write_all(b"\x1b[1;1R");
+                let _ = state.writer.flush();
+            }
             state.parser.process(data);
         }
         // Capture raw PTY bytes for log export
