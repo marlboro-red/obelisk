@@ -2004,6 +2004,14 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("q", "Quit"));
     lines.push(Line::from(""));
 
+    // ── Split Pane ──
+    lines.push(section_header("SPLIT PANE  (Multi-agent monitor)"));
+    lines.push(key_line("Tab", "Cycle focus between panes"));
+    lines.push(key_line("↑↓", "Scroll focused pane output"));
+    lines.push(key_line("Enter", "Open Agent Detail for focused pane"));
+    lines.push(key_line("g", "Pin/unpin agent to focused pane"));
+    lines.push(key_line("Esc / q", "Return to Dashboard"));
+    lines.push(Line::from(""));
     // ── Global ──
     lines.push(section_header("GLOBAL"));
     lines.push(key_line("?", "Toggle this help overlay"));
