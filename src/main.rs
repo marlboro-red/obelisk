@@ -96,6 +96,16 @@ async fn run_app(
         }
     });
 
+    // Startup worktree scan — warn if orphaned agent worktrees exist from a previous session
+    let tx_wt = tx.clone();
+    tokio::spawn(async move {
+        let worktrees = runtime::scan_agent_worktrees().await;
+        if !worktrees.is_empty() {
+            let paths: Vec<String> = worktrees.into_iter().map(|(p, _)| p).collect();
+            let _ = tx_wt.send(AppEvent::WorktreeOrphans(paths));
+        }
+    });
+
     // Initial render before entering event loop
     let mut prev_view = app.active_view;
     let mut prev_term_size = terminal.size()?;
@@ -200,6 +210,12 @@ fn process_event(
         }
         AppEvent::AgentPtyReady { agent_id, handle } => {
             app.on_agent_pty_ready(agent_id, handle);
+        }
+        AppEvent::WorktreeOrphans(paths) => {
+            app.on_worktree_orphans(paths);
+        }
+        AppEvent::WorktreeCleaned { cleaned, failed } => {
+            app.on_worktree_cleaned(cleaned, failed);
         }
         AppEvent::Terminal(Event::Resize(_, _)) => {
             // PTY resize is handled in the render loop via sync_pty_sizes,
@@ -313,7 +329,27 @@ fn handle_key(
         }
         KeyCode::Char('k') if app.active_view == View::AgentDetail => {
             if let Some(agent_id) = app.selected_agent_id {
-                app.kill_agent(agent_id);
+                if let Some((_, worktree)) = app.kill_agent(agent_id) {
+                    if let Some(worktree_path) = worktree {
+                        // Derive branch name: worktree path is "../worktree-{branch}"
+                        let branch = std::path::Path::new(&worktree_path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .and_then(|n| n.strip_prefix("worktree-"))
+                            .unwrap_or("")
+                            .to_string();
+                        let tx_kill = tx.clone();
+                        tokio::spawn(async move {
+                            let mut cleaned = Vec::new();
+                            let mut failed = Vec::new();
+                            match runtime::cleanup_worktree(&worktree_path, &branch).await {
+                                Ok(()) => cleaned.push(worktree_path),
+                                Err(_) => failed.push(worktree_path),
+                            }
+                            let _ = tx_kill.send(AppEvent::WorktreeCleaned { cleaned, failed });
+                        });
+                    }
+                }
             }
         }
         KeyCode::Char('r') if app.active_view == View::AgentDetail => {
@@ -409,6 +445,35 @@ fn handle_key(
                     format!("{} finished agent(s) dismissed", count),
                 );
             }
+        }
+        KeyCode::Char('c') if app.active_view == View::Dashboard => {
+            app.log(LogCategory::System, "Scanning for orphaned worktrees...".into());
+            let active_ids = app.active_task_ids();
+            let tx_clean = tx.clone();
+            tokio::spawn(async move {
+                let worktrees = runtime::scan_agent_worktrees().await;
+                // Filter: keep only worktrees not associated with a currently active agent
+                let orphans: Vec<(String, String)> = worktrees
+                    .into_iter()
+                    .filter(|(path, _branch)| {
+                        let task_id = std::path::Path::new(path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .and_then(|n| n.strip_prefix("worktree-"))
+                            .unwrap_or("");
+                        !active_ids.contains(task_id)
+                    })
+                    .collect();
+                let mut cleaned = Vec::new();
+                let mut failed = Vec::new();
+                for (path, branch) in orphans {
+                    match runtime::cleanup_worktree(&path, &branch).await {
+                        Ok(()) => cleaned.push(path),
+                        Err(_) => failed.push(path),
+                    }
+                }
+                let _ = tx_clean.send(AppEvent::WorktreeCleaned { cleaned, failed });
+            });
         }
         KeyCode::Left if app.active_view == View::AgentDetail => {
             if let Some(current_id) = app.selected_agent_id {
