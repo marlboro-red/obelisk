@@ -1,4 +1,6 @@
 mod app;
+mod client;
+mod daemon;
 mod notify;
 mod runtime;
 mod templates;
@@ -20,14 +22,76 @@ use types::{AppEvent, LogCategory, View, Focus};
 
 const TICK_RATE_MS: u64 = 100;
 
+fn print_usage() {
+    eprintln!("Usage: obelisk [command]");
+    eprintln!();
+    eprintln!("Commands:");
+    eprintln!("  (none)            Launch the TUI dashboard");
+    eprintln!("  serve, --daemon   Start headless daemon mode");
+    eprintln!("  status            Show daemon status");
+    eprintln!("  agents            List all agents");
+    eprintln!("  spawn <issue-id>  Spawn agent for an issue");
+    eprintln!("  kill <agent-id>   Kill a running agent");
+    eprintln!("  stop              Stop the daemon");
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Set up structured logging to file — TUI owns stdout/stderr so we log to
-    // .beads/logs/obelisk.log (non-blocking, auto-flushed on drop).
+    let args: Vec<String> = std::env::args().collect();
+
+    // Route to the appropriate mode based on CLI arguments
+    match args.get(1).map(|s| s.as_str()) {
+        None => run_tui().await,
+        Some("serve") | Some("--daemon") => {
+            init_logging();
+            info!("obelisk daemon starting");
+            daemon::run().await
+        }
+        Some("status") => {
+            client::run(client::ClientCommand::Status).await
+        }
+        Some("agents") => {
+            client::run(client::ClientCommand::Agents).await
+        }
+        Some("spawn") => {
+            let issue_id = args.get(2).ok_or("usage: obelisk spawn <issue-id>")?;
+            client::run(client::ClientCommand::Spawn {
+                issue_id: issue_id.clone(),
+            })
+            .await
+        }
+        Some("kill") => {
+            let id_str = args.get(2).ok_or("usage: obelisk kill <agent-id>")?;
+            let agent_id: usize = id_str
+                .parse()
+                .map_err(|_| format!("invalid agent id: {}", id_str))?;
+            client::run(client::ClientCommand::Kill { agent_id }).await
+        }
+        Some("stop") => {
+            client::run(client::ClientCommand::Stop).await
+        }
+        Some("--help") | Some("-h") | Some("help") => {
+            print_usage();
+            Ok(())
+        }
+        Some(unknown) => {
+            eprintln!("unknown command: {}", unknown);
+            print_usage();
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Initialise file-based tracing.
+fn init_logging() {
     let log_dir = std::path::Path::new(".beads").join("logs");
     std::fs::create_dir_all(&log_dir).ok();
     let file_appender = tracing_appender::rolling::daily(&log_dir, "obelisk.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    // Leak the guard so it lives for the process lifetime
+    std::mem::forget(_guard);
+
     tracing_subscriber::fmt()
         .with_writer(non_blocking)
         .with_env_filter(
@@ -36,7 +100,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_target(false)
         .init();
+}
 
+async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
+    init_logging();
     info!("obelisk starting");
 
     enable_raw_mode()?;

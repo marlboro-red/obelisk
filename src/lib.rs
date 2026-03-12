@@ -1,4 +1,6 @@
 pub mod app;
+pub mod client;
+pub mod daemon;
 pub mod notify;
 pub mod runtime;
 pub mod templates;
