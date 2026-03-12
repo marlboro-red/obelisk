@@ -492,20 +492,195 @@ fn render_task_preview(f: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    let lines: Vec<Line> = vec![
+    let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
             task.title.as_str(),
             Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD),
         )),
         Line::from(meta_spans),
         Line::from(""),
-        Line::from(Span::styled(description, Style::default().fg(MUTED))),
     ];
+    lines.extend(render_markdown(description));
 
     f.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }),
         inner,
     );
+}
+
+// ── Lightweight markdown → ratatui Lines ────────────────────────────
+// Handles: # headers, **bold**, *italic*, `inline code`, ```code blocks```,
+//          - / * / + list items, - [ ] / - [x] checkboxes.
+// Falls back to raw text on any parse failure.
+
+fn render_markdown(text: &str) -> Vec<Line<'static>> {
+    fn parse_inline(text: &str, base_style: Style) -> Vec<Span<'static>> {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut remaining = text;
+
+        while !remaining.is_empty() {
+            // Find next markdown marker
+            let next_marker = [
+                remaining.find("**"),
+                remaining.find("*").filter(|&i| {
+                    // Only match single * that isn't part of **
+                    !remaining[i..].starts_with("**")
+                }),
+                remaining.find('`'),
+            ];
+
+            let earliest = next_marker.iter().filter_map(|x| *x).min();
+
+            match earliest {
+                None => {
+                    spans.push(Span::styled(remaining.to_string(), base_style));
+                    break;
+                }
+                Some(pos) => {
+                    // Push text before marker
+                    if pos > 0 {
+                        spans.push(Span::styled(remaining[..pos].to_string(), base_style));
+                    }
+                    let after = &remaining[pos..];
+
+                    if after.starts_with("**") {
+                        // Bold
+                        if let Some(end) = after[2..].find("**") {
+                            let content = &after[2..2 + end];
+                            spans.push(Span::styled(
+                                content.to_string(),
+                                base_style.add_modifier(Modifier::BOLD),
+                            ));
+                            remaining = &after[2 + end + 2..];
+                        } else {
+                            spans.push(Span::styled(after.to_string(), base_style));
+                            break;
+                        }
+                    } else if after.starts_with('`') {
+                        // Inline code
+                        if let Some(end) = after[1..].find('`') {
+                            let content = &after[1..1 + end];
+                            spans.push(Span::styled(
+                                content.to_string(),
+                                Style::default().fg(WARN),
+                            ));
+                            remaining = &after[1 + end + 1..];
+                        } else {
+                            spans.push(Span::styled(after.to_string(), base_style));
+                            break;
+                        }
+                    } else if after.starts_with('*') {
+                        // Italic
+                        if let Some(end) = after[1..].find('*') {
+                            let content = &after[1..1 + end];
+                            spans.push(Span::styled(
+                                content.to_string(),
+                                base_style.add_modifier(Modifier::ITALIC),
+                            ));
+                            remaining = &after[1 + end + 1..];
+                        } else {
+                            spans.push(Span::styled(after.to_string(), base_style));
+                            break;
+                        }
+                    } else {
+                        spans.push(Span::styled(after.to_string(), base_style));
+                        break;
+                    }
+                }
+            }
+        }
+        spans
+    }
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut in_code_block = false;
+    let base = Style::default().fg(MUTED);
+
+    for line in text.lines() {
+        // Fenced code blocks
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", line),
+                Style::default().fg(Color::Rgb(140, 140, 160)).add_modifier(Modifier::DIM),
+            )));
+            continue;
+        }
+
+        let trimmed = line.trim_start();
+
+        // Headers: # ## ###
+        if let Some(rest) = trimmed.strip_prefix("### ") {
+            lines.push(Line::from(Span::styled(
+                rest.to_string(),
+                Style::default().fg(INFO).add_modifier(Modifier::BOLD),
+            )));
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("## ") {
+            lines.push(Line::from(Span::styled(
+                rest.to_string(),
+                Style::default().fg(INFO).add_modifier(Modifier::BOLD),
+            )));
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            lines.push(Line::from(Span::styled(
+                rest.to_string(),
+                Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD),
+            )));
+            continue;
+        }
+
+        // Checkbox list items: - [ ] or - [x]
+        if let Some(rest) = trimmed.strip_prefix("- [x] ").or_else(|| trimmed.strip_prefix("- [X] ")) {
+            let mut spans = vec![Span::styled(
+                "  ✓ ".to_string(),
+                Style::default().fg(ACCENT),
+            )];
+            spans.extend(parse_inline(rest, base));
+            lines.push(Line::from(spans));
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
+            let mut spans = vec![Span::styled(
+                "  ○ ".to_string(),
+                Style::default().fg(MUTED),
+            )];
+            spans.extend(parse_inline(rest, base));
+            lines.push(Line::from(spans));
+            continue;
+        }
+
+        // List items: - / * / +
+        let list_rest = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "));
+        if let Some(rest) = list_rest {
+            let mut spans = vec![Span::styled(
+                "  • ".to_string(),
+                Style::default().fg(INFO),
+            )];
+            spans.extend(parse_inline(rest, base));
+            lines.push(Line::from(spans));
+            continue;
+        }
+
+        // Empty lines
+        if trimmed.is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+
+        // Normal text with inline formatting
+        lines.push(Line::from(parse_inline(trimmed, base)));
+    }
+
+    lines
 }
 
 fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
