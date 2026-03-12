@@ -332,6 +332,13 @@ pub struct App {
 
     // Velocity sparkline — configurable window (number of data points)
     pub velocity_window_size: usize,
+
+    // Worktree overview panel state
+    pub worktree_entries: Vec<WorktreeEntry>,
+    pub worktree_list_state: ListState,
+    pub worktree_sort_mode: WorktreeSortMode,
+    /// Frame count at which the last worktree scan was triggered
+    pub worktree_last_scan_frame: u64,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -511,6 +518,10 @@ impl App {
             jump_active: false,
             jump_query: String::new(),
             velocity_window_size,
+            worktree_entries: Vec::new(),
+            worktree_list_state: ListState::default(),
+            worktree_sort_mode: WorktreeSortMode::Age,
+            worktree_last_scan_frame: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
@@ -1175,6 +1186,14 @@ impl App {
             View::SplitPane => {
                 self.split_pane_scroll_up();
             }
+            View::WorktreeOverview => {
+                let len = self.worktree_entries.len();
+                if len == 0 { return; }
+                let i = self.worktree_list_state.selected()
+                    .map(|i| if i == 0 { len - 1 } else { i - 1 })
+                    .unwrap_or(0);
+                self.worktree_list_state.select(Some(i));
+            }
         }
     }
 
@@ -1236,6 +1255,14 @@ impl App {
             }
             View::SplitPane => {
                 self.split_pane_scroll_down();
+            }
+            View::WorktreeOverview => {
+                let len = self.worktree_entries.len();
+                if len == 0 { return; }
+                let i = self.worktree_list_state.selected()
+                    .map(|i| if i + 1 >= len { 0 } else { i + 1 })
+                    .unwrap_or(0);
+                self.worktree_list_state.select(Some(i));
             }
         }
     }
@@ -1611,6 +1638,89 @@ impl App {
                 self.frame_count + 50,
             ));
         }
+    }
+
+    /// Process worktree scan results and build enriched entries for the overview panel.
+    pub fn on_worktree_scanned(&mut self, worktrees: Vec<(String, String)>) {
+        let active_ids = self.active_task_ids();
+
+        let mut entries: Vec<WorktreeEntry> = worktrees
+            .into_iter()
+            .map(|(path, branch)| {
+                // Parse issue ID from worktree-{id} naming
+                let issue_id = std::path::Path::new(&path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(|n| n.strip_prefix("worktree-"))
+                    .map(|s| s.to_string());
+
+                // Find associated agent
+                let agent_id = self
+                    .agents
+                    .iter()
+                    .find(|a| a.worktree_path.as_deref() == Some(path.as_str())
+                        || issue_id.as_deref().map(|id| a.task.id == id).unwrap_or(false))
+                    .map(|a| a.id);
+
+                // Classify status
+                let status = if let Some(aid) = agent_id {
+                    if self.agents.iter().any(|a| a.id == aid && matches!(a.status, AgentStatus::Starting | AgentStatus::Running)) {
+                        WorktreeStatus::Active
+                    } else {
+                        WorktreeStatus::Idle
+                    }
+                } else if issue_id.as_deref().map(|id| active_ids.contains(id)).unwrap_or(false) {
+                    WorktreeStatus::Active
+                } else {
+                    WorktreeStatus::Orphaned
+                };
+
+                // Get creation time from filesystem
+                let created_at = std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.created().ok())
+                    .map(|t| chrono::DateTime::<chrono::Local>::from(t));
+
+                WorktreeEntry {
+                    path,
+                    branch,
+                    issue_id,
+                    agent_id,
+                    status,
+                    created_at,
+                }
+            })
+            .collect();
+
+        // Sort based on current sort mode
+        self.sort_worktree_entries(&mut entries);
+        self.worktree_entries = entries;
+    }
+
+    fn sort_worktree_entries(&self, entries: &mut Vec<WorktreeEntry>) {
+        match self.worktree_sort_mode {
+            WorktreeSortMode::Age => {
+                entries.sort_by(|a, b| {
+                    let a_time = a.created_at.as_ref().map(|t| t.timestamp()).unwrap_or(0);
+                    let b_time = b.created_at.as_ref().map(|t| t.timestamp()).unwrap_or(0);
+                    b_time.cmp(&a_time) // newest first
+                });
+            }
+            WorktreeSortMode::Status => {
+                entries.sort_by_key(|e| match e.status {
+                    WorktreeStatus::Orphaned => 0, // orphaned first (most actionable)
+                    WorktreeStatus::Active => 1,
+                    WorktreeStatus::Idle => 2,
+                });
+            }
+        }
+    }
+
+    pub fn cycle_worktree_sort(&mut self) {
+        self.worktree_sort_mode = self.worktree_sort_mode.next();
+        let mut entries = std::mem::take(&mut self.worktree_entries);
+        self.sort_worktree_entries(&mut entries);
+        self.worktree_entries = entries;
     }
 
     pub fn toggle_diff_panel(&mut self) {
