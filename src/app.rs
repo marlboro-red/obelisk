@@ -328,6 +328,9 @@ pub struct App {
     // Kill confirmation dialog — Some(agent_id) means dialog is visible
     pub confirm_kill_agent_id: Option<usize>,
 
+    // Tab bar badge: event log count at last visit (for "unread" badge)
+    pub event_log_seen_count: usize,
+
     // Worktree overview panel state
     pub worktree_entries: Vec<WorktreeEntry>,
     pub worktree_list_state: ListState,
@@ -519,6 +522,7 @@ impl App {
             jump_query: String::new(),
             velocity_window_size,
             confirm_kill_agent_id: None,
+            event_log_seen_count: 0,
             worktree_entries: Vec::new(),
             worktree_list_state: ListState::default(),
             worktree_sort_mode: WorktreeSortMode::Age,

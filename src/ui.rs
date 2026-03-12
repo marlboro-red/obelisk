@@ -211,11 +211,47 @@ fn render_title_bar(f: &mut Frame, area: Rect, app: &App) {
 // ══════════════════════════════════════════════════════════
 
 fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
+    // Compute badge counts
+    let ready_count = app.ready_tasks.len();
+    let active_count = app.agents.iter().filter(|a| {
+        a.status == AgentStatus::Running || a.status == AgentStatus::Starting
+    }).count();
+    let unread_events = app.event_log.len().saturating_sub(app.event_log_seen_count);
+    let history_count = app.history_sessions.len();
+
+    // Build tab titles with badges
+    let dashboard_badge = if ready_count > 0 || active_count > 0 {
+        format!(" ({}/{}) ", ready_count, active_count)
+    } else {
+        String::new()
+    };
+    let event_badge = if unread_events > 0 {
+        format!(" ({}) ", unread_events)
+    } else {
+        String::new()
+    };
+    let history_badge = if history_count > 0 {
+        format!(" ({}) ", history_count)
+    } else {
+        String::new()
+    };
+
+    let badge_style = Style::default().fg(MUTED);
+
     let tab_titles = vec![
-        Line::from(" 1:DASHBOARD "),
+        Line::from(vec![
+            Span::raw(" 1:DASHBOARD"),
+            Span::styled(dashboard_badge, badge_style),
+        ]),
         Line::from(" 2:AGENTS "),
-        Line::from(" 3:EVENT LOG "),
-        Line::from(" 4:HISTORY "),
+        Line::from(vec![
+            Span::raw(" 3:EVENT LOG"),
+            Span::styled(event_badge, badge_style),
+        ]),
+        Line::from(vec![
+            Span::raw(" 4:HISTORY"),
+            Span::styled(history_badge, badge_style),
+        ]),
         Line::from(" 5:SPLIT "),
         Line::from(" 6:WORKTREES "),
         Line::from(" 7:DEPS "),
