@@ -21,3 +21,4 @@
 [2m2026-03-12T13:32:35.288287Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m5 [3mtask_id[0m[2m=[0m"obelisk-3br" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
 [2m2026-03-12T13:32:35.288302Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m6 [3mtask_id[0m[2m=[0m"obelisk-pr4" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
 [2m2026-03-12T13:32:35.288294Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m4 [3mtask_id[0m[2m=[0m"obelisk-nht" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-12T13:33:05.451351Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m7 [3mtask_id[0m[2m=[0m"obelisk-4eo" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
