@@ -12,7 +12,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use tokio::sync::mpsc;
-use types::{AppEvent, LogCategory, View};
+use types::{AppEvent, LogCategory, View, Focus};
 
 const TICK_RATE_MS: u64 = 100;
 
@@ -367,6 +367,18 @@ fn handle_key(
                     if app.auto_spawn { "ENABLED" } else { "DISABLED" }
                 ),
             );
+        }
+        // Sort mode cycling — 'f' on Dashboard with ReadyQueue focus
+        KeyCode::Char('f')
+            if app.active_view == View::Dashboard && app.focus == Focus::ReadyQueue =>
+        {
+            app.cycle_sort_mode();
+        }
+        // Type filter cycling — 'F' (Shift+f) on Dashboard with ReadyQueue focus
+        KeyCode::Char('F')
+            if app.active_view == View::Dashboard && app.focus == Focus::ReadyQueue =>
+        {
+            app.cycle_type_filter();
         }
         KeyCode::Left if app.active_view == View::AgentDetail => {
             if let Some(current_id) = app.selected_agent_id {
