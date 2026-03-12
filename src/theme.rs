@@ -24,84 +24,89 @@ impl Default for Theme {
 }
 
 impl Theme {
+    /// Default: "Obsidian" — steel-blue accent on a near-black base.
+    /// Monochromatic foundation with 2-3 restrained accent colors.
     pub fn preset_default() -> Self {
         Self {
-            primary: Color::Rgb(255, 103, 0),
-            accent: Color::Rgb(0, 255, 65),
-            secondary: Color::Rgb(148, 0, 211),
-            danger: Color::Rgb(255, 40, 40),
-            info: Color::Rgb(0, 160, 255),
-            warn: Color::Rgb(255, 191, 0),
-            dark_bg: Color::Rgb(5, 5, 10),
-            panel_bg: Color::Rgb(10, 10, 18),
-            muted: Color::Rgb(70, 70, 90),
-            bright: Color::Rgb(200, 200, 220),
-            dim_accent: Color::Rgb(0, 120, 40),
+            primary: Color::Rgb(110, 160, 210),   // steel blue — borders, focus, titles
+            accent: Color::Rgb(110, 175, 140),     // sage — success, completion
+            secondary: Color::Rgb(130, 130, 150),  // blue-gray — subdued IDs, metadata
+            danger: Color::Rgb(190, 80, 75),       // muted rust — errors, failures
+            info: Color::Rgb(110, 160, 210),       // = primary (minimal palette)
+            warn: Color::Rgb(195, 165, 90),        // muted gold — caution, cost
+            dark_bg: Color::Rgb(14, 14, 20),       // near-black
+            panel_bg: Color::Rgb(20, 20, 28),      // panel background
+            muted: Color::Rgb(60, 60, 75),         // dim gray — labels, chrome
+            bright: Color::Rgb(185, 185, 200),     // silver — primary text
+            dim_accent: Color::Rgb(60, 95, 75),    // dimmed sage
         }
     }
 
+    /// "Frost" — cool teal accent on a dark cool-gray base.
     pub fn preset_solarized() -> Self {
         Self {
-            primary: Color::Rgb(181, 137, 0),    // yellow
-            accent: Color::Rgb(133, 153, 0),     // green
-            secondary: Color::Rgb(108, 113, 196), // violet
-            danger: Color::Rgb(220, 50, 47),     // red
-            info: Color::Rgb(38, 139, 210),      // blue
-            warn: Color::Rgb(203, 75, 22),       // orange
-            dark_bg: Color::Rgb(0, 43, 54),      // base03
-            panel_bg: Color::Rgb(7, 54, 66),     // base02
-            muted: Color::Rgb(88, 110, 117),     // base01
-            bright: Color::Rgb(238, 232, 213),   // base2
-            dim_accent: Color::Rgb(42, 161, 152), // cyan
+            primary: Color::Rgb(100, 170, 190),    // teal
+            accent: Color::Rgb(120, 180, 160),      // sea glass
+            secondary: Color::Rgb(120, 130, 140),   // cool gray
+            danger: Color::Rgb(180, 85, 90),        // cool red
+            info: Color::Rgb(100, 170, 190),        // = primary
+            warn: Color::Rgb(180, 165, 110),        // muted gold
+            dark_bg: Color::Rgb(12, 14, 18),        // cool near-black
+            panel_bg: Color::Rgb(18, 20, 26),       // cool panel
+            muted: Color::Rgb(55, 62, 75),          // cool dark gray
+            bright: Color::Rgb(180, 190, 200),      // cool silver
+            dim_accent: Color::Rgb(65, 95, 85),     // dimmed teal
         }
     }
 
+    /// "Ember" — warm amber accent on a dark warm-gray base.
     pub fn preset_nord() -> Self {
         Self {
-            primary: Color::Rgb(136, 192, 208),   // nord8  frost
-            accent: Color::Rgb(163, 190, 140),    // nord14 green
-            secondary: Color::Rgb(180, 142, 173), // nord15 purple
-            danger: Color::Rgb(191, 97, 106),     // nord11 red
-            info: Color::Rgb(129, 161, 193),      // nord9  blue
-            warn: Color::Rgb(235, 203, 139),      // nord13 yellow
-            dark_bg: Color::Rgb(46, 52, 64),      // nord0
-            panel_bg: Color::Rgb(59, 66, 82),     // nord1
-            muted: Color::Rgb(76, 86, 106),       // nord3
-            bright: Color::Rgb(229, 233, 240),    // nord6
-            dim_accent: Color::Rgb(143, 188, 187), // nord7
+            primary: Color::Rgb(200, 160, 110),     // warm amber
+            accent: Color::Rgb(160, 175, 120),       // olive
+            secondary: Color::Rgb(140, 130, 125),    // warm gray
+            danger: Color::Rgb(190, 85, 70),         // warm red
+            info: Color::Rgb(200, 160, 110),         // = primary
+            warn: Color::Rgb(200, 170, 100),         // amber
+            dark_bg: Color::Rgb(18, 16, 14),         // warm near-black
+            panel_bg: Color::Rgb(26, 24, 22),        // warm panel
+            muted: Color::Rgb(75, 70, 65),           // warm dark gray
+            bright: Color::Rgb(195, 190, 180),       // warm silver
+            dim_accent: Color::Rgb(90, 100, 70),     // dim olive
         }
     }
 
+    /// "Ash" — near-pure grayscale with a faint blue highlight.
     pub fn preset_catppuccin() -> Self {
-        // Catppuccin Mocha
         Self {
-            primary: Color::Rgb(245, 194, 231),   // pink
-            accent: Color::Rgb(166, 227, 161),     // green
-            secondary: Color::Rgb(203, 166, 247),  // mauve
-            danger: Color::Rgb(243, 139, 168),     // red
-            info: Color::Rgb(137, 180, 250),       // blue
-            warn: Color::Rgb(249, 226, 175),       // yellow
-            dark_bg: Color::Rgb(30, 30, 46),       // base
-            panel_bg: Color::Rgb(49, 50, 68),      // surface0
-            muted: Color::Rgb(88, 91, 112),        // overlay0
-            bright: Color::Rgb(205, 214, 244),     // text
-            dim_accent: Color::Rgb(148, 226, 213), // teal
+            primary: Color::Rgb(140, 160, 185),      // subtle blue-gray
+            accent: Color::Rgb(140, 175, 150),        // subtle sage
+            secondary: Color::Rgb(130, 130, 135),     // neutral gray
+            danger: Color::Rgb(185, 85, 80),          // muted red
+            info: Color::Rgb(140, 160, 185),          // = primary
+            warn: Color::Rgb(185, 165, 110),          // amber-gray
+            dark_bg: Color::Rgb(16, 16, 18),          // near-black
+            panel_bg: Color::Rgb(24, 24, 28),         // gray panel
+            muted: Color::Rgb(62, 62, 68),            // neutral gray
+            bright: Color::Rgb(192, 192, 198),         // silver
+            dim_accent: Color::Rgb(75, 95, 80),        // dim sage
         }
     }
 
+    /// "Deep" — deep ocean blue accent on a midnight-blue base.
     pub fn preset_gruvbox() -> Self {
         Self {
-            primary: Color::Rgb(254, 128, 25),     // orange
-            accent: Color::Rgb(184, 187, 38),      // green
-            secondary: Color::Rgb(211, 134, 155),   // purple
-            danger: Color::Rgb(251, 73, 52),       // red
-            info: Color::Rgb(131, 165, 152),       // blue
-            warn: Color::Rgb(250, 189, 47),        // yellow
-            dark_bg: Color::Rgb(40, 40, 40),       // bg
-            panel_bg: Color::Rgb(60, 56, 54),      // bg1
-            muted: Color::Rgb(146, 131, 116),      // gray
-            bright: Color::Rgb(235, 219, 178),     // fg
-            dim_accent: Color::Rgb(142, 192, 124), // bright green
+            primary: Color::Rgb(90, 140, 200),        // deep blue
+            accent: Color::Rgb(100, 165, 145),         // teal-green
+            secondary: Color::Rgb(110, 115, 135),      // indigo gray
+            danger: Color::Rgb(185, 75, 80),           // red
+            info: Color::Rgb(90, 140, 200),            // = primary
+            warn: Color::Rgb(180, 155, 95),            // muted gold
+            dark_bg: Color::Rgb(10, 10, 18),           // deep midnight
+            panel_bg: Color::Rgb(16, 16, 28),          // midnight panel
+            muted: Color::Rgb(50, 52, 70),             // midnight gray
+            bright: Color::Rgb(175, 180, 200),         // cool silver
+            dim_accent: Color::Rgb(55, 90, 80),        // dark teal
         }
     }
 
@@ -109,10 +114,10 @@ impl Theme {
     /// any individual color overrides.
     pub fn from_config(config: &ThemeConfig) -> Self {
         let mut theme = match config.preset.as_deref() {
-            Some("solarized") => Self::preset_solarized(),
-            Some("nord") => Self::preset_nord(),
-            Some("catppuccin") => Self::preset_catppuccin(),
-            Some("gruvbox") => Self::preset_gruvbox(),
+            Some("solarized") | Some("frost") => Self::preset_solarized(),
+            Some("nord") | Some("ember") => Self::preset_nord(),
+            Some("catppuccin") | Some("ash") => Self::preset_catppuccin(),
+            Some("gruvbox") | Some("deep") => Self::preset_gruvbox(),
             _ => Self::preset_default(),
         };
 

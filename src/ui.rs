@@ -20,12 +20,12 @@ use ratatui::{
 fn primary_block<'a>(title: &str, theme: &Theme) -> Block<'a> {
     Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(theme.primary))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.muted))
         .title(Span::styled(
             format!(" {} ", title),
             Style::default()
-                .fg(theme.primary)
+                .fg(theme.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(theme.panel_bg))
@@ -156,30 +156,20 @@ fn render_title_bar(f: &mut Frame, area: Rect, app: &App) {
 
     let title = Line::from(vec![
         Span::styled(
-            " ◈ ",
-            Style::default()
-                .fg(t.primary)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "OBELISK",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            " ◈ ",
-            Style::default()
-                .fg(t.primary)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "BEADS ORCHESTRATOR",
+            " OBELISK",
             Style::default()
                 .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  //  ", Style::default().fg(t.muted)),
+        Span::styled(
+            " / ",
+            Style::default().fg(t.muted),
+        ),
+        Span::styled(
+            "BEADS ORCHESTRATOR",
+            Style::default().fg(t.muted),
+        ),
+        Span::styled("  ", Style::default()),
         Span::styled(format!("{} ", dot), Style::default().fg(t.accent)),
         Span::styled(
             "ONLINE",
@@ -191,8 +181,8 @@ fn render_title_bar(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(t.primary))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.muted))
         .style(Style::default().bg(t.dark_bg));
 
     let paragraph = Paragraph::new(title)
@@ -394,11 +384,11 @@ fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(t.secondary))
+                .border_style(Style::default().fg(t.muted))
                 .title(Span::styled(
                     " THROUGHPUT ",
                     Style::default()
-                        .fg(t.secondary)
+                        .fg(t.bright)
                         .add_modifier(Modifier::BOLD),
                 ))
                 .title_bottom(Line::from(Span::styled(
@@ -408,7 +398,7 @@ fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
                 .style(Style::default().bg(t.panel_bg)),
         )
         .data(&data)
-        .style(Style::default().fg(t.accent));
+        .style(Style::default().fg(t.primary));
 
     f.render_widget(sparkline, area);
 }
@@ -421,11 +411,11 @@ fn render_completions_feed(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.accent))
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
             title,
             Style::default()
-                .fg(t.accent)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -525,7 +515,7 @@ fn render_mini_event_log(f: &mut Frame, area: Rect, app: &App) {
         .title(Span::styled(
             " RECENT EVENTS ",
             Style::default()
-                .fg(t.warn)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -621,16 +611,12 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(if is_focused {
-            BorderType::Double
-        } else {
-            BorderType::Rounded
-        })
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(
             format!(" {} ", title.trim_end()),
             Style::default()
-                .fg(if is_focused { t.accent } else { t.muted })
+                .fg(if is_focused { t.bright } else { t.muted })
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -659,9 +645,9 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
             let priority = task.priority.unwrap_or(3);
             let p_style = match priority {
                 0 => Style::default().fg(t.danger).add_modifier(Modifier::BOLD),
-                1 => Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
-                2 => Style::default().fg(t.warn),
-                3 => Style::default().fg(t.bright),
+                1 => Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
+                2 => Style::default().fg(t.bright),
+                3 => Style::default().fg(t.muted),
                 _ => Style::default().fg(t.muted),
             };
 
@@ -689,7 +675,7 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
             let mut spans = vec![
                 sel_indicator,
                 Span::styled(format!("P{} ", priority), p_style),
-                Span::styled(format!("[{}] ", type_str), Style::default().fg(t.info)),
+                Span::styled(format!("[{}] ", type_str), Style::default().fg(t.muted)),
             ];
             if !age_label.is_empty() {
                 spans.push(Span::styled(
@@ -706,7 +692,7 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
 
     let list = List::new(items).block(block).highlight_style(
         Style::default()
-            .bg(Color::Rgb(20, 30, 20))
+            .bg(Color::Rgb(25, 25, 35))
             .add_modifier(Modifier::BOLD),
     );
 
@@ -716,15 +702,15 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
 fn render_task_preview(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let is_focused = app.focus == Focus::ReadyQueue && app.active_view == View::Dashboard;
-    let border_color = if is_focused { t.info } else { t.muted };
+    let border_color = if is_focused { t.primary } else { t.muted };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(
-            " ◆ DETAIL ",
-            Style::default().fg(t.info).add_modifier(Modifier::BOLD),
+            " DETAIL ",
+            Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
 
@@ -749,9 +735,9 @@ fn render_task_preview(f: &mut Frame, area: Rect, app: &App) {
     let priority = task.priority.unwrap_or(3);
     let p_color = match priority {
         0 => t.danger,
-        1 => t.primary,
-        2 => t.warn,
-        _ => t.bright,
+        1 => t.bright,
+        2 => t.bright,
+        _ => t.muted,
     };
 
     let type_str = match task.issue_type.as_deref().unwrap_or("task") {
@@ -768,11 +754,11 @@ fn render_task_preview(f: &mut Frame, area: Rect, app: &App) {
     let assignee = task.assignee.as_deref().unwrap_or("");
 
     let mut meta_spans = vec![
-        Span::styled(format!("[{}] ", type_str), Style::default().fg(t.info)),
+        Span::styled(format!("[{}] ", type_str), Style::default().fg(t.muted)),
         Span::styled(format!("P{}  ", priority), Style::default().fg(p_color)),
     ];
     if !assignee.is_empty() {
-        meta_spans.push(Span::styled(assignee, Style::default().fg(t.secondary)));
+        meta_spans.push(Span::styled(assignee, Style::default().fg(t.muted)));
     }
     if !labels_str.is_empty() {
         meta_spans.push(Span::styled(
@@ -905,21 +891,21 @@ fn render_markdown(text: &str, t: &Theme) -> Vec<Line<'static>> {
         if let Some(rest) = trimmed.strip_prefix("### ") {
             lines.push(Line::from(Span::styled(
                 rest.to_string(),
-                Style::default().fg(t.info).add_modifier(Modifier::BOLD),
+                Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
             )));
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("## ") {
             lines.push(Line::from(Span::styled(
                 rest.to_string(),
-                Style::default().fg(t.info).add_modifier(Modifier::BOLD),
+                Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
             )));
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("# ") {
             lines.push(Line::from(Span::styled(
                 rest.to_string(),
-                Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+                Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
             )));
             continue;
         }
@@ -952,7 +938,7 @@ fn render_markdown(text: &str, t: &Theme) -> Vec<Line<'static>> {
         if let Some(rest) = list_rest {
             let mut spans = vec![Span::styled(
                 "  • ".to_string(),
-                Style::default().fg(t.info),
+                Style::default().fg(t.muted),
             )];
             spans.extend(parse_inline(rest, base, t.warn));
             lines.push(Line::from(spans));
@@ -1003,16 +989,12 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(if is_focused {
-            BorderType::Double
-        } else {
-            BorderType::Rounded
-        })
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(
             format!(" {} ", title),
             Style::default()
-                .fg(if is_focused { t.accent } else { t.muted })
+                .fg(if is_focused { t.bright } else { t.muted })
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -1052,11 +1034,7 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
                 AgentStatus::Failed => Style::default().fg(t.danger),
             };
 
-            let runtime_style = match agent.runtime {
-                Runtime::ClaudeCode => Style::default().fg(t.primary),
-                Runtime::Codex => Style::default().fg(t.accent),
-                Runtime::Copilot => Style::default().fg(t.info),
-            };
+            let runtime_style = Style::default().fg(t.muted);
 
             let elapsed = App::format_elapsed(agent.elapsed_secs);
 
@@ -1095,10 +1073,10 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(
                     format!(" AGENT-{:02} ", agent.unit_number),
                     Style::default()
-                        .fg(t.secondary)
+                        .fg(t.bright)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(format!("{} ", agent.task.id), Style::default().fg(t.bright)),
+                Span::styled(format!("{} ", agent.task.id), Style::default().fg(t.muted)),
                 Span::styled(format!("[{}] ", agent.runtime.name()), runtime_style),
                 Span::styled(status_text.to_string(), status_style),
                 phase_badge,
@@ -1112,7 +1090,7 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
 
     let list = List::new(items).block(block).highlight_style(
         Style::default()
-            .bg(Color::Rgb(20, 20, 30))
+            .bg(Color::Rgb(25, 25, 35))
             .add_modifier(Modifier::BOLD),
     );
 
@@ -1168,46 +1146,46 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
         Span::styled(
             format!("  AGENT-{:02}", agent.unit_number),
             Style::default()
-                .fg(t.secondary)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  //  ", Style::default().fg(t.muted)),
+        Span::styled("  /  ", Style::default().fg(t.muted)),
         Span::styled(agent.task.id.as_str(), Style::default().fg(t.bright)),
         Span::styled(
             format!("  [{}]", agent.runtime.name()),
-            Style::default().fg(t.primary),
+            Style::default().fg(t.muted),
         ),
         Span::styled(
             format!("  {}", agent.model),
-            Style::default().fg(t.warn),
+            Style::default().fg(t.muted),
         ),
-        Span::styled("  //  ", Style::default().fg(t.muted)),
+        Span::styled("  /  ", Style::default().fg(t.muted)),
         Span::styled(
             status_str,
             Style::default()
                 .fg(header_color)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  //  ", Style::default().fg(t.muted)),
+        Span::styled("  /  ", Style::default().fg(t.muted)),
         Span::styled(
             App::format_elapsed(agent.elapsed_secs),
-            Style::default().fg(t.warn),
+            Style::default().fg(t.bright),
         ),
     ];
     if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
-        header_spans.push(Span::styled("  //  ", Style::default().fg(t.muted)));
+        header_spans.push(Span::styled("  /  ", Style::default().fg(t.muted)));
         header_spans.extend(render_phase_indicator(agent.phase, t));
     }
     let header_line = Line::from(header_spans);
 
     let header_block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(header_color))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
             " AGENT TELEMETRY ",
             Style::default()
-                .fg(header_color)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -1248,12 +1226,8 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
 
     let output_block = Block::default()
         .borders(Borders::ALL)
-        .border_type(if app.interactive_mode {
-            BorderType::Double
-        } else {
-            BorderType::Rounded
-        })
-        .border_style(Style::default().fg(if app.interactive_mode { t.accent } else { t.secondary }))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(if app.interactive_mode { t.primary } else { t.muted }))
         .title(Span::styled(
             format!(" {} ", output_title),
             Style::default()
@@ -1307,7 +1281,7 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
             let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll);
             f.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .style(Style::default().fg(t.secondary)),
+                    .style(Style::default().fg(t.muted)),
                 output_chunks[0],
                 &mut scrollbar_state,
             );
@@ -1384,13 +1358,6 @@ fn render_split_pane(f: &mut Frame, area: Rect, app: &mut App) {
                     AgentStatus::Failed => "✗",
                 };
 
-                let status_color = match agent.status {
-                    AgentStatus::Starting => t.warn,
-                    AgentStatus::Running => t.accent,
-                    AgentStatus::Completed => t.info,
-                    AgentStatus::Failed => t.danger,
-                };
-
                 let pin_indicator = if is_pinned { " [PIN]" } else { "" };
                 let title = format!(
                     " AGENT-{:02} {} {} {} {}{}",
@@ -1403,20 +1370,15 @@ fn render_split_pane(f: &mut Frame, area: Rect, app: &mut App) {
                 );
 
                 let border_color = if is_focused { t.primary } else { t.muted };
-                let border_type = if is_focused {
-                    BorderType::Double
-                } else {
-                    BorderType::Rounded
-                };
 
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_type(border_type)
+                    .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(border_color))
                     .title(Span::styled(
                         title,
                         Style::default()
-                            .fg(status_color)
+                            .fg(if is_focused { t.bright } else { t.muted })
                             .add_modifier(Modifier::BOLD),
                     ))
                     .style(Style::default().bg(t.panel_bg));
@@ -1451,15 +1413,10 @@ fn render_split_pane(f: &mut Frame, area: Rect, app: &mut App) {
             }
             None => {
                 let border_color = if is_focused { t.primary } else { t.muted };
-                let border_type = if is_focused {
-                    BorderType::Double
-                } else {
-                    BorderType::Rounded
-                };
 
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_type(border_type)
+                    .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(border_color))
                     .title(Span::styled(
                         format!(" PANE {} — empty ", slot + 1),
@@ -1530,11 +1487,11 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.primary))
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
             " DIAGNOSTICS ",
             Style::default()
-                .fg(t.primary)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -1543,18 +1500,11 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
     let elapsed = agent.elapsed_secs.max(1);
     let lines_per_sec = total_lines as f64 / elapsed as f64;
 
-
     let status_indicator = match agent.status {
-        AgentStatus::Starting => ("◐ INITIALIZING", t.warn),
-        AgentStatus::Running => ("▶ ACTIVE", t.accent),
-        AgentStatus::Completed => ("✓ COMPLETE", t.info),
-        AgentStatus::Failed => ("✗ TERMINATED", t.danger),
-    };
-
-    let hex_row = if (app.frame_count / 4) % 2 == 0 {
-        "⬡ ⬢ ⬡ ⬢ ⬡ ⬢ ⬡ ⬢"
-    } else {
-        "⬢ ⬡ ⬢ ⬡ ⬢ ⬡ ⬢ ⬡"
+        AgentStatus::Starting => ("INITIALIZING", t.muted),
+        AgentStatus::Running => ("ACTIVE", t.accent),
+        AgentStatus::Completed => ("COMPLETE", t.accent),
+        AgentStatus::Failed => ("TERMINATED", t.danger),
     };
 
     let priority_str = agent
@@ -1595,11 +1545,6 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
     });
 
     let mut lines = vec![
-        Line::from(Span::styled(
-            hex_row,
-            Style::default().fg(Color::Rgb(30, 30, 50)),
-        )),
-        Line::from(""),
         Line::from(vec![
             Span::styled(" STATUS  ", Style::default().fg(t.muted)),
             Span::styled(
@@ -1613,18 +1558,16 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             Span::styled(" RUNTIME ", Style::default().fg(t.muted)),
             Span::styled(
                 agent.runtime.name(),
-                Style::default()
-                    .fg(t.primary)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.bright),
             ),
         ]),
         Line::from(vec![
             Span::styled(" TASK    ", Style::default().fg(t.muted)),
-            Span::styled(&agent.task.id, Style::default().fg(t.secondary)),
+            Span::styled(&agent.task.id, Style::default().fg(t.bright)),
         ]),
         Line::from(vec![
             Span::styled(" PRIORITY", Style::default().fg(t.muted)),
-            Span::styled(format!(" {}", priority_str), Style::default().fg(t.warn)),
+            Span::styled(format!(" {}", priority_str), Style::default().fg(t.bright)),
         ]),
         Line::from(vec![
             Span::styled(" RETRIES ", Style::default().fg(t.muted)),
@@ -1646,7 +1589,7 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             Span::styled(" TMPL    ", Style::default().fg(t.muted)),
             Span::styled(
                 format!(" {}", agent.template_name),
-                Style::default().fg(t.secondary),
+                Style::default().fg(t.muted),
             ),
         ]),
     ];
@@ -1672,24 +1615,19 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
         ]),
         Line::from(vec![
             Span::styled(" TOK IN  ", Style::default().fg(t.muted)),
-            Span::styled(format!(" {}", app::format_tokens(agent.input_tokens)), Style::default().fg(t.info)),
+            Span::styled(format!(" {}", app::format_tokens(agent.input_tokens)), Style::default().fg(t.bright)),
         ]),
         Line::from(vec![
             Span::styled(" TOK OUT ", Style::default().fg(t.muted)),
-            Span::styled(format!(" {}", app::format_tokens(agent.output_tokens)), Style::default().fg(t.info)),
+            Span::styled(format!(" {}", app::format_tokens(agent.output_tokens)), Style::default().fg(t.bright)),
         ]),
         Line::from(vec![
             Span::styled(" COST    ", Style::default().fg(t.muted)),
             Span::styled(
                 format!(" {}", app::format_cost(agent.estimated_cost_usd)),
-                Style::default().fg(if agent.estimated_cost_usd > 1.0 { t.warn } else { t.accent }),
+                Style::default().fg(if agent.estimated_cost_usd > 1.0 { t.warn } else { t.bright }),
             ),
         ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            hex_row,
-            Style::default().fg(Color::Rgb(30, 30, 50)),
-        )),
     ]);
 
     f.render_widget(Paragraph::new(lines).block(block), area);
@@ -1715,11 +1653,11 @@ fn render_diff_panel(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.info))
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
             format!(" {} ", title),
             Style::default()
-                .fg(t.info)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -1781,9 +1719,9 @@ fn render_diff_panel(f: &mut Frame, area: Rect, app: &App) {
         } else if diff_line.starts_with('-') && !diff_line.starts_with("---") {
             (Style::default().fg(t.danger), "")
         } else if diff_line.starts_with("@@") {
-            (Style::default().fg(t.secondary).add_modifier(Modifier::BOLD), "")
+            (Style::default().fg(t.muted).add_modifier(Modifier::BOLD), "")
         } else if diff_line.starts_with("diff --git") {
-            (Style::default().fg(t.info).add_modifier(Modifier::BOLD), "")
+            (Style::default().fg(t.bright).add_modifier(Modifier::BOLD), "")
         } else if diff_line.starts_with("index ") || diff_line.starts_with("---") || diff_line.starts_with("+++") {
             (Style::default().fg(t.muted), "")
         } else {
@@ -1808,7 +1746,7 @@ fn render_diff_panel(f: &mut Frame, area: Rect, app: &App) {
         let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .style(Style::default().fg(t.info)),
+                .style(Style::default().fg(t.muted)),
             area,
             &mut scrollbar_state,
         );
@@ -1899,11 +1837,11 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
     // ── Aggregate stats ──
     let stats_block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(t.primary))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
-            " ◆ ALL-TIME STATISTICS ",
-            Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+            " ALL-TIME STATISTICS ",
+            Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
 
@@ -1944,7 +1882,7 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("  AVG DURATION    ", Style::default().fg(t.muted)),
             Span::styled(
                 App::format_elapsed(avg_duration as u64).to_string(),
-                Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
+                Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
@@ -1962,10 +1900,10 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
     let sessions_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.secondary))
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
-            format!(" ◆ SESSION LOG [{}] ", app.history_sessions.len()),
-            Style::default().fg(t.secondary).add_modifier(Modifier::BOLD),
+            format!(" SESSION LOG [{}] ", app.history_sessions.len()),
+            Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
 
@@ -2003,7 +1941,7 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
                 &session.session_id
             };
             ListItem::new(Line::from(vec![
-                Span::styled(format!("  {:16} ", short_id), Style::default().fg(t.secondary)),
+                Span::styled(format!("  {:16} ", short_id), Style::default().fg(t.muted)),
                 Span::styled(format!("started: {:<22} ", &session.started_at[..session.started_at.len().min(19)]), Style::default().fg(t.muted)),
                 Span::styled(format!("done:{:>4} ", session.total_completed), Style::default().fg(t.accent)),
                 Span::styled(format!("fail:{:>3} ", session.total_failed), Style::default().fg(if session.total_failed > 0 { t.danger } else { t.muted })),
@@ -2055,12 +1993,12 @@ fn render_dep_graph(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(t.primary))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
             format!(" {} ", title),
             Style::default()
-                .fg(t.primary)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -2179,7 +2117,7 @@ fn render_dep_graph(f: &mut Frame, area: Rect, app: &App) {
             };
 
             let row_bg = if row.node.status == "blocked" {
-                Style::default().bg(Color::Rgb(40, 10, 10))
+                Style::default().bg(Color::Rgb(35, 20, 20))
             } else {
                 Style::default()
             };
@@ -2196,7 +2134,7 @@ fn render_dep_graph(f: &mut Frame, area: Rect, app: &App) {
                 ),
                 Span::styled(
                     format!("[{}] ", row.node.id),
-                    Style::default().fg(t.secondary),
+                    Style::default().fg(t.muted),
                 ),
                 Span::styled(
                     priority_str,
@@ -2216,7 +2154,7 @@ fn render_dep_graph(f: &mut Frame, area: Rect, app: &App) {
 
     let list = List::new(items).highlight_style(
         Style::default()
-            .bg(Color::Rgb(20, 20, 35))
+            .bg(Color::Rgb(25, 25, 35))
             .add_modifier(Modifier::BOLD),
     );
 
@@ -2228,7 +2166,7 @@ fn render_dep_graph(f: &mut Frame, area: Rect, app: &App) {
         let mut scrollbar_state = ScrollbarState::new(total).position(pos);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .style(Style::default().fg(t.primary)),
+                .style(Style::default().fg(t.muted)),
             v_chunks[1],
             &mut scrollbar_state,
         );
@@ -2255,12 +2193,12 @@ fn render_worktree_overview(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(t.primary))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
             format!(" {} ", title),
             Style::default()
-                .fg(t.primary)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -2374,7 +2312,7 @@ fn render_worktree_overview(f: &mut Frame, area: Rect, app: &App) {
 
             // Issue ID
             let issue_span = if let Some(ref id) = entry.issue_id {
-                Span::styled(format!("[{}] ", id), Style::default().fg(t.secondary))
+                Span::styled(format!("[{}] ", id), Style::default().fg(t.muted))
             } else {
                 Span::styled("[???] ", Style::default().fg(t.muted))
             };
@@ -2387,7 +2325,7 @@ fn render_worktree_overview(f: &mut Frame, area: Rect, app: &App) {
 
             // Build line with color coding — orphaned entries use danger styling
             let row_bg = if entry.status == WorktreeStatus::Orphaned {
-                Style::default().bg(Color::Rgb(40, 10, 10))
+                Style::default().bg(Color::Rgb(35, 20, 20))
             } else {
                 Style::default()
             };
@@ -2413,7 +2351,7 @@ fn render_worktree_overview(f: &mut Frame, area: Rect, app: &App) {
 
     let list = List::new(items).highlight_style(
         Style::default()
-            .bg(Color::Rgb(20, 30, 20))
+            .bg(Color::Rgb(25, 25, 35))
             .add_modifier(Modifier::BOLD),
     );
 
@@ -2425,7 +2363,7 @@ fn render_worktree_overview(f: &mut Frame, area: Rect, app: &App) {
         let mut scrollbar_state = ScrollbarState::new(total).position(pos);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .style(Style::default().fg(t.primary)),
+                .style(Style::default().fg(t.muted)),
             v_chunks[1],
             &mut scrollbar_state,
         );
@@ -2473,7 +2411,7 @@ fn render_status_gauges(f: &mut Frame, area: Rect, app: &App) {
                 ))
                 .style(Style::default().bg(t.panel_bg)),
         )
-        .gauge_style(Style::default().fg(rate_color).bg(Color::Rgb(20, 20, 30)))
+        .gauge_style(Style::default().fg(rate_color).bg(Color::Rgb(25, 25, 35)))
         .ratio(rate / 100.0)
         .label(Span::styled(
             format!("{:.0}%", rate),
@@ -2528,7 +2466,7 @@ fn render_status_gauges(f: &mut Frame, area: Rect, app: &App) {
                 ))
                 .style(Style::default().bg(t.panel_bg)),
         )
-        .gauge_style(Style::default().fg(poll_color).bg(Color::Rgb(20, 20, 30)))
+        .gauge_style(Style::default().fg(poll_color).bg(Color::Rgb(25, 25, 35)))
         .ratio(poll_ratio)
         .label(Span::styled(
             poll_label,
@@ -2548,11 +2486,11 @@ fn render_wave_monitor(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.secondary))
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
             " WAVEFORM ",
             Style::default()
-                .fg(t.secondary)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -2610,12 +2548,6 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(t.muted)
     };
 
-    let runtime_color = match app.selected_runtime {
-        Runtime::ClaudeCode => t.primary,
-        Runtime::Codex => t.accent,
-        Runtime::Copilot => t.info,
-    };
-
     let model_name = app.selected_model();
     // Show short model name: strip common prefixes for display
     let model_short = model_name
@@ -2628,14 +2560,14 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(
             app.selected_runtime.name(),
             Style::default()
-                .fg(runtime_color)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  MODEL: ", Style::default().fg(t.muted)),
         Span::styled(
             model_short,
             Style::default()
-                .fg(t.warn)
+                .fg(t.bright)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  │  ", Style::default().fg(t.muted)),
@@ -2688,7 +2620,7 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
                 let (inp, out) = app.session_total_tokens();
                 format!("{}↑ {}↓", app::format_tokens(inp), app::format_tokens(out))
             },
-            Style::default().fg(t.info),
+            Style::default().fg(t.muted),
         ),
         Span::styled("  COST: ", Style::default().fg(t.muted)),
         Span::styled(
@@ -2710,11 +2642,7 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
 /// Shows the most important stats without a border box.
 fn render_info_bar_compact(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let runtime_color = match app.selected_runtime {
-        Runtime::ClaudeCode => t.primary,
-        Runtime::Codex => t.accent,
-        Runtime::Copilot => t.info,
-    };
+    let runtime_color = t.bright;
 
     let auto_style = if app.auto_spawn {
         Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
@@ -2918,11 +2846,11 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(t.primary))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.muted))
         .title(Span::styled(
-            " ◈ KEYBOARD SHORTCUTS  [? / Esc to close] ",
-            Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+            " KEYBOARD SHORTCUTS  [? / Esc to close] ",
+            Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
 
@@ -2936,7 +2864,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
         Line::from(vec![
             Span::styled(
                 format!("  ── {} ──", title),
-                Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
+                Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
             ),
         ])
     };
@@ -3080,7 +3008,7 @@ fn render_complete_confirm_dialog(f: &mut Frame, area: Rect, app: &App, agent_id
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(t.accent))
         .title(Span::styled(
             " MARK COMPLETE ",
@@ -3146,10 +3074,10 @@ fn render_kill_confirm_dialog(f: &mut Frame, area: Rect, app: &App, agent_id: us
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(t.danger))
         .title(Span::styled(
-            " ⚠ CONFIRM KILL ",
+            " CONFIRM KILL ",
             Style::default().fg(t.danger).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(t.panel_bg));
@@ -3308,7 +3236,7 @@ fn render_search_bar(f: &mut Frame, area: Rect, app: &App) {
     ]);
 
     f.render_widget(
-        Paragraph::new(line).style(Style::default().bg(Color::Rgb(15, 15, 30))),
+        Paragraph::new(line).style(Style::default().bg(Color::Rgb(20, 20, 28))),
         area,
     );
 }
@@ -3370,7 +3298,7 @@ fn render_jump_bar(f: &mut Frame, area: Rect, app: &App) {
     ]);
 
     f.render_widget(
-        Paragraph::new(line).style(Style::default().bg(Color::Rgb(15, 15, 30))),
+        Paragraph::new(line).style(Style::default().bg(Color::Rgb(20, 20, 28))),
         area,
     );
 }
@@ -3514,19 +3442,19 @@ pub fn compute_pty_area(term_cols: u16, term_rows: u16) -> (u16, u16) {
 
 fn log_category_color(cat: LogCategory, t: &Theme) -> Color {
     match cat {
-        LogCategory::System => t.bright,
-        LogCategory::Incoming => t.info,
-        LogCategory::Deploy => t.accent,
+        LogCategory::System => t.muted,
+        LogCategory::Incoming => t.bright,
+        LogCategory::Deploy => t.bright,
         LogCategory::Complete => t.accent,
         LogCategory::Alert => t.danger,
-        LogCategory::Poll => t.secondary,
+        LogCategory::Poll => t.muted,
     }
 }
 
 fn phase_color(phase: AgentPhase, t: &Theme) -> Color {
     match phase {
-        AgentPhase::Detecting | AgentPhase::Claiming | AgentPhase::Worktree => t.info,
-        AgentPhase::Implementing => t.warn,
+        AgentPhase::Detecting | AgentPhase::Claiming | AgentPhase::Worktree => t.muted,
+        AgentPhase::Implementing => t.bright,
         AgentPhase::Verifying | AgentPhase::Merging | AgentPhase::Closing | AgentPhase::Done => {
             t.accent
         }
@@ -3565,7 +3493,7 @@ fn render_phase_indicator(phase: AgentPhase, t: &Theme) -> Vec<Span<'static>> {
         } else {
             spans.push(Span::styled(
                 p.short().to_string(),
-                Style::default().fg(Color::Rgb(40, 40, 55)),
+                Style::default().fg(Color::Rgb(35, 35, 45)),
             ));
         }
     }
