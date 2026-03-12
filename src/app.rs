@@ -289,9 +289,6 @@ pub struct App {
     pub search_matches: Vec<(usize, usize)>, // (screen_row, screen_col)
     pub search_current_idx: usize,
 
-    /// When true, auto-send /exit to ClaudeCode agents when completion is detected
-    pub auto_exit_on_completion: bool,
-
     // Diff panel state
     pub show_diff_panel: bool,
     pub diff_data: Option<DiffData>,
@@ -497,7 +494,6 @@ impl App {
             search_query: String::new(),
             search_matches: Vec::new(),
             search_current_idx: 0,
-            auto_exit_on_completion: true,
             show_diff_panel: false,
             diff_data: None,
             diff_scroll: 0,
@@ -661,24 +657,6 @@ impl App {
             if self.frame_count > *expires {
                 self.alert_message = None;
             }
-        }
-
-        // Auto-exit timeout: force-complete agents that sent /exit but did not exit
-        let timeout = std::time::Duration::from_secs(10);
-        let timed_out: Vec<usize> = self
-            .agents
-            .iter()
-            .filter(|a| {
-                a.completion_detected
-                    && matches!(a.status, AgentStatus::Starting | AgentStatus::Running)
-                    && a.exit_sent_at
-                        .map(|t| t.elapsed() > timeout)
-                        .unwrap_or(false)
-            })
-            .map(|a| a.id)
-            .collect();
-        for id in timed_out {
-            self.force_complete_agent(id);
         }
 
     }
@@ -1017,9 +995,6 @@ impl App {
             retry_count: 0,
             worktree_path: Some(format!("../worktree-{}", task.id)),
             worktree_cleaned: false,
-            completion_detected: false,
-            exit_sent_at: None,
-            completion_buf: String::new(),
             pinned_to_split: None,
             input_tokens: 0,
             output_tokens: 0,
@@ -1464,9 +1439,6 @@ impl App {
             retry_count: new_retry_count,
             worktree_path: Some(format!("../worktree-{}", task.id)),
             worktree_cleaned: false,
-            completion_detected: false,
-            exit_sent_at: None,
-            completion_buf: String::new(),
             pinned_to_split: None,
             input_tokens: 0,
             output_tokens: 0,
@@ -1865,84 +1837,6 @@ impl App {
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
         self.lines_this_tick = self.lines_this_tick.saturating_add(newlines.max(1));
 
-        // Completion detection: scan PTY output for beads issue closure markers
-        if self.auto_exit_on_completion {
-            self.check_completion_in_pty_data(agent_id, data);
-        }
-    }
-
-    fn check_completion_in_pty_data(&mut self, agent_id: usize, data: &[u8]) {
-        let agent = match self.agents.iter_mut().find(|a| a.id == agent_id) {
-            Some(a) => a,
-            None => return,
-        };
-        if agent.runtime != Runtime::ClaudeCode { return; }
-        if !matches!(agent.status, AgentStatus::Running | AgentStatus::Starting) { return; }
-        if agent.completion_detected { return; }
-
-        let text = String::from_utf8_lossy(data);
-        agent.completion_buf.push_str(&text);
-        if agent.completion_buf.len() > 8192 {
-            let excess = agent.completion_buf.len() - 8192;
-            let drain_to = (excess..)
-                .find(|&i| agent.completion_buf.is_char_boundary(i))
-                .unwrap_or(excess);
-            agent.completion_buf.drain(..drain_to);
-        }
-
-        let closed = agent.completion_buf.contains("\"status\": \"closed\"")
-            || agent.completion_buf.contains("\"status\":\"closed\"")
-            || agent.completion_buf.contains("status: closed");
-        if !closed { return; }
-
-        agent.completion_detected = true;
-        agent.exit_sent_at = Some(std::time::Instant::now());
-        let unit = agent.unit_number;
-
-        self.log(
-            LogCategory::Complete,
-            format!("AGENT-{:02} auto-completed: detected issue closure", unit),
-        );
-
-        if let Some(state) = self.pty_states.get_mut(&agent_id) {
-            use std::io::Write;
-            let _ = state.writer.write_all(b"/exit
-");
-            let _ = state.writer.flush();
-        }
-    }
-
-    fn force_complete_agent(&mut self, agent_id: usize) {
-        let (unit, pid) = {
-            let agent = match self.agents.iter_mut().find(|a| a.id == agent_id) {
-                Some(a) => a,
-                None => return,
-            };
-            if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
-                return;
-            }
-            agent.status = AgentStatus::Completed;
-            agent.elapsed_secs = agent.started_at.elapsed().as_secs();
-            (agent.unit_number, agent.pid)
-        };
-        self.total_completed += 1;
-        if let Some(pid) = pid {
-            #[cfg(unix)]
-            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
-            #[cfg(windows)]
-            {
-                use std::process::Command;
-                let _ = Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
-        }
-        self.log(
-            LogCategory::Alert,
-            format!("AGENT-{:02} force-terminated after auto-exit timeout", unit),
-        );
     }
 
     /// Write raw bytes to the selected agent's PTY (interactive mode).
