@@ -338,8 +338,8 @@ pub struct App {
     /// Frame count at which the last worktree scan was triggered
     pub worktree_last_scan_frame: u64,
 
-    // Distribution bar mode (priority vs type breakdown)
-    pub dist_bar_mode: DistBarMode,
+    // Recent completions feed (Dashboard panel)
+    pub recent_completions: VecDeque<CompletionRecord>,
 
     // Dependency graph view state
     pub dep_graph_nodes: Vec<DepNode>,
@@ -531,7 +531,7 @@ impl App {
             worktree_list_state: ListState::default(),
             worktree_sort_mode: WorktreeSortMode::Age,
             worktree_last_scan_frame: 0,
-            dist_bar_mode: DistBarMode::Priority,
+            recent_completions: VecDeque::with_capacity(10),
             dep_graph_nodes: Vec::new(),
             dep_graph_rows: Vec::new(),
             dep_graph_list_state: ListState::default(),
@@ -539,6 +539,24 @@ impl App {
             dep_graph_last_poll_frame: 0,
 
         };
+
+        // Seed recent completions from history sessions (most recent agents last)
+        for session in app.history_sessions.iter().rev().take(3) {
+            for agent in session.agents.iter().rev() {
+                if app.recent_completions.len() >= 10 {
+                    break;
+                }
+                app.recent_completions.push_front(CompletionRecord {
+                    task_id: agent.task_id.clone(),
+                    title: agent.task_id.clone(), // history doesn't store title
+                    runtime: agent.runtime.clone(),
+                    model: agent.model.clone(),
+                    elapsed_secs: agent.elapsed_secs,
+                    success: agent.status == "Completed",
+                    cost_usd: agent.estimated_cost_usd,
+                });
+            }
+        }
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
             app.log(LogCategory::System, format!("Config loaded from {}", CONFIG_FILE));
@@ -957,6 +975,25 @@ impl App {
         } else {
             None
         };
+
+        // Record completion for the feed
+        if let Some((success, _unit, ref task_id, ref rt, elapsed)) = log_info {
+            if let Some(agent) = self.agents.iter().find(|a| a.task.id == *task_id) {
+                let record = CompletionRecord {
+                    task_id: task_id.clone(),
+                    title: agent.task.title.clone(),
+                    runtime: rt.clone(),
+                    model: agent.model.clone(),
+                    elapsed_secs: elapsed,
+                    success,
+                    cost_usd: agent.estimated_cost_usd,
+                };
+                self.recent_completions.push_back(record);
+                if self.recent_completions.len() > 10 {
+                    self.recent_completions.pop_front();
+                }
+            }
+        }
 
         if let Some((success, unit, task_id, rt, elapsed)) = log_info {
             if success {
@@ -2182,21 +2219,6 @@ impl App {
                 }
             }
         }
-    }
-
-    /// Compute velocity sparkline data: completed issues per session.
-    /// Returns the last `velocity_window_size` data points, with the current
-    /// session as the rightmost (most recent) point.
-    pub fn velocity_sparkline_data(&self) -> Vec<u64> {
-        let mut data: Vec<u64> = self
-            .history_sessions
-            .iter()
-            .map(|s| s.total_completed as u64)
-            .collect();
-        // Current session as the live data point
-        data.push(self.total_completed as u64);
-        let skip = data.len().saturating_sub(self.velocity_window_size);
-        data[skip..].to_vec()
     }
 
     /// Sum of estimated cost across all agents in the current session.

@@ -645,9 +645,6 @@ fn handle_key(
                 ),
             );
         }
-        KeyCode::Char('b') if app.active_view == View::Dashboard => {
-            app.dist_bar_mode = app.dist_bar_mode.toggle();
-        }
         KeyCode::Char('M') if app.active_view == View::Dashboard => {
             app.mouse_enabled = !app.mouse_enabled;
             app.log(

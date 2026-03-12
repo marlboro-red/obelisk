@@ -291,45 +291,22 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
 
     // When compact: hide sparklines and give full width to event log
     let show_bottom = !compact_rows || area.height > 12;
-    let show_dist_bar = area.height > 14; // hide bar in very tight layouts
     let v_chunks = if show_bottom && !compact_cols {
-        if show_dist_bar {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(8),    // Top: ready queue + agents
-                    Constraint::Length(1), // Distribution bar
-                    Constraint::Length(5), // Bottom: throughput + velocity + mini log
-                ])
-                .split(area)
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(8),    // Top: ready queue + agents
-                    Constraint::Length(5), // Bottom: throughput + velocity + mini log
-                ])
-                .split(area)
-        }
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(8),     // Top: ready queue + agents
+                Constraint::Length(10), // Bottom: throughput + completions + mini log
+            ])
+            .split(area)
     } else if show_bottom && compact_cols {
-        if show_dist_bar {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(8),    // Top: ready queue + agents
-                    Constraint::Length(1), // Distribution bar
-                    Constraint::Length(3), // Bottom: single-line event log
-                ])
-                .split(area)
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(8),    // Top: ready queue + agents
-                    Constraint::Length(3), // Bottom: single-line event log
-                ])
-                .split(area)
-        }
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(8),    // Top: ready queue + agents
+                Constraint::Length(3), // Bottom: single-line event log
+            ])
+            .split(area)
     } else {
         // Very compact: no bottom panel at all
         Layout::default()
@@ -382,28 +359,22 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     app.layout_areas.agent_panel = Some(h_chunks[1]);
     render_agent_panel(f, h_chunks[1], app);
 
-    // Distribution bar (single row between main content and bottom panels)
-    if show_dist_bar && v_chunks.len() > 1 {
-        render_distribution_bar(f, v_chunks[1], app);
-    }
-
     // Bottom panels
-    let bottom_idx = if show_dist_bar { 2 } else { 1 };
-    if v_chunks.len() > bottom_idx {
+    if v_chunks.len() > 1 {
         if compact_cols {
             // < 100 cols: hide sparklines, full-width single-line event log
-            render_mini_event_log(f, v_chunks[bottom_idx], app);
+            render_mini_event_log(f, v_chunks[1], app);
         } else {
             let bottom_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(25),
+                    Constraint::Percentage(20),
                     Constraint::Percentage(50),
+                    Constraint::Percentage(30),
                 ])
-                .split(v_chunks[bottom_idx]);
+                .split(v_chunks[1]);
             render_throughput_sparkline(f, bottom_chunks[0], app);
-            render_velocity_sparkline(f, bottom_chunks[1], app);
+            render_completions_feed(f, bottom_chunks[1], app);
             render_mini_event_log(f, bottom_chunks[2], app);
         }
     }
@@ -443,173 +414,106 @@ fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(sparkline, area);
 }
 
-fn render_velocity_sparkline(f: &mut Frame, area: Rect, app: &App) {
-    let data = app.velocity_sparkline_data();
 
-    let max_val = data.iter().copied().max().unwrap_or(0).max(1);
-    let label = format!("peak: {}/sess", max_val);
+fn render_completions_feed(f: &mut Frame, area: Rect, app: &App) {
+    let count = app.recent_completions.len();
+    let title = format!(" RECENT COMPLETIONS ({}) ", count);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
 
-    let sparkline = Sparkline::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(INFO))
-                .title(Span::styled(
-                    " VELOCITY ",
-                    Style::default()
-                        .fg(INFO)
-                        .add_modifier(Modifier::BOLD),
-                ))
-                .title_bottom(Line::from(Span::styled(
-                    format!(" {} ", label),
-                    Style::default().fg(MUTED),
-                )))
-                .style(Style::default().bg(PANEL_BG)),
-        )
-        .data(&data)
-        .style(Style::default().fg(INFO));
+    let inner = block.inner(area);
+    let visible = inner.height as usize;
 
-    f.render_widget(sparkline, area);
-}
-
-fn render_distribution_bar(f: &mut Frame, area: Rect, app: &App) {
-    use crate::types::DistBarMode;
-
-    if area.width < 10 || area.height < 1 {
-        return;
-    }
-
-    let tasks = &app.ready_tasks;
-    if tasks.is_empty() {
-        let empty = Paragraph::new(Line::from(vec![
-            Span::styled("▏ ", Style::default().fg(MUTED)),
-            Span::styled(
-                "No open issues",
-                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
-            ),
-        ]));
+    if app.recent_completions.is_empty() {
+        let empty = Paragraph::new(Line::from(Span::styled(
+            "No completions yet",
+            Style::default().fg(MUTED),
+        )))
+        .block(block);
         f.render_widget(empty, area);
         return;
     }
 
-    // Collect counts and build segments based on mode
-    let (segments, mode_label): (Vec<(&str, Color, usize)>, &str) = match app.dist_bar_mode {
-        DistBarMode::Priority => {
-            let mut counts = [0usize; 5]; // P0..P4
-            for t in tasks {
-                let p = t.priority.unwrap_or(3).clamp(0, 4) as usize;
-                counts[p] += 1;
-            }
-            let colors = [
-                DANGER,                         // P0: red
-                PRIMARY,                        // P1: orange
-                WARN,                           // P2: yellow/amber
-                INFO,                           // P3: blue
-                MUTED,                          // P4: dim
-            ];
-            let labels = ["P0", "P1", "P2", "P3", "P4"];
-            let segs: Vec<_> = labels
-                .iter()
-                .zip(colors.iter())
-                .zip(counts.iter())
-                .filter(|((_, _), &c)| c > 0)
-                .map(|((&lbl, &col), &cnt)| (lbl, col, cnt))
-                .collect();
-            (segs, "PRIORITY")
-        }
-        DistBarMode::Type => {
-            let type_spec: &[(&str, Color)] = &[
-                ("bug", DANGER),
-                ("feature", ACCENT),
-                ("task", INFO),
-                ("chore", MUTED),
-                ("epic", SECONDARY),
-            ];
-            let mut counts = std::collections::HashMap::<&str, usize>::new();
-            for t in tasks {
-                let itype = t.issue_type.as_deref().unwrap_or("task");
-                *counts.entry(itype).or_default() += 1;
-            }
-            let segs: Vec<_> = type_spec
-                .iter()
-                .filter_map(|&(name, color)| {
-                    counts.get(name).filter(|&&c| c > 0).map(|&c| (name, color, c))
-                })
-                .collect();
-            (segs, "TYPE")
-        }
-    };
+    // Show most recent entries (auto-scroll: newest at bottom)
+    let items: Vec<ListItem> = app
+        .recent_completions
+        .iter()
+        .rev()
+        .take(visible)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|rec| {
+            let status_sym = if rec.success { "✓" } else { "✗" };
+            let status_color = if rec.success { ACCENT } else { DANGER };
 
-    if segments.is_empty() {
-        return;
-    }
+            // Format duration
+            let duration = if rec.elapsed_secs >= 3600 {
+                format!("{}h{:02}m", rec.elapsed_secs / 3600, (rec.elapsed_secs % 3600) / 60)
+            } else if rec.elapsed_secs >= 60 {
+                format!("{}m{:02}s", rec.elapsed_secs / 60, rec.elapsed_secs % 60)
+            } else {
+                format!("{}s", rec.elapsed_secs)
+            };
 
-    let total: usize = segments.iter().map(|(_, _, c)| c).sum();
-    // Reserve space for the mode label prefix "▏PRIORITY " or "▏TYPE "
-    let prefix = format!("▏{} ", mode_label);
-    let prefix_width = prefix.len() as u16;
-    let bar_width = area.width.saturating_sub(prefix_width) as usize;
+            // Truncate title to fit
+            let max_title = 20;
+            let title_display = if rec.title.len() > max_title {
+                format!("{}\u{2026}", &rec.title[..max_title - 1])
+            } else {
+                rec.title.clone()
+            };
 
-    if bar_width < 4 {
-        return;
-    }
+            // Short model name (last component)
+            let model_short = rec.model.split('-').last().unwrap_or(&rec.model);
 
-    let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled(
-        prefix,
-        Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-    ));
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{} ", status_sym),
+                    Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{} ", rec.task_id),
+                    Style::default().fg(BRIGHT),
+                ),
+                Span::styled(
+                    format!("{} ", title_display),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(
+                    format!("[{}] ", rec.runtime),
+                    Style::default().fg(INFO),
+                ),
+                Span::styled(
+                    format!("{} ", model_short),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(
+                    duration,
+                    Style::default().fg(SECONDARY),
+                ),
+                Span::styled(
+                    if rec.cost_usd > 0.0 {
+                        format!(" ${:.2}", rec.cost_usd)
+                    } else {
+                        String::new()
+                    },
+                    Style::default().fg(WARN),
+                ),
+            ]))
+        })
+        .collect();
 
-    // Build the stacked bar with inline labels
-    let mut used = 0usize;
-    for (i, &(label, color, count)) in segments.iter().enumerate() {
-        // Proportional width, ensure at least 1 char per segment
-        let raw_width = if i == segments.len() - 1 {
-            bar_width.saturating_sub(used)
-        } else {
-            ((count as f64 / total as f64) * bar_width as f64).round() as usize
-        };
-        let seg_width = raw_width.max(1).min(bar_width.saturating_sub(used));
-        if seg_width == 0 {
-            break;
-        }
-
-        // Format: "LABEL:COUNT" centered in segment, padded with '█'
-        let inline_label = format!("{}:{}", label, count);
-        let label_len = inline_label.len();
-
-        if seg_width >= label_len + 2 {
-            // Enough room for label with bar fill around it
-            let pad_total = seg_width - label_len;
-            let pad_left = pad_total / 2;
-            let pad_right = pad_total - pad_left;
-            let bar_left: String = "█".repeat(pad_left);
-            let bar_right: String = "█".repeat(pad_right);
-            spans.push(Span::styled(bar_left, Style::default().fg(color)));
-            spans.push(Span::styled(
-                inline_label,
-                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled(bar_right, Style::default().fg(color)));
-        } else if seg_width >= label_len {
-            // Just the label, no bar fill
-            let truncated = &inline_label[..seg_width];
-            spans.push(Span::styled(
-                truncated.to_string(),
-                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            // Too small for label, just fill with bar
-            let bar: String = "█".repeat(seg_width);
-            spans.push(Span::styled(bar, Style::default().fg(color)));
-        }
-
-        used += seg_width;
-    }
-
-    let line = Line::from(spans);
-    f.render_widget(Paragraph::new(line), area);
+    f.render_widget(List::new(items).block(block), area);
 }
 
 fn render_mini_event_log(f: &mut Frame, area: Rect, app: &App) {
@@ -3036,7 +2940,6 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("n", "Toggle desktop notifications on/off"));
     lines.push(key_line("c", "Scan and clean up orphaned worktrees"));
     lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
-    lines.push(key_line("b", "Toggle distribution bar (priority ↔ type)"));
     lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));
     lines.push(key_line("/", "Jump to issue by ID"));
     lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));

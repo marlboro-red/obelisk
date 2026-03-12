@@ -3,21 +3,6 @@ use std::collections::VecDeque;
 use std::io::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DistBarMode {
-    Priority,
-    Type,
-}
-
-impl DistBarMode {
-    pub fn toggle(&self) -> Self {
-        match self {
-            DistBarMode::Priority => DistBarMode::Type,
-            DistBarMode::Type => DistBarMode::Priority,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
     Priority,
     Type,
@@ -279,6 +264,18 @@ impl LogCategory {
             LogCategory::Poll => "POLL",
         }
     }
+}
+
+/// A completed issue entry for the recent completions feed on the Dashboard.
+#[derive(Debug, Clone)]
+pub struct CompletionRecord {
+    pub task_id: String,
+    pub title: String,
+    pub runtime: String,
+    pub model: String,
+    pub elapsed_secs: u64,
+    pub success: bool,
+    pub cost_usd: f64,
 }
 
 /// One agent's outcome within a persisted session record.
