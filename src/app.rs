@@ -1,5 +1,6 @@
 use crate::types::*;
 use ratatui::widgets::ListState;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 // All valid issue types for cycling the type filter
@@ -171,6 +172,29 @@ git log --oneline $DEFAULT_BRANCH~3..$DEFAULT_BRANCH   # should show your merge 
 | Issue is blocked | STOP. Report back. Do not work on blocked issues |
 | Already claimed by another agent | Run `bd ready --json` and pick different work |
 "#;
+
+const CONFIG_FILE: &str = "obelisk.toml";
+
+#[derive(Serialize, Deserialize, Default)]
+struct OrchestratorConfig {
+    runtime: Option<String>,
+    max_concurrent: Option<usize>,
+    auto_spawn: Option<bool>,
+    poll_interval_secs: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ModelsConfig {
+    claude: Option<String>,
+    codex: Option<String>,
+    copilot: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ObeliskConfig {
+    orchestrator: Option<OrchestratorConfig>,
+    models: Option<ModelsConfig>,
+}
 
 pub struct SpawnRequest {
     pub task: BeadTask,
@@ -402,6 +426,13 @@ pub struct App {
 
     /// When true, auto-send /exit to ClaudeCode agents when completion is detected
     pub auto_exit_on_completion: bool,
+
+    // Diff panel state
+    pub show_diff_panel: bool,
+    pub diff_data: Option<DiffData>,
+    pub diff_scroll: usize,
+    /// Frame count at which the last diff poll was triggered
+    pub diff_last_poll_frame: u64,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -440,6 +471,64 @@ fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, us
 
 impl App {
     pub fn new() -> Self {
+        let config_exists = std::path::Path::new(CONFIG_FILE).exists();
+        let config = if config_exists {
+            std::fs::read_to_string(CONFIG_FILE)
+                .ok()
+                .and_then(|s| toml::from_str::<ObeliskConfig>(&s).ok())
+                .unwrap_or_default()
+        } else {
+            ObeliskConfig::default()
+        };
+
+        let mut selected_runtime = Runtime::ClaudeCode;
+        let mut max_concurrent = 10usize;
+        let mut auto_spawn = false;
+        let mut poll_interval_secs = 30u64;
+        let mut model_indices: HashMap<Runtime, usize> = HashMap::from([
+            (Runtime::ClaudeCode, 0),
+            (Runtime::Codex, 0),
+            (Runtime::Copilot, 0),
+        ]);
+
+        if let Some(orch) = &config.orchestrator {
+            if let Some(r) = &orch.runtime {
+                selected_runtime = match r.as_str() {
+                    "claude" => Runtime::ClaudeCode,
+                    "codex" => Runtime::Codex,
+                    "copilot" => Runtime::Copilot,
+                    _ => Runtime::ClaudeCode,
+                };
+            }
+            if let Some(mc) = orch.max_concurrent {
+                max_concurrent = mc;
+            }
+            if let Some(asp) = orch.auto_spawn {
+                auto_spawn = asp;
+            }
+            if let Some(pi) = orch.poll_interval_secs {
+                poll_interval_secs = pi;
+            }
+        }
+
+        if let Some(models) = &config.models {
+            let pairs: &[(Runtime, &Option<String>)] = &[
+                (Runtime::ClaudeCode, &models.claude),
+                (Runtime::Codex, &models.codex),
+                (Runtime::Copilot, &models.copilot),
+            ];
+            for (runtime, model_opt) in pairs {
+                if let Some(model_str) = model_opt {
+                    let idx = runtime
+                        .models()
+                        .iter()
+                        .position(|m| *m == model_str.as_str())
+                        .unwrap_or(0);
+                    model_indices.insert(*runtime, idx);
+                }
+            }
+        }
+
         let session_id = generate_session_id();
         let history_sessions = load_history_sessions();
         let last_session_summary = history_sessions.last().map(|last| format!(
@@ -450,6 +539,7 @@ impl App {
             last.agents.len(),
         ));
 
+        let poll_countdown = poll_interval_secs as f64;
         let mut app = Self {
             ready_tasks: Vec::new(),
             agents: Vec::new(),
@@ -459,11 +549,11 @@ impl App {
             task_list_state: ListState::default(),
             agent_list_state: ListState::default(),
             log_scroll: 0,
-            selected_runtime: Runtime::ClaudeCode,
-            auto_spawn: false,
-            max_concurrent: 10,
-            poll_interval_secs: 30,
-            poll_countdown: 30.0,
+            selected_runtime,
+            auto_spawn,
+            max_concurrent,
+            poll_interval_secs,
+            poll_countdown,
             should_quit: false,
             next_unit: 0,
             claimed_task_ids: HashSet::new(),
@@ -479,11 +569,7 @@ impl App {
             throughput_history: VecDeque::from(vec![0; 60]),
             lines_this_tick: 0,
             alert_message: None,
-            model_indices: HashMap::from([
-                (Runtime::ClaudeCode, 0),
-                (Runtime::Codex, 0),
-                (Runtime::Copilot, 0),
-            ]),
+            model_indices,
             pty_states: HashMap::new(),
             interactive_mode: false,
             last_pty_size: (24, 120),
@@ -505,13 +591,51 @@ impl App {
             search_matches: Vec::new(),
             search_current_idx: 0,
             auto_exit_on_completion: true,
+            show_diff_panel: false,
+            diff_data: None,
+            diff_scroll: 0,
+            diff_last_poll_frame: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
+        if config_exists {
+            app.log(LogCategory::System, format!("Config loaded from {}", CONFIG_FILE));
+        } else {
+            app.log(LogCategory::System, "No config file found, using defaults".into());
+        }
         app.log(LogCategory::System, "System online".into());
         if let Some(summary) = last_session_summary {
             app.log(LogCategory::System, summary);
         }
         app
+    }
+
+    pub fn save_config(&mut self) {
+        let runtime_str = match self.selected_runtime {
+            Runtime::ClaudeCode => "claude",
+            Runtime::Codex => "codex",
+            Runtime::Copilot => "copilot",
+        };
+        let config = ObeliskConfig {
+            orchestrator: Some(OrchestratorConfig {
+                runtime: Some(runtime_str.to_string()),
+                max_concurrent: Some(self.max_concurrent),
+                auto_spawn: Some(self.auto_spawn),
+                poll_interval_secs: Some(self.poll_interval_secs),
+            }),
+            models: Some(ModelsConfig {
+                claude: Some(self.selected_model_for(Runtime::ClaudeCode).to_string()),
+                codex: Some(self.selected_model_for(Runtime::Codex).to_string()),
+                copilot: Some(self.selected_model_for(Runtime::Copilot).to_string()),
+            }),
+        };
+        match toml::to_string_pretty(&config) {
+            Ok(toml_str) => {
+                if std::fs::write(CONFIG_FILE, toml_str).is_ok() {
+                    self.log(LogCategory::System, format!("Config saved to {}", CONFIG_FILE));
+                }
+            }
+            Err(_) => {}
+        }
     }
 
     /// Build a SessionRecord from the current session and append it to the
@@ -609,6 +733,24 @@ impl App {
             if self.frame_count > *expires {
                 self.alert_message = None;
             }
+        }
+
+        // Auto-exit timeout: force-complete agents that sent /exit but did not exit
+        let timeout = std::time::Duration::from_secs(10);
+        let timed_out: Vec<usize> = self
+            .agents
+            .iter()
+            .filter(|a| {
+                a.completion_detected
+                    && matches!(a.status, AgentStatus::Starting | AgentStatus::Running)
+                    && a.exit_sent_at
+                        .map(|t| t.elapsed() > timeout)
+                        .unwrap_or(false)
+            })
+            .map(|a| a.id)
+            .collect();
+        for id in timed_out {
+            self.force_complete_agent(id);
         }
     }
 
@@ -1405,6 +1547,38 @@ impl App {
         }
     }
 
+    pub fn toggle_diff_panel(&mut self) {
+        self.show_diff_panel = !self.show_diff_panel;
+        if self.show_diff_panel {
+            self.diff_scroll = 0;
+            // Force an immediate diff poll by resetting the timer
+            self.diff_last_poll_frame = 0;
+        } else {
+            self.diff_data = None;
+        }
+    }
+
+    pub fn on_diff_result(&mut self, agent_id: usize, diff: DiffData) {
+        // Only accept if we're still viewing this agent with diff panel open
+        if self.show_diff_panel && self.selected_agent_id == Some(agent_id) {
+            self.diff_data = Some(diff);
+        }
+    }
+
+    /// Returns the worktree path for the currently selected agent, if it has one
+    /// and the worktree hasn't been cleaned up.
+    pub fn selected_agent_worktree(&self) -> Option<String> {
+        self.selected_agent_id
+            .and_then(|id| self.agents.iter().find(|a| a.id == id))
+            .and_then(|a| {
+                if a.worktree_cleaned {
+                    None
+                } else {
+                    a.worktree_path.clone()
+                }
+            })
+    }
+
     pub fn selected_model(&self) -> &'static str {
         let idx = self.model_indices.get(&self.selected_runtime).copied().unwrap_or(0);
         let models = self.selected_runtime.models();
@@ -1494,6 +1668,84 @@ impl App {
         // Also count for throughput tracking (approximate: count newlines)
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
         self.lines_this_tick = self.lines_this_tick.saturating_add(newlines.max(1));
+
+        // Completion detection: scan PTY output for beads issue closure markers
+        if self.auto_exit_on_completion {
+            self.check_completion_in_pty_data(agent_id, data);
+        }
+    }
+
+    fn check_completion_in_pty_data(&mut self, agent_id: usize, data: &[u8]) {
+        let agent = match self.agents.iter_mut().find(|a| a.id == agent_id) {
+            Some(a) => a,
+            None => return,
+        };
+        if agent.runtime != Runtime::ClaudeCode { return; }
+        if !matches!(agent.status, AgentStatus::Running | AgentStatus::Starting) { return; }
+        if agent.completion_detected { return; }
+
+        let text = String::from_utf8_lossy(data);
+        agent.completion_buf.push_str(&text);
+        if agent.completion_buf.len() > 8192 {
+            let excess = agent.completion_buf.len() - 8192;
+            let drain_to = (excess..)
+                .find(|&i| agent.completion_buf.is_char_boundary(i))
+                .unwrap_or(excess);
+            agent.completion_buf.drain(..drain_to);
+        }
+
+        let closed = agent.completion_buf.contains("\"status\": \"closed\"")
+            || agent.completion_buf.contains("\"status\":\"closed\"")
+            || agent.completion_buf.contains("status: closed");
+        if !closed { return; }
+
+        agent.completion_detected = true;
+        agent.exit_sent_at = Some(std::time::Instant::now());
+        let unit = agent.unit_number;
+
+        self.log(
+            LogCategory::Complete,
+            format!("AGENT-{:02} auto-completed: detected issue closure", unit),
+        );
+
+        if let Some(state) = self.pty_states.get_mut(&agent_id) {
+            use std::io::Write;
+            let _ = state.writer.write_all(b"/exit");
+            let _ = state.writer.flush();
+        }
+    }
+
+    fn force_complete_agent(&mut self, agent_id: usize) {
+        let (unit, pid) = {
+            let agent = match self.agents.iter_mut().find(|a| a.id == agent_id) {
+                Some(a) => a,
+                None => return,
+            };
+            if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+                return;
+            }
+            agent.status = AgentStatus::Completed;
+            agent.elapsed_secs = agent.started_at.elapsed().as_secs();
+            (agent.unit_number, agent.pid)
+        };
+        self.total_completed += 1;
+        if let Some(pid) = pid {
+            #[cfg(unix)]
+            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+            #[cfg(windows)]
+            {
+                use std::process::Command;
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+        self.log(
+            LogCategory::Alert,
+            format!("AGENT-{:02} force-terminated after auto-exit timeout", unit),
+        );
     }
 
     /// Write raw bytes to the selected agent's PTY (interactive mode).
@@ -1605,7 +1857,73 @@ impl App {
             0.0
         };
 
-        (total_sessions, all_time_completed, all_time_failed, avg_duration)
+        let all_time_cost: f64 = self.history_sessions
+            .iter()
+            .map(|s| s.total_cost_usd)
+            .sum();
+
+        (total_sessions, all_time_completed, all_time_failed, avg_duration, all_time_cost)
+    }
+
+    /// Recalculate estimated cost for a single agent based on its token counts and model pricing.
+    fn recalculate_agent_cost(&mut self, agent_id: usize) {
+        if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
+            let pricing = self.model_pricing.get(&agent.model);
+            let old_cost = agent.estimated_cost_usd;
+            agent.estimated_cost_usd = if let Some(p) = pricing {
+                (agent.input_tokens as f64 * p.input_per_mtok
+                    + agent.output_tokens as f64 * p.output_per_mtok)
+                    / 1_000_000.0
+            } else {
+                0.0
+            };
+            if let Some(threshold) = self.cost_threshold {
+                if agent.estimated_cost_usd >= threshold && old_cost < threshold {
+                    let unit = agent.unit_number;
+                    let cost = agent.estimated_cost_usd;
+                    let msg = format!(
+                        "AGENT-{:02} cost ${:.2} exceeds threshold ${:.2}!",
+                        unit, cost, threshold
+                    );
+                    self.alert_message = Some((msg.clone(), self.frame_count + 100));
+                    self.log(LogCategory::Alert, msg);
+                }
+            }
+        }
+    }
+
+    /// Sum of estimated cost across all agents in the current session.
+    pub fn session_total_cost(&self) -> f64 {
+        self.agents.iter().map(|a| a.estimated_cost_usd).sum()
+    }
+
+    /// Sum of input + output tokens across all agents in the current session.
+    pub fn session_total_tokens(&self) -> (u64, u64) {
+        let input: u64 = self.agents.iter().map(|a| a.input_tokens).sum();
+        let output: u64 = self.agents.iter().map(|a| a.output_tokens).sum();
+        (input, output)
+    }
+}
+
+/// Format a USD cost for display.
+pub fn format_cost(usd: f64) -> String {
+    if usd < 0.01 {
+        format!("${:.4}", usd)
+    } else if usd < 100.0 {
+        format!("${:.2}", usd)
+    } else {
+        format!("${:.0}", usd)
+    }
+}
+
+/// Format a token count for display with K/M suffixes.
+pub fn format_tokens(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}K", count as f64 / 1_000.0)
+    } else {
+        format!("{}", count)
     }
 }
 

@@ -1,10 +1,19 @@
 {
+<<<<<<< HEAD
   "last_dolt_commit": "377rcea7amif0rb3r6ebkhcfr2dgas34",
   "last_event_id": 0,
   "timestamp": "2026-03-12T05:13:46.5680455Z",
   "counts": {
     "issues": 32,
     "events": 87,
+=======
+  "last_dolt_commit": "dvi1hepc99ne03lqmkc6pc9cbvp9l8uv",
+  "last_event_id": 0,
+  "timestamp": "2026-03-12T04:59:33.5358879Z",
+  "counts": {
+    "issues": 32,
+    "events": 81,
+>>>>>>> obelisk-06k
     "comments": 0,
     "dependencies": 19,
     "labels": 0,

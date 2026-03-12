@@ -301,6 +301,21 @@ pub struct PtyHandle {
     pub parser: vt100::Parser,
 }
 
+/// Parsed git diff data for an agent's worktree.
+#[derive(Debug, Clone)]
+pub struct DiffData {
+    /// Raw diff lines (including +/- prefixes)
+    pub lines: Vec<String>,
+    /// Summary: number of files changed
+    pub files_changed: usize,
+    /// Summary: total insertions
+    pub insertions: usize,
+    /// Summary: total deletions
+    pub deletions: usize,
+    /// List of changed file paths
+    pub changed_files: Vec<String>,
+}
+
 pub enum AppEvent {
     Terminal(crossterm::event::Event),
     Tick,
@@ -318,4 +333,6 @@ pub enum AppEvent {
     WorktreeOrphans(Vec<String>),
     /// Result of a worktree cleanup operation
     WorktreeCleaned { cleaned: Vec<String>, failed: Vec<String> },
+    /// Result of a git diff poll for an agent's worktree
+    DiffResult { agent_id: usize, diff: DiffData },
 }
