@@ -87,6 +87,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             View::History => render_history(f, chunks[2], app),
             View::SplitPane => render_split_pane(f, chunks[2], app),
             View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
+            View::DepGraph => render_dep_graph(f, chunks[2], app),
         }
 
         render_info_bar_compact(f, chunks[3], app);
@@ -124,6 +125,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             View::History => render_history(f, chunks[2], app),
             View::SplitPane => render_split_pane(f, chunks[2], app),
             View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
+            View::DepGraph => render_dep_graph(f, chunks[2], app),
         }
 
         render_status_gauges(f, chunks[3], app);
@@ -216,6 +218,7 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         Line::from(" 4:HISTORY "),
         Line::from(" 5:SPLIT "),
         Line::from(" 6:WORKTREES "),
+        Line::from(" 7:DEPS "),
     ];
 
     let selected = match app.active_view {
@@ -225,6 +228,7 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         View::History => 3,
         View::SplitPane => 4,
         View::WorktreeOverview => 5,
+        View::DepGraph => 6,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -1896,6 +1900,223 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
 }
 
 // ══════════════════════════════════════════════════════════
+//  DEPENDENCY GRAPH
+// ══════════════════════════════════════════════════════════
+
+fn dep_status_color(status: &str) -> Color {
+    match status {
+        "closed" => ACCENT,
+        "in_progress" => INFO,
+        "blocked" => DANGER,
+        "deferred" => WARN,
+        _ => MUTED, // "open" and others
+    }
+}
+
+fn dep_status_symbol(status: &str) -> &'static str {
+    match status {
+        "closed" => "✓",
+        "in_progress" => "▶",
+        "blocked" => "✗",
+        "deferred" => "◌",
+        _ => "○", // "open"
+    }
+}
+
+fn render_dep_graph(f: &mut Frame, area: Rect, app: &App) {
+    let total = app.dep_graph_rows.len();
+    let closed_count = app.dep_graph_rows.iter().filter(|r| r.node.status == "closed").count();
+    let in_progress_count = app.dep_graph_rows.iter().filter(|r| r.node.status == "in_progress").count();
+    let blocked_count = app.dep_graph_rows.iter().filter(|r| r.node.status == "blocked").count();
+
+    let title = format!(
+        "◆ DEPENDENCY GRAPH [{}]",
+        total,
+    );
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(PRIMARY))
+        .title(Span::styled(
+            format!(" {} ", title),
+            Style::default()
+                .fg(PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    if app.dep_graph_rows.is_empty() {
+        let empty = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No dependency data loaded",
+                Style::default().fg(MUTED),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Data will load automatically...",
+                Style::default().fg(MUTED),
+            )),
+        ])
+        .block(block);
+        f.render_widget(empty, area);
+        return;
+    }
+
+    // Layout: summary bar on top, tree list below
+    let v_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Summary bar
+            Constraint::Min(5),   // Tree list
+        ])
+        .split(block.inner(area));
+
+    f.render_widget(block, area);
+
+    // Summary bar
+    let summary = Line::from(vec![
+        Span::styled("  TOTAL: ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}", total),
+            Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("    DONE: ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}", closed_count),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("    IN PROGRESS: ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}", in_progress_count),
+            Style::default().fg(INFO).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("    BLOCKED: ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}", blocked_count),
+            if blocked_count > 0 {
+                Style::default().fg(DANGER).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            },
+        ),
+    ]);
+    let summary_block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(MUTED))
+        .style(Style::default().bg(PANEL_BG));
+    f.render_widget(
+        Paragraph::new(summary).block(summary_block),
+        v_chunks[0],
+    );
+
+    // Tree list
+    let items: Vec<ListItem> = app
+        .dep_graph_rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let depth = row.node.depth;
+            let indent = "  ".repeat(depth);
+
+            // Tree connector
+            let tree_prefix = if row.has_children {
+                if row.collapsed { "▶ " } else { "▼ " }
+            } else {
+                "  "
+            };
+
+            // Selection indicator
+            let sel_indicator = if Some(i) == app.dep_graph_list_state.selected() {
+                Span::styled(
+                    " ▸ ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled("   ", Style::default())
+            };
+
+            let status_color = dep_status_color(&row.node.status);
+            let status_sym = dep_status_symbol(&row.node.status);
+
+            // Priority badge
+            let priority_str = row.node.priority
+                .map(|p| format!("P{} ", p))
+                .unwrap_or_default();
+
+            // Type badge
+            let type_str = row.node.issue_type
+                .as_deref()
+                .map(|t| format!("[{}] ", t))
+                .unwrap_or_default();
+
+            // Title (truncate to fit)
+            let max_title = 50usize;
+            let title = if row.node.title.len() > max_title {
+                format!("{}...", &row.node.title[..max_title.saturating_sub(3)])
+            } else {
+                row.node.title.clone()
+            };
+
+            let row_bg = if row.node.status == "blocked" {
+                Style::default().bg(Color::Rgb(40, 10, 10))
+            } else {
+                Style::default()
+            };
+
+            ListItem::new(Line::from(vec![
+                sel_indicator,
+                Span::styled(
+                    format!("{}{}", indent, tree_prefix),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(
+                    format!("{} ", status_sym),
+                    Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("[{}] ", row.node.id),
+                    Style::default().fg(SECONDARY),
+                ),
+                Span::styled(
+                    priority_str,
+                    Style::default().fg(WARN),
+                ),
+                Span::styled(
+                    type_str,
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(
+                    title,
+                    Style::default().fg(if row.node.status == "closed" { MUTED } else { BRIGHT }),
+                ),
+            ])).style(row_bg)
+        })
+        .collect();
+
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(Color::Rgb(20, 20, 35))
+            .add_modifier(Modifier::BOLD),
+    );
+
+    f.render_stateful_widget(list, v_chunks[1], &mut app.dep_graph_list_state.clone());
+
+    // Scrollbar if needed
+    if total > v_chunks[1].height as usize {
+        let pos = app.dep_graph_list_state.selected().unwrap_or(0);
+        let mut scrollbar_state = ScrollbarState::new(total).position(pos);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .style(Style::default().fg(PRIMARY)),
+            v_chunks[1],
+            &mut scrollbar_state,
+        );
+    }
+}
+
+// ══════════════════════════════════════════════════════════
 //  WORKTREE OVERVIEW
 // ══════════════════════════════════════════════════════════
 
@@ -2437,7 +2658,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("X", "dismiss all"),
                 ("+/-", "slots"),
                 ("w", "worktrees"),
-                ("1-6", "view"),
+                ("1-7", "view"),
                 ("?", "help"),
                 ("q", "quit"),
             ]
@@ -2456,7 +2677,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("j/k", "nav"),
                 ("w", "worktrees"),
                 ("+/-", "slots"),
-                ("1-6", "view"),
+                ("1-7", "view"),
                 ("?", "help"),
                 ("q", "quit"),
             ]
@@ -2496,14 +2717,14 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
         },
         View::EventLog => vec![
             ("↑↓", "scroll"),
-            ("1-4", "view"),
+            ("1-7", "view"),
             ("?", "help"),
             ("q", "quit"),
         ],
         View::History => vec![
             ("↑↓", "scroll"),
             ("PgUp/Dn", "page"),
-            ("1-4", "view"),
+            ("1-7", "view"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -2512,14 +2733,21 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("↑↓", "scroll"),
             ("Enter", "detail"),
             ("g", "pin/unpin"),
-            ("1-6", "view"),
+            ("1-7", "view"),
             ("?", "help"),
             ("Esc/q", "back"),
         ],
         View::WorktreeOverview => vec![
             ("↑↓/j/k", "nav"),
             ("f", "sort"),
-            ("1-6", "view"),
+            ("1-7", "view"),
+            ("?", "help"),
+            ("Esc/q", "back"),
+        ],
+        View::DepGraph => vec![
+            ("↑↓/j/k", "nav"),
+            ("Enter", "expand/collapse"),
+            ("1-7", "view"),
             ("?", "help"),
             ("Esc/q", "back"),
         ],
@@ -2614,7 +2842,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("x", "Dismiss selected finished agent (focus: Agents)"));
     lines.push(key_line("X", "Dismiss ALL finished agents (focus: Agents)"));
     lines.push(key_line("+/-", "Increase/decrease max concurrent slots"));
-    lines.push(key_line("1-4", "Switch view"));
+    lines.push(key_line("1-7", "Switch view"));
     lines.push(key_line("q", "Quit"));
     lines.push(Line::from(""));
 
@@ -2649,7 +2877,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(section_header("EVENT LOG"));
     lines.push(key_line("↑↓", "Scroll log"));
     lines.push(key_line("f", "Cycle category filter"));
-    lines.push(key_line("1-4", "Switch view"));
+    lines.push(key_line("1-7", "Switch view"));
     lines.push(key_line("q", "Quit"));
     lines.push(Line::from(""));
 
@@ -2657,7 +2885,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(section_header("HISTORY"));
     lines.push(key_line("↑↓", "Scroll session list"));
     lines.push(key_line("PgUp/PgDn", "Scroll by 10 sessions"));
-    lines.push(key_line("1-4", "Switch view"));
+    lines.push(key_line("1-7", "Switch view"));
     lines.push(key_line("q", "Quit"));
     lines.push(Line::from(""));
 
@@ -2667,6 +2895,12 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("↑↓", "Scroll focused pane output"));
     lines.push(key_line("Enter", "Open Agent Detail for focused pane"));
     lines.push(key_line("g", "Pin/unpin agent to focused pane"));
+    lines.push(key_line("Esc / q", "Return to Dashboard"));
+    lines.push(Line::from(""));
+    // ── Dependency Graph ──
+    lines.push(section_header("DEPENDENCY GRAPH"));
+    lines.push(key_line("↑↓ / j/k", "Navigate dependency list"));
+    lines.push(key_line("Enter", "Expand/collapse subtree"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
     lines.push(Line::from(""));
     // ── Worktree Overview ──

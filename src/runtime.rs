@@ -1,4 +1,4 @@
-use crate::types::{BeadTask, DiffData, PtyHandle, Runtime};
+use crate::types::{BeadTask, DepNode, DiffData, PtyHandle, Runtime};
 use portable_pty::{CommandBuilder, PtySize};
 use tokio::process::Command;
 
@@ -214,6 +214,69 @@ pub async fn poll_ready() -> Result<Vec<crate::types::BeadTask>, String> {
 
     serde_json::from_str(trimmed)
         .map_err(|e| format!("Failed to parse bd ready JSON: {}", e))
+}
+
+/// Poll all issues with dependencies via `bd dep tree` for each root issue.
+/// We use `bd list --json` to find all issues, then `bd dep tree` on each root.
+/// For simplicity, we just run `bd list --json` and get all issues, then
+/// use `bd dep tree <id> --direction both --json` on the first open/in-progress issue.
+pub async fn poll_dep_graph() -> Result<Vec<DepNode>, String> {
+    // Get all issues
+    let output = Command::new("bd")
+        .args(["list", "--json"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run bd list: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("bd list failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return Ok(Vec::new());
+    }
+
+    // Parse as flat list of DepNode (same JSON shape as BeadTask with extra fields)
+    let nodes: Vec<DepNode> = serde_json::from_str(trimmed)
+        .map_err(|e| format!("Failed to parse bd list JSON: {}", e))?;
+
+    // Now get dependency relationships by running dep tree on each non-closed root
+    let mut all_nodes = nodes;
+
+    // Try to enrich with dependency tree data from a root issue
+    // Find any issue that has deps (try the first open one)
+    if let Some(root) = all_nodes.iter().find(|n| n.status != "closed") {
+        let root_id = root.id.clone();
+        let dep_output = Command::new("bd")
+            .args(["dep", "tree", &root_id, "--direction", "both", "--json"])
+            .output()
+            .await;
+
+        if let Ok(dep_out) = dep_output {
+            if dep_out.status.success() {
+                let dep_stdout = String::from_utf8_lossy(&dep_out.stdout);
+                let dep_trimmed = dep_stdout.trim();
+                if !dep_trimmed.is_empty() && dep_trimmed != "null" {
+                    if let Ok(dep_nodes) = serde_json::from_str::<Vec<DepNode>>(dep_trimmed) {
+                        // Merge dep tree data — update depth/parent_id for known nodes
+                        for dn in &dep_nodes {
+                            if let Some(existing) = all_nodes.iter_mut().find(|n| n.id == dn.id) {
+                                existing.depth = dn.depth;
+                                existing.parent_id = dn.parent_id.clone();
+                            } else {
+                                all_nodes.push(dn.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(all_nodes)
 }
 
 /// Run `git diff` + `git diff --cached` in an agent's worktree and parse the result

@@ -213,6 +213,23 @@ fn process_event(
                     let _ = tx_wt.send(AppEvent::WorktreeScanned(worktrees));
                 });
             }
+            // Periodic dep graph refresh (~every 5s = 50 ticks at 100ms) when panel is active
+            if app.active_view == View::DepGraph
+                && app.frame_count.saturating_sub(app.dep_graph_last_poll_frame) >= 50
+            {
+                app.dep_graph_last_poll_frame = app.frame_count;
+                let tx_dep = tx.clone();
+                tokio::spawn(async move {
+                    match runtime::poll_dep_graph().await {
+                        Ok(nodes) => {
+                            let _ = tx_dep.send(AppEvent::DepGraphResult(nodes));
+                        }
+                        Err(e) => {
+                            let _ = tx_dep.send(AppEvent::DepGraphFailed(e));
+                        }
+                    }
+                });
+            }
             // Periodic diff refresh (~every 3s = 30 ticks at 100ms)
             if app.show_diff_panel
                 && app.active_view == View::AgentDetail
@@ -264,6 +281,12 @@ fn process_event(
         }
         AppEvent::WorktreeScanned(worktrees) => {
             app.on_worktree_scanned(worktrees);
+        }
+        AppEvent::DepGraphResult(nodes) => {
+            app.on_dep_graph_result(nodes);
+        }
+        AppEvent::DepGraphFailed(error) => {
+            app.on_dep_graph_failed(error);
         }
         AppEvent::Terminal(Event::Resize(_, _)) => {
             // PTY resize is handled in the render loop via sync_pty_sizes,
@@ -412,8 +435,12 @@ fn handle_key(
         KeyCode::Char('f') if app.active_view == View::WorktreeOverview => {
             app.cycle_worktree_sort();
         }
+        // ── Dep graph: Enter toggles collapse/expand ──
+        KeyCode::Enter if app.active_view == View::DepGraph => {
+            app.dep_graph_toggle_collapse();
+        }
         KeyCode::Char('q') => {
-            if app.active_view == View::AgentDetail || app.active_view == View::SplitPane || app.active_view == View::WorktreeOverview {
+            if app.active_view == View::AgentDetail || app.active_view == View::SplitPane || app.active_view == View::WorktreeOverview || app.active_view == View::DepGraph {
                 app.interactive_mode = false;
                 app.search_active = false;
                 app.search_query.clear();
@@ -449,6 +476,11 @@ fn handle_key(
             app.active_view = View::WorktreeOverview;
             // Trigger immediate scan
             app.worktree_last_scan_frame = 0;
+        }
+        KeyCode::Char('7') => {
+            app.active_view = View::DepGraph;
+            // Trigger immediate poll
+            app.dep_graph_last_poll_frame = 0;
         }
         KeyCode::Char('w') if app.active_view == View::Dashboard => {
             app.active_view = View::WorktreeOverview;
@@ -824,13 +856,13 @@ fn handle_mouse(
             if let Some(tab_area) = app.layout_areas.tab_bar {
                 if in_rect(&tab_area) {
                     // Tabs are laid out evenly with dividers
-                    // Tab titles: " 1:DASHBOARD ", " 2:AGENTS ", " 3:EVENT LOG ", " 4:HISTORY ", " 5:SPLIT "
+                    // Tab titles: " 1:DASHBOARD ", " 2:AGENTS ", " 3:EVENT LOG ", " 4:HISTORY ", " 5:SPLIT ", " 6:WORKTREES ", " 7:DEPS "
                     let rel_x = col.saturating_sub(tab_area.x) as usize;
                     // Each tab is ~15 chars + 3 char divider; estimate positions
-                    // Use proportional split: divide width by 5
-                    let tab_width = tab_area.width as usize / 5;
+                    // Use proportional split: divide width by 7
+                    let tab_width = tab_area.width as usize / 7;
                     if tab_width > 0 {
-                        let tab_idx = (rel_x / tab_width).min(4);
+                        let tab_idx = (rel_x / tab_width).min(6);
                         match tab_idx {
                             0 => { app.interactive_mode = false; app.active_view = View::Dashboard; }
                             1 => {
@@ -844,6 +876,14 @@ fn handle_mouse(
                             4 => {
                                 app.auto_fill_split_panes();
                                 app.active_view = View::SplitPane;
+                            }
+                            5 => {
+                                app.active_view = View::WorktreeOverview;
+                                app.worktree_last_scan_frame = 0;
+                            }
+                            6 => {
+                                app.active_view = View::DepGraph;
+                                app.dep_graph_last_poll_frame = 0;
                             }
                             _ => {}
                         }
@@ -945,6 +985,7 @@ fn handle_mouse(
                     }
                 }
                 View::WorktreeOverview => { app.navigate_up(); }
+                View::DepGraph => { app.navigate_up(); }
             }
         }
 
@@ -995,6 +1036,7 @@ fn handle_mouse(
                     }
                 }
                 View::WorktreeOverview => { app.navigate_down(); }
+                View::DepGraph => { app.navigate_down(); }
             }
         }
 

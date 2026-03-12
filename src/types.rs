@@ -310,6 +310,34 @@ pub enum View {
     History,
     SplitPane,
     WorktreeOverview,
+    DepGraph,
+}
+
+/// A node in the dependency graph, parsed from `bd dep tree --json`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct DepNode {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub issue_type: Option<String>,
+    #[serde(default)]
+    pub depth: usize,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// A flattened row for rendering the dep graph tree view.
+#[derive(Debug, Clone)]
+pub struct DepGraphRow {
+    pub node: DepNode,
+    pub collapsed: bool,
+    pub has_children: bool,
 }
 
 /// Status classification for a worktree entry in the overview panel.
@@ -426,4 +454,8 @@ pub enum AppEvent {
     DiffResult { agent_id: usize, diff: DiffData },
     /// Result of a worktree scan for the overview panel
     WorktreeScanned(Vec<(String, String)>),
+    /// Result of a dependency graph poll
+    DepGraphResult(Vec<DepNode>),
+    /// Dependency graph poll failed
+    DepGraphFailed(String),
 }

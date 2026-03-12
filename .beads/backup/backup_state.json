@@ -1,19 +1,10 @@
 {
-<<<<<<< HEAD
   "last_dolt_commit": "a2pdrlhh7cv54hgn3bfshihd20eh6c0l",
   "last_event_id": 0,
-  "timestamp": "2026-03-12T07:08:26.5938478Z",
+  "timestamp": "2026-03-12T07:07:40.9188715Z",
   "counts": {
     "issues": 52,
     "events": 167,
-=======
-  "last_dolt_commit": "bdekt0aeo5p9je2h8m6vapam40c5lak6",
-  "last_event_id": 0,
-  "timestamp": "2026-03-12T07:10:52.4073803Z",
-  "counts": {
-    "issues": 52,
-    "events": 171,
->>>>>>> obelisk-254
     "comments": 0,
     "dependencies": 25,
     "labels": 0,
