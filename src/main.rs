@@ -372,7 +372,7 @@ fn handle_key(
     // ── Kill confirmation dialog: intercept y/n/Esc ──
     if app.confirm_kill_agent_id.is_some() {
         match key.code {
-            KeyCode::Char('y') => {
+            KeyCode::Char('y') | KeyCode::Enter => {
                 let agent_id = app.confirm_kill_agent_id.take().unwrap();
                 if let Some((_, worktree)) = app.kill_agent(agent_id) {
                     if let Some(worktree_path) = worktree {

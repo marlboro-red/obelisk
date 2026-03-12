@@ -2754,7 +2754,7 @@ fn render_kill_confirm_dialog(f: &mut Frame, area: Rect, app: &App, agent_id: us
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  [y] ", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
+            Span::styled("  [y/Enter] ", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
             Span::styled("Confirm   ", Style::default().fg(BRIGHT)),
             Span::styled("[n/Esc] ", Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD)),
             Span::styled("Cancel", Style::default().fg(BRIGHT)),
