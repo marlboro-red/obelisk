@@ -11,6 +11,12 @@ use std::sync::LazyLock;
 // All valid issue types for cycling the type filter
 const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
 
+// ── CPR stripping regex (byte-level) ──
+// Matches cursor-position-report sequences like ESC[1;1R that may leak into PTY output.
+static RE_CPR: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
+    regex::bytes::Regex::new(r"\x1b\[\d+;\d+R").unwrap()
+});
+
 // ── Token parsing regexes ──
 static RE_INPUT_TOKENS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)input[_ ]tokens?[:\s]+([0-9][0-9,]*)").unwrap()
@@ -2096,14 +2102,19 @@ impl App {
         if let Some(state) = self.pty_states.get_mut(&agent_id) {
             // Intercept DSR query (ESC[6n) from child process and reply with CPR.
             // ConPTY on Windows sends this on startup; without a response it buffers
-            // all output indefinitely. On macOS/Linux this sequence is not sent, so
-            // no spurious response leaks into the terminal.
-            if data.windows(4).any(|w| w == b"\x1b[6n") {
-                use std::io::Write;
-                let _ = state.writer.write_all(b"\x1b[1;1R");
-                let _ = state.writer.flush();
+            // all output indefinitely. On macOS/Linux the CPR response leaks back as
+            // visible text (^[[1;1R), so only send it on Windows.
+            if cfg!(target_os = "windows") {
+                if data.windows(4).any(|w| w == b"\x1b[6n") {
+                    use std::io::Write;
+                    let _ = state.writer.write_all(b"\x1b[1;1R");
+                    let _ = state.writer.flush();
+                }
             }
-            state.parser.process(data);
+            // Strip any CPR responses (ESC[row;colR) that leak into the output
+            // stream before feeding the vt100 parser — defense-in-depth.
+            let cleaned = RE_CPR.replace_all(data, &b""[..]);
+            state.parser.process(&cleaned);
         }
         // Capture raw PTY bytes for log export
         if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
