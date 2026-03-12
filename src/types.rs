@@ -420,16 +420,6 @@ pub struct DiffData {
     pub changed_files: Vec<String>,
 }
 
-/// Stores layout rectangles computed during rendering, used for mouse hit-testing.
-#[derive(Debug, Clone, Default)]
-pub struct LayoutAreas {
-    pub tab_bar: Option<ratatui::layout::Rect>,
-    pub ready_queue: Option<ratatui::layout::Rect>,
-    pub agent_panel: Option<ratatui::layout::Rect>,
-    pub agent_detail_output: Option<ratatui::layout::Rect>,
-    pub split_panes: [Option<ratatui::layout::Rect>; 4],
-}
-
 pub enum AppEvent {
     Terminal(crossterm::event::Event),
     Tick,
