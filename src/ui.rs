@@ -1700,7 +1700,15 @@ fn render_diff_panel(f: &mut Frame, area: Rect, app: &App) {
 // ══════════════════════════════════════════════════════════
 
 fn render_event_log(f: &mut Frame, area: Rect, app: &App) {
-    let block = primary_block("◆ SYSTEM LOG");
+    let total = app.event_log.len();
+    let title = match app.log_category_filter {
+        None => "◆ SYSTEM LOG".to_string(),
+        Some(cat) => {
+            let filtered = app.event_log.iter().filter(|e| e.category == cat).count();
+            format!("◆ EVENT LOG [{}/{}] [{}]", filtered, total, cat.label())
+        }
+    };
+    let block = primary_block(&title);
 
     if app.event_log.is_empty() {
         let p = Paragraph::new(Line::from(Span::styled(
@@ -1715,8 +1723,12 @@ fn render_event_log(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     let visible = inner.height as usize;
 
-    let items: Vec<ListItem> = app
-        .event_log
+    let filtered_entries: Vec<&LogEntry> = match app.log_category_filter {
+        None => app.event_log.iter().collect(),
+        Some(cat) => app.event_log.iter().filter(|e| e.category == cat).collect(),
+    };
+
+    let items: Vec<ListItem> = filtered_entries
         .iter()
         .skip(app.log_scroll)
         .take(visible)
@@ -2633,6 +2645,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     // ── Event Log ──
     lines.push(section_header("EVENT LOG"));
     lines.push(key_line("↑↓", "Scroll log"));
+    lines.push(key_line("f", "Cycle category filter"));
     lines.push(key_line("1-4", "Switch view"));
     lines.push(key_line("q", "Quit"));
     lines.push(Line::from(""));

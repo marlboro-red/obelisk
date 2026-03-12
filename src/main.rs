@@ -404,6 +404,10 @@ fn handle_key(
     }
 
     match key.code {
+        // Event log category filter cycling
+        KeyCode::Char('f') if app.active_view == View::EventLog => {
+            app.cycle_log_category_filter();
+        }
         // Worktree overview sort toggle
         KeyCode::Char('f') if app.active_view == View::WorktreeOverview => {
             app.cycle_worktree_sort();
