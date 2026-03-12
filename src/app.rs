@@ -411,8 +411,6 @@ pub struct App {
     // Interactive terminal mode — keystrokes go to the agent's PTY
     pub interactive_mode: bool,
 
-    // Double-Escape detection for PTY detach
-    pub last_esc_press: Option<std::time::Instant>,
 
     // Last known PTY inner area (rows, cols) — used to avoid redundant resizes
     pub last_pty_size: (u16, u16),
@@ -678,7 +676,6 @@ impl App {
             model_indices,
             pty_states: HashMap::new(),
             interactive_mode: false,
-            last_esc_press: None,
             last_pty_size: (24, 120),
             show_help: false,
             last_poll_ok: true,

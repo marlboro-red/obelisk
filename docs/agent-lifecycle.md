@@ -232,8 +232,7 @@ is forwarded to the PTY — normal obelisk keybindings are bypassed.
 
 ### Detach
 
-Press `Esc` twice quickly (double-tap within 300ms). Also auto-detaches when
-the agent exits.
+Press `F2`. Also auto-detaches when the agent exits.
 
 ### Key Translation
 

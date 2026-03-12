@@ -69,7 +69,7 @@ Full-screen PTY output for the selected agent. Shows the agent's live terminal o
 
 Features:
 - **Observe mode** — Watch the agent work with scrollable output
-- **Interactive mode** — Press `i` to attach to the agent's PTY and type commands directly (double-tap `Esc` to detach)
+- **Interactive mode** — Press `i` to attach to the agent's PTY and type commands directly (`F2` to detach)
 - **Search** — Press `/` to search the visible terminal buffer; `n`/`N` to cycle matches
 - **Diff panel** — Press `d` to toggle a live git diff view of the agent's worktree
 - **Log export** — Press `e` to export the agent's raw PTY log to a file
@@ -194,7 +194,7 @@ When focused on the **Agent List**:
 
 | Key | Action |
 |-----|--------|
-| `Esc Esc` | Detach from PTY (return to Observe mode) |
+| `F2` | Detach from PTY (return to Observe mode) |
 | *all other keys* | Forwarded to the agent's PTY |
 
 ### Event Log
