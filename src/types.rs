@@ -276,6 +276,12 @@ pub struct SessionAgent {
     pub model: String,
     pub elapsed_secs: u64,
     pub status: String,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub estimated_cost_usd: f64,
 }
 
 /// A single session record appended to `.beads/obelisk_sessions.jsonl` on exit.
