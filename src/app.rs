@@ -44,6 +44,7 @@ struct OrchestratorConfig {
     max_concurrent: Option<usize>,
     auto_spawn: Option<bool>,
     poll_interval_secs: Option<u64>,
+    velocity_window: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -383,6 +384,7 @@ impl App {
         let mut max_concurrent = 10usize;
         let mut auto_spawn = false;
         let mut poll_interval_secs = 30u64;
+        let mut velocity_window_size = 24usize;
         let mut model_indices: HashMap<Runtime, usize> = HashMap::from([
             (Runtime::ClaudeCode, 0),
             (Runtime::Codex, 0),
@@ -406,6 +408,9 @@ impl App {
             }
             if let Some(pi) = orch.poll_interval_secs {
                 poll_interval_secs = pi;
+            }
+            if let Some(vw) = orch.velocity_window {
+                velocity_window_size = vw.max(2); // minimum 2 data points
             }
         }
 
@@ -505,7 +510,7 @@ impl App {
             mouse_enabled: true,
             jump_active: false,
             jump_query: String::new(),
-            velocity_window_size: 24,
+            velocity_window_size,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
@@ -532,6 +537,7 @@ impl App {
                 max_concurrent: Some(self.max_concurrent),
                 auto_spawn: Some(self.auto_spawn),
                 poll_interval_secs: Some(self.poll_interval_secs),
+                velocity_window: Some(self.velocity_window_size),
             }),
             models: Some(ModelsConfig {
                 claude: Some(self.selected_model_for(Runtime::ClaudeCode).to_string()),
