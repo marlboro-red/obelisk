@@ -35,7 +35,7 @@ Use `$DEFAULT_BRANCH` everywhere below instead of hardcoding a branch name.
 
 ```bash
 git checkout $DEFAULT_BRANCH
-git pull --rebase
+git pull
 
 # Read the epic — understand the full scope and sub-tasks
 bd show {id} --json
@@ -127,7 +127,7 @@ If you haven't filed sub-tasks or your implementation is incomplete, go back to 
 ```bash
 cd -   # back to main repo
 git checkout $DEFAULT_BRANCH
-git pull --rebase
+git pull
 
 # Merge the epic branch
 git merge "{id}" --no-ff -m "Merge {id}: <short summary>"

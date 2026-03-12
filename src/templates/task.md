@@ -35,7 +35,7 @@ Use `$DEFAULT_BRANCH` everywhere below instead of hardcoding a branch name.
 
 ```bash
 git checkout $DEFAULT_BRANCH
-git pull --rebase
+git pull
 
 # Read the issue — understand scope, acceptance criteria, dependencies
 bd show {id} --json
@@ -120,7 +120,7 @@ Do NOT proceed to merge until the issue is fully addressed — not "mostly done.
 ```bash
 cd -   # back to main repo
 git checkout $DEFAULT_BRANCH
-git pull --rebase
+git pull
 
 # Merge the feature branch
 git merge "{id}" --no-ff -m "Merge {id}: <short summary>"

@@ -1,0 +1,11 @@
+[orchestrator]
+runtime = "claude"
+max_concurrent = 20
+auto_spawn = true
+poll_interval_secs = 15
+velocity_window = 24
+
+[models]
+claude = "claude-opus-4-6"
+codex = "gpt-5.4"
+copilot = "claude-sonnet-4"

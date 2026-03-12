@@ -344,6 +344,7 @@ pub struct App {
     pub dep_graph_list_state: ListState,
     pub dep_graph_collapsed: HashSet<String>,
     pub dep_graph_last_poll_frame: u64,
+
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -532,6 +533,7 @@ impl App {
             dep_graph_list_state: ListState::default(),
             dep_graph_collapsed: HashSet::new(),
             dep_graph_last_poll_frame: 0,
+
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
@@ -2503,15 +2505,13 @@ mod tests {
             retry_count: 0,
             worktree_path: None,
             worktree_cleaned: false,
-            completion_detected: false,
-            exit_sent_at: None,
-            completion_buf: String::new(),
             template_name: String::new(),
             pinned_to_split: None,
             input_tokens: 0,
             output_tokens: 0,
             estimated_cost_usd: 0.0,
             total_lines: 0,
+            raw_pty_log: Vec::new(),
         }
     }
 
