@@ -336,6 +336,13 @@ pub struct App {
     pub worktree_sort_mode: WorktreeSortMode,
     /// Frame count at which the last worktree scan was triggered
     pub worktree_last_scan_frame: u64,
+
+    // Dependency graph view state
+    pub dep_graph_nodes: Vec<DepNode>,
+    pub dep_graph_rows: Vec<DepGraphRow>,
+    pub dep_graph_list_state: ListState,
+    pub dep_graph_collapsed: HashSet<String>,
+    pub dep_graph_last_poll_frame: u64,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -518,6 +525,11 @@ impl App {
             worktree_list_state: ListState::default(),
             worktree_sort_mode: WorktreeSortMode::Age,
             worktree_last_scan_frame: 0,
+            dep_graph_nodes: Vec::new(),
+            dep_graph_rows: Vec::new(),
+            dep_graph_list_state: ListState::default(),
+            dep_graph_collapsed: HashSet::new(),
+            dep_graph_last_poll_frame: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
@@ -1144,6 +1156,14 @@ impl App {
                     .unwrap_or(0);
                 self.worktree_list_state.select(Some(i));
             }
+            View::DepGraph => {
+                let len = self.dep_graph_rows.len();
+                if len == 0 { return; }
+                let i = self.dep_graph_list_state.selected()
+                    .map(|i| if i == 0 { len - 1 } else { i - 1 })
+                    .unwrap_or(0);
+                self.dep_graph_list_state.select(Some(i));
+            }
         }
     }
 
@@ -1213,6 +1233,14 @@ impl App {
                     .map(|i| if i + 1 >= len { 0 } else { i + 1 })
                     .unwrap_or(0);
                 self.worktree_list_state.select(Some(i));
+            }
+            View::DepGraph => {
+                let len = self.dep_graph_rows.len();
+                if len == 0 { return; }
+                let i = self.dep_graph_list_state.selected()
+                    .map(|i| if i + 1 >= len { 0 } else { i + 1 })
+                    .unwrap_or(0);
+                self.dep_graph_list_state.select(Some(i));
             }
         }
     }
@@ -1637,6 +1665,114 @@ impl App {
         let mut entries = std::mem::take(&mut self.worktree_entries);
         self.sort_worktree_entries(&mut entries);
         self.worktree_entries = entries;
+    }
+
+    // ── Dependency Graph ──
+
+    pub fn on_dep_graph_result(&mut self, nodes: Vec<DepNode>) {
+        self.dep_graph_nodes = nodes;
+        self.rebuild_dep_graph_rows();
+    }
+
+    pub fn on_dep_graph_failed(&mut self, error: String) {
+        self.log(LogCategory::Poll, format!("Dep graph poll failed: {}", error));
+    }
+
+    /// Rebuild the flattened row list from dep_graph_nodes, respecting collapsed state.
+    pub fn rebuild_dep_graph_rows(&mut self) {
+        let nodes = &self.dep_graph_nodes;
+
+        // Build parent→children map
+        let mut children_map: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut roots: Vec<usize> = Vec::new();
+
+        for (i, node) in nodes.iter().enumerate() {
+            match &node.parent_id {
+                Some(pid) if !pid.is_empty() => {
+                    children_map.entry(pid.clone()).or_default().push(i);
+                }
+                _ => {
+                    // depth 0 or no parent = root
+                    if node.depth == 0 {
+                        roots.push(i);
+                    }
+                }
+            }
+        }
+
+        // If no tree structure detected (all depth 0, no parents), just show flat list
+        if roots.is_empty() || (roots.len() == nodes.len() && children_map.is_empty()) {
+            self.dep_graph_rows = nodes
+                .iter()
+                .map(|n| {
+                    let has_children = children_map.contains_key(&n.id);
+                    DepGraphRow {
+                        node: n.clone(),
+                        collapsed: self.dep_graph_collapsed.contains(&n.id),
+                        has_children,
+                    }
+                })
+                .collect();
+            return;
+        }
+
+        // DFS to build flattened rows
+        let mut rows = Vec::new();
+        let mut stack: Vec<(usize, usize)> = Vec::new(); // (node_index, depth)
+
+        // Sort roots by priority (highest first)
+        let mut sorted_roots = roots;
+        sorted_roots.sort_by(|a, b| {
+            let pa = nodes[*a].priority.unwrap_or(99);
+            let pb = nodes[*b].priority.unwrap_or(99);
+            pa.cmp(&pb)
+        });
+
+        for &ri in sorted_roots.iter().rev() {
+            stack.push((ri, 0));
+        }
+
+        while let Some((idx, depth)) = stack.pop() {
+            let node = &nodes[idx];
+            let has_children = children_map.contains_key(&node.id);
+            let is_collapsed = self.dep_graph_collapsed.contains(&node.id);
+
+            let mut display_node = node.clone();
+            display_node.depth = depth;
+
+            rows.push(DepGraphRow {
+                node: display_node,
+                collapsed: is_collapsed,
+                has_children,
+            });
+
+            // If not collapsed, push children
+            if !is_collapsed {
+                if let Some(child_indices) = children_map.get(&node.id) {
+                    // Push in reverse so first child is processed first
+                    for &ci in child_indices.iter().rev() {
+                        stack.push((ci, depth + 1));
+                    }
+                }
+            }
+        }
+
+        self.dep_graph_rows = rows;
+    }
+
+    /// Toggle collapse/expand for the currently selected dep graph node.
+    pub fn dep_graph_toggle_collapse(&mut self) {
+        if let Some(sel) = self.dep_graph_list_state.selected() {
+            if sel < self.dep_graph_rows.len() {
+                let id = self.dep_graph_rows[sel].node.id.clone();
+                if self.dep_graph_collapsed.contains(&id) {
+                    self.dep_graph_collapsed.remove(&id);
+                } else {
+                    self.dep_graph_collapsed.insert(id);
+                }
+                self.rebuild_dep_graph_rows();
+            }
+        }
     }
 
     pub fn toggle_diff_panel(&mut self) {
