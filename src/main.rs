@@ -193,6 +193,10 @@ fn process_event(
                 }
             }
 
+            // Auto-fill split panes when in split view (~every 2s = 20 ticks)
+            if app.active_view == View::SplitPane && app.frame_count % 20 == 0 {
+                app.auto_fill_split_panes();
+            }
             // Periodic diff refresh (~every 3s = 30 ticks at 100ms)
             if app.show_diff_panel
                 && app.active_view == View::AgentDetail
