@@ -1671,6 +1671,33 @@ impl App {
             })
     }
 
+    /// Returns context-appropriate text for the 'y' (yank) keybinding:
+    /// - Ready queue: issue ID
+    /// - Agent list: "AGENT-NN issue-id"
+    /// - Agent detail: worktree path
+    pub fn yank_text(&self) -> Option<String> {
+        match self.active_view {
+            View::Dashboard => match self.focus {
+                Focus::ReadyQueue => {
+                    self.selected_task().map(|t| t.id.clone())
+                }
+                Focus::AgentList => {
+                    let filtered = self.filtered_agents();
+                    self.agent_list_state
+                        .selected()
+                        .and_then(|i| filtered.get(i))
+                        .map(|(_, agent)| {
+                            format!("AGENT-{:02} {}", agent.unit_number, agent.task.id)
+                        })
+                }
+            },
+            View::AgentDetail => {
+                self.selected_agent_worktree()
+            }
+            _ => None,
+        }
+    }
+
     pub fn selected_model(&self) -> &'static str {
         let idx = self.model_indices.get(&self.selected_runtime).copied().unwrap_or(0);
         let models = self.selected_runtime.models();

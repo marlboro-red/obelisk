@@ -767,6 +767,30 @@ fn handle_key(
                 );
             }
         }
+        // ── Yank (copy to clipboard) ──
+        KeyCode::Char('y')
+            if matches!(
+                app.active_view,
+                View::Dashboard | View::AgentDetail
+            ) =>
+        {
+            if let Some(text) = app.yank_text() {
+                match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(&text)) {
+                    Ok(()) => {
+                        app.alert_message = Some((
+                            format!("Copied: {}", text),
+                            app.frame_count + 30, // ~3 seconds
+                        ));
+                    }
+                    Err(e) => {
+                        app.log(
+                            LogCategory::System,
+                            format!("Clipboard error: {}", e),
+                        );
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }

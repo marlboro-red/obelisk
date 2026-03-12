@@ -2597,6 +2597,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("↑↓ / j/k", "Navigate list  (detail panel updates)"));
     lines.push(key_line("Enter", "Open Agent Detail for selected"));
     lines.push(key_line("f", "Cycle agent status filter: All→Running→Failed→Done→Init (focus: Agents)"));
+    lines.push(key_line("y", "Copy issue ID or agent info to clipboard"));
     lines.push(key_line("x", "Dismiss selected finished agent (focus: Agents)"));
     lines.push(key_line("X", "Dismiss ALL finished agents (focus: Agents)"));
     lines.push(key_line("+/-", "Increase/decrease max concurrent slots"));
@@ -2617,6 +2618,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("/", "Open search bar (searches visible PTY output)"));
     lines.push(key_line("n / N", "Next / previous search match"));
     lines.push(key_line("Esc (search)", "Close search bar"));
+    lines.push(key_line("y", "Copy worktree path to clipboard"));
     lines.push(key_line("k", "Kill (SIGTERM) current agent + clean up worktree"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
     lines.push(Line::from(""));
