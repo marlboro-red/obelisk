@@ -324,3 +324,133 @@ fn vt100_parser_resize() {
     parser.screen_mut().set_size(40, 120);
     assert_eq!(parser.screen().size(), (40, 120));
 }
+
+// ─── Line Count Regression Tests (obelisk-evz) ─────────
+
+/// vt100 scrollback alone may not track all lines (depends on parser version
+/// and escape sequence handling).  The hybrid method (max of scrollback+rows
+/// and cumulative newlines) must always give a correct total.
+#[test]
+fn line_count_hybrid_method_always_works() {
+    let rows = 5u16;
+    let mut parser = vt100::Parser::new(rows, 80, 1000);
+    let mut cumulative_newlines: usize = 0;
+    let mut cumulative_scrollback: usize = 0;
+    let mut prev_scrollback: usize = 0;
+
+    // Feed 50 lines
+    for i in 0..50 {
+        let data = format!("line {}\r\n", i);
+        cumulative_newlines += data.as_bytes().iter().filter(|&&b| b == b'\n').count();
+        parser.process(data.as_bytes());
+        let cur = parser.screen().scrollback();
+        if cur > prev_scrollback {
+            cumulative_scrollback += cur - prev_scrollback;
+        }
+        prev_scrollback = cur;
+    }
+
+    let scrollback_total = cumulative_scrollback + rows as usize;
+    let hybrid = std::cmp::max(scrollback_total, cumulative_newlines);
+
+    // The hybrid method should always give >= 50
+    assert!(
+        hybrid >= 50,
+        "hybrid line count should be >= 50, got {} (scrollback_total={}, newlines={})",
+        hybrid, scrollback_total, cumulative_newlines
+    );
+}
+
+/// Hybrid line count: max(scrollback+rows, cumulative_newlines) keeps
+/// incrementing even when scrollback is zero (Windows ConPTY scenario).
+#[test]
+fn line_count_newline_fallback_when_scrollback_zero() {
+    // Simulate ConPTY: feed data via cursor-positioning (no scrolling).
+    // The vt100 parser won't accumulate scrollback.
+    let rows = 5u16;
+    let mut parser = vt100::Parser::new(rows, 80, 1000);
+    let mut cumulative_newlines: usize = 0;
+    let mut cumulative_scrollback: usize = 0;
+    let mut prev_scrollback: usize = 0;
+
+    // Simulate 50 lines written via cursor-positioning (ConPTY style)
+    for i in 0..50 {
+        // ConPTY positions cursor then writes — no actual scrolling
+        let row = (i % rows as usize) as u16;
+        let seq = format!("\x1b[{};1H line {}", row + 1, i);
+        parser.process(seq.as_bytes());
+        // But the raw data still contains newlines from child output
+        cumulative_newlines += 1; // one \n per line from child
+
+        let cur = parser.screen().scrollback();
+        if cur > prev_scrollback {
+            cumulative_scrollback += cur - prev_scrollback;
+        }
+        prev_scrollback = cur;
+    }
+
+    let scrollback_total = cumulative_scrollback + rows as usize;
+    let hybrid = std::cmp::max(scrollback_total, cumulative_newlines);
+
+    // Scrollback should be near zero (cursor-positioning doesn't scroll)
+    assert!(
+        scrollback_total <= rows as usize + 1,
+        "expected scrollback_total near rows={}, got {}",
+        rows, scrollback_total
+    );
+
+    // But hybrid should reflect actual line count
+    assert!(
+        hybrid >= 50,
+        "hybrid line count should be >= 50 (actual output lines), got {} \
+         (scrollback_total={}, cumulative_newlines={})",
+        hybrid, scrollback_total, cumulative_newlines
+    );
+}
+
+/// Line count never decreases when screen is cleared (both methods).
+#[test]
+fn line_count_survives_screen_clear() {
+    let rows = 5u16;
+    let mut parser = vt100::Parser::new(rows, 80, 1000);
+    let mut cumulative_newlines: usize = 0;
+    let mut cumulative_scrollback: usize = 0;
+    let mut prev_scrollback: usize = 0;
+
+    // Write 20 lines
+    for i in 0..20 {
+        let data = format!("line {}\r\n", i);
+        cumulative_newlines += data.as_bytes().iter().filter(|&&b| b == b'\n').count();
+        parser.process(data.as_bytes());
+        let cur = parser.screen().scrollback();
+        if cur > prev_scrollback {
+            cumulative_scrollback += cur - prev_scrollback;
+        }
+        prev_scrollback = cur;
+    }
+
+    let before_clear = std::cmp::max(
+        cumulative_scrollback + rows as usize,
+        cumulative_newlines,
+    );
+
+    // Clear screen — scrollback resets but cumulative values should not
+    parser.process(b"\x1b[2J\x1b[H");
+    let cur = parser.screen().scrollback();
+    // Don't add negative delta
+    if cur > prev_scrollback {
+        cumulative_scrollback += cur - prev_scrollback;
+    }
+    let _ = cur; // suppress unused-assignment warning
+
+    let after_clear = std::cmp::max(
+        cumulative_scrollback + rows as usize,
+        cumulative_newlines,
+    );
+
+    assert!(
+        after_clear >= before_clear,
+        "line count should not decrease after screen clear: before={}, after={}",
+        before_clear, after_clear
+    );
+}

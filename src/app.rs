@@ -2292,6 +2292,13 @@ impl App {
                 state.cumulative_scrollback += cur - state.prev_scrollback;
             }
             state.prev_scrollback = cur;
+            // Track cumulative newlines — platform-independent fallback for line
+            // counting.  On Windows ConPTY the vt100 parser never accumulates
+            // scrollback because ConPTY uses cursor-positioning to repaint rather
+            // than scroll sequences.  Counting raw '\n' bytes keeps the total
+            // incrementing on every platform.
+            let nl = data.iter().filter(|&&b| b == b'\n').count();
+            state.cumulative_newlines += nl;
         }
         // Capture raw PTY bytes for log export
         if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
@@ -2310,8 +2317,6 @@ impl App {
                     }
                 }
             }
-            // total_lines is now derived from the vt100 parser in agent_line_count(),
-            // so we no longer accumulate raw newline bytes here.
         }
         // Throughput tracking: count actual newlines only (no minimum-1 inflation)
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
@@ -2346,14 +2351,22 @@ impl App {
         }
     }
 
-    /// Count total output lines for an agent.  Uses cumulative scrollback
-    /// (positive deltas only) plus visible rows so the count never regresses
-    /// when the terminal clears or enters alternate-screen mode.
+    /// Count total output lines for an agent.
+    ///
+    /// Uses two complementary strategies and returns whichever is larger:
+    ///  1. **Scrollback method** — `cumulative_scrollback + visible_rows`.
+    ///     Accurate on macOS/Linux where the vt100 parser sees real scroll events.
+    ///  2. **Newline method** — cumulative count of `\n` bytes in raw PTY data.
+    ///     Works on Windows ConPTY where cursor-positioning replaces scrolling,
+    ///     so the vt100 parser's scrollback stays at zero.
+    ///
+    /// Taking the `max` ensures the count keeps incrementing on every platform.
     pub fn agent_line_count(&self, agent_id: usize) -> usize {
         if let Some(state) = self.pty_states.get(&agent_id) {
             let screen = state.parser.screen();
             let (rows, _cols) = screen.size();
-            state.cumulative_scrollback + rows as usize
+            let scrollback_total = state.cumulative_scrollback + rows as usize;
+            std::cmp::max(scrollback_total, state.cumulative_newlines)
         } else if let Some(agent) = self.agents.iter().find(|a| a.id == agent_id) {
             if agent.total_lines > 0 {
                 agent.total_lines
