@@ -122,6 +122,78 @@ pub fn spawn_agent_pty(
     Ok((handle, reader, child))
 }
 
+/// Scan git worktrees and return those that match the agent worktree naming pattern
+/// (`worktree-*`). Returns a list of `(absolute_path, branch_name)` pairs.
+pub async fn scan_agent_worktrees() -> Vec<(String, String)> {
+    let output = match Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut result = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut current_branch: Option<String> = None;
+
+    for line in text.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            // Flush previous entry
+            if let (Some(p), Some(b)) = (current_path.take(), current_branch.take()) {
+                if is_agent_worktree(&p) {
+                    result.push((p, b));
+                }
+            }
+            current_path = Some(path.to_string());
+            current_branch = None;
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            current_branch = Some(branch.to_string());
+        }
+    }
+    // Flush last entry
+    if let (Some(p), Some(b)) = (current_path, current_branch) {
+        if is_agent_worktree(&p) {
+            result.push((p, b));
+        }
+    }
+
+    result
+}
+
+fn is_agent_worktree(path: &str) -> bool {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.starts_with("worktree-"))
+        .unwrap_or(false)
+}
+
+/// Remove a git worktree at `path` (force) and delete its branch.
+/// Returns Ok(()) on success, Err(message) if the worktree removal fails.
+/// Branch deletion is best-effort and never causes an error return.
+pub async fn cleanup_worktree(path: &str, branch: &str) -> Result<(), String> {
+    let status = Command::new("git")
+        .args(["worktree", "remove", path, "--force"])
+        .status()
+        .await
+        .map_err(|e| format!("Failed to run git worktree remove: {}", e))?;
+
+    if !status.success() {
+        return Err(format!("git worktree remove failed for {}", path));
+    }
+
+    // Best-effort branch deletion — ignore errors (branch may not exist yet)
+    let _ = Command::new("git")
+        .args(["branch", "-D", branch])
+        .status()
+        .await;
+
+    Ok(())
+}
+
 pub async fn poll_ready() -> Result<Vec<crate::types::BeadTask>, String> {
     let output = Command::new("bd")
         .args(["ready", "--json"])

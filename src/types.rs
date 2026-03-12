@@ -99,6 +99,10 @@ pub struct AgentInstance {
     pub elapsed_secs: u64,
     pub exit_code: Option<i32>,
     pub pid: Option<u32>,
+    /// Relative path to the agent's git worktree, e.g. "../worktree-obelisk-abc"
+    pub worktree_path: Option<String>,
+    /// True once the worktree has been cleaned up (removed + branch deleted)
+    pub worktree_cleaned: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -165,4 +169,8 @@ pub enum AppEvent {
     AgentPtyData { agent_id: usize, data: Vec<u8> },
     /// PTY is ready — carries the master/writer/parser to store in App
     AgentPtyReady { agent_id: usize, handle: PtyHandle },
+    /// Orphaned agent worktrees found on startup
+    WorktreeOrphans(Vec<String>),
+    /// Result of a worktree cleanup operation
+    WorktreeCleaned { cleaned: Vec<String>, failed: Vec<String> },
 }
