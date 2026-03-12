@@ -108,19 +108,18 @@ fn print_agents(data: &serde_json::Value) {
 
     // Header
     println!(
-        "{:<4} {:<18} {:<10} {:<14} {:<10} {:<8} {:>8}",
-        "ID", "TASK", "STATUS", "PHASE", "RUNTIME", "ELAPSED", "COST"
+        "{:<4} {:<18} {:<10} {:<14} {:<10} {:<8}",
+        "ID", "TASK", "STATUS", "PHASE", "RUNTIME", "ELAPSED"
     );
-    println!("{}", "-".repeat(76));
+    println!("{}", "-".repeat(68));
 
     for a in agents {
         let elapsed = a["elapsed_secs"].as_u64().unwrap_or(0);
         let mins = elapsed / 60;
         let secs = elapsed % 60;
-        let cost = a["cost_usd"].as_f64().unwrap_or(0.0);
 
         println!(
-            "{:<4} {:<18} {:<10} {:<14} {:<10} {:>5}:{:02}  ${:.2}",
+            "{:<4} {:<18} {:<10} {:<14} {:<10} {:>5}:{:02}",
             a["id"],
             a["task_id"].as_str().unwrap_or("?"),
             a["status_label"].as_str().unwrap_or("?"),
@@ -128,7 +127,6 @@ fn print_agents(data: &serde_json::Value) {
             a["runtime"].as_str().unwrap_or("?"),
             mins,
             secs,
-            cost,
         );
     }
 }

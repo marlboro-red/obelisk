@@ -2,7 +2,6 @@ use crate::templates;
 use crate::theme::{Theme, ThemeConfig};
 use crate::types::*;
 use ratatui::widgets::ListState;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -17,30 +16,6 @@ static RE_CPR: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
     regex::bytes::Regex::new(r"\x1b\[\d+;\d+R").unwrap()
 });
 
-// ── Token parsing regexes ──
-static RE_INPUT_TOKENS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)input[_ ]tokens?[:\s]+([0-9][0-9,]*)").unwrap()
-});
-static RE_OUTPUT_TOKENS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)output[_ ]tokens?[:\s]+([0-9][0-9,]*)").unwrap()
-});
-
-fn parse_token_count(s: &str) -> u64 {
-    s.replace(',', "").parse::<u64>().unwrap_or(0)
-}
-
-fn default_model_pricing() -> HashMap<String, ModelPricing> {
-    let mut m = HashMap::new();
-    m.insert("claude-sonnet-4-6".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 15.0 });
-    m.insert("claude-opus-4-6".into(), ModelPricing { input_per_mtok: 15.0, output_per_mtok: 75.0 });
-    m.insert("claude-haiku-4-5-20251001".into(), ModelPricing { input_per_mtok: 0.80, output_per_mtok: 4.0 });
-    m.insert("claude-sonnet-4".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 15.0 });
-    m.insert("gpt-5.4".into(), ModelPricing { input_per_mtok: 10.0, output_per_mtok: 30.0 });
-    m.insert("gpt-5.3-codex".into(), ModelPricing { input_per_mtok: 6.0, output_per_mtok: 18.0 });
-    m.insert("gpt-5.3-codex-spark".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 9.0 });
-    m.insert("gpt-5".into(), ModelPricing { input_per_mtok: 10.0, output_per_mtok: 30.0 });
-    m
-}
 
 
 const CONFIG_FILE: &str = "obelisk.toml";
@@ -467,10 +442,6 @@ pub struct App {
     /// Output scroll per pane
     pub split_pane_scroll: [Option<usize>; 4],
 
-    // Cost tracking
-    pub model_pricing: HashMap<String, ModelPricing>,
-    pub cost_threshold: Option<f64>,
-
     /// Layout rectangles from last render — used for mouse hit-testing
     pub layout_areas: LayoutAreas,
 
@@ -702,8 +673,6 @@ impl App {
             split_pane_agents: [None; 4],
             split_pane_focus: 0,
             split_pane_scroll: [None; 4],
-            model_pricing: default_model_pricing(),
-            cost_threshold: Some(5.0),
             layout_areas: LayoutAreas::default(),
             mouse_enabled: true,
             jump_active: false,
@@ -741,8 +710,7 @@ impl App {
                     model: agent.model.clone(),
                     elapsed_secs: agent.elapsed_secs,
                     success: agent.status == "Completed",
-                    cost_usd: agent.estimated_cost_usd,
-                });
+                                    });
             }
         }
         app.log(LogCategory::System, "Orchestrator initialized".into());
@@ -810,9 +778,6 @@ impl App {
                     AgentStatus::Completed => "Completed".to_string(),
                     AgentStatus::Failed => "Failed".to_string(),
                 },
-                input_tokens: a.input_tokens,
-                output_tokens: a.output_tokens,
-                estimated_cost_usd: a.estimated_cost_usd,
             })
             .collect();
 
@@ -822,7 +787,6 @@ impl App {
             ended_at: ended_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             total_completed: self.total_completed,
             total_failed: self.total_failed,
-            total_cost_usd: self.session_total_cost(),
             agents,
         };
 
@@ -1212,8 +1176,7 @@ impl App {
                     model: agent.model.clone(),
                     elapsed_secs: elapsed,
                     success,
-                    cost_usd: agent.estimated_cost_usd,
-                };
+                                    };
                 self.recent_completions.push_back(record);
                 if self.recent_completions.len() > 10 {
                     self.recent_completions.pop_front();
@@ -1313,9 +1276,6 @@ impl App {
             worktree_path: Some(format!("../worktree-{}", task.id)),
             worktree_cleaned: false,
             pinned_to_split: None,
-            input_tokens: 0,
-            output_tokens: 0,
-            estimated_cost_usd: 0.0,
             template_name: template_name.clone(),
             total_lines: 0,
             raw_pty_log: Vec::new(),
@@ -1816,9 +1776,6 @@ impl App {
             worktree_path: Some(format!("../worktree-{}", task.id)),
             worktree_cleaned: false,
             pinned_to_split: None,
-            input_tokens: 0,
-            output_tokens: 0,
-            estimated_cost_usd: 0.0,
             template_name: template_name.clone(),
             total_lines: 0,
             raw_pty_log: Vec::new(),
@@ -2350,23 +2307,10 @@ impl App {
                         agent.phase = detected;
                     }
                 }
-                // Token usage parsing
-                if let Some(caps) = RE_INPUT_TOKENS.captures(text) {
-                    if let Some(m) = caps.get(1) {
-                        agent.input_tokens = parse_token_count(m.as_str());
-                    }
-                }
-                if let Some(caps) = RE_OUTPUT_TOKENS.captures(text) {
-                    if let Some(m) = caps.get(1) {
-                        agent.output_tokens = parse_token_count(m.as_str());
-                    }
-                }
             }
             // total_lines is now derived from the vt100 parser in agent_line_count(),
             // so we no longer accumulate raw newline bytes here.
         }
-        // Recalculate cost for this agent after potential token update
-        self.recalculate_agent_cost(agent_id);
         // Throughput tracking: count actual newlines only (no minimum-1 inflation)
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
         self.lines_this_tick = self.lines_this_tick.saturating_add(newlines);
@@ -2452,7 +2396,7 @@ impl App {
 
     /// Compute aggregate stats across all loaded history sessions.
     /// Returns (total_sessions, all_time_completed, all_time_failed, avg_duration_secs).
-    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64, f64) {
+    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64) {
         let total_sessions = self.history_sessions.len();
         let all_time_completed: u64 = self.history_sessions
             .iter()
@@ -2475,51 +2419,7 @@ impl App {
             0.0
         };
 
-        let all_time_cost: f64 = self.history_sessions
-            .iter()
-            .map(|s| s.total_cost_usd)
-            .sum();
-
-        (total_sessions, all_time_completed, all_time_failed, avg_duration, all_time_cost)
-    }
-
-    /// Recalculate estimated cost for a single agent based on its token counts and model pricing.
-    fn recalculate_agent_cost(&mut self, agent_id: usize) {
-        if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
-            let pricing = self.model_pricing.get(&agent.model);
-            let old_cost = agent.estimated_cost_usd;
-            agent.estimated_cost_usd = if let Some(p) = pricing {
-                (agent.input_tokens as f64 * p.input_per_mtok
-                    + agent.output_tokens as f64 * p.output_per_mtok)
-                    / 1_000_000.0
-            } else {
-                0.0
-            };
-            if let Some(threshold) = self.cost_threshold {
-                if agent.estimated_cost_usd >= threshold && old_cost < threshold {
-                    let unit = agent.unit_number;
-                    let cost = agent.estimated_cost_usd;
-                    let msg = format!(
-                        "AGENT-{:02} cost ${:.2} exceeds threshold ${:.2}!",
-                        unit, cost, threshold
-                    );
-                    self.alert_message = Some((msg.clone(), self.frame_count + 100));
-                    self.log(LogCategory::Alert, msg);
-                }
-            }
-        }
-    }
-
-    /// Sum of estimated cost across all agents in the current session.
-    pub fn session_total_cost(&self) -> f64 {
-        self.agents.iter().map(|a| a.estimated_cost_usd).sum()
-    }
-
-    /// Sum of input + output tokens across all agents in the current session.
-    pub fn session_total_tokens(&self) -> (u64, u64) {
-        let input: u64 = self.agents.iter().map(|a| a.input_tokens).sum();
-        let output: u64 = self.agents.iter().map(|a| a.output_tokens).sum();
-        (input, output)
+        (total_sessions, all_time_completed, all_time_failed, avg_duration)
     }
 
     // ── Split-pane view methods ──
@@ -2730,8 +2630,6 @@ impl App {
         content.push_str(&format!("Status:    {:?}\n", agent.status));
         content.push_str(&format!("Phase:     {}\n", agent.phase.label()));
         content.push_str(&format!("Elapsed:   {}s\n", agent.elapsed_secs));
-        content.push_str(&format!("Tokens:    {} in / {} out\n", agent.input_tokens, agent.output_tokens));
-        content.push_str(&format!("Cost:      {}\n", format_cost(agent.estimated_cost_usd)));
         if let Some(code) = agent.exit_code {
             content.push_str(&format!("Exit code: {}\n", code));
         }
@@ -2800,28 +2698,6 @@ impl App {
     }
 }
 
-/// Format a USD cost for display.
-pub fn format_cost(usd: f64) -> String {
-    if usd < 0.01 {
-        format!("${:.4}", usd)
-    } else if usd < 100.0 {
-        format!("${:.2}", usd)
-    } else {
-        format!("${:.0}", usd)
-    }
-}
-
-/// Format a token count for display with K/M suffixes.
-pub fn format_tokens(count: u64) -> String {
-    if count >= 1_000_000 {
-        format!("{:.1}M", count as f64 / 1_000_000.0)
-    } else if count >= 1_000 {
-        format!("{:.1}K", count as f64 / 1_000.0)
-    } else {
-        format!("{}", count)
-    }
-}
-
 /// Return the path to the sessions JSONL file. Tries `.beads/obelisk_sessions.jsonl`
 /// relative to the current working directory (where the binary is run from).
 fn sessions_file_path() -> std::path::PathBuf {
@@ -2887,9 +2763,6 @@ mod tests {
             worktree_cleaned: false,
             template_name: String::new(),
             pinned_to_split: None,
-            input_tokens: 0,
-            output_tokens: 0,
-            estimated_cost_usd: 0.0,
             total_lines: 0,
             raw_pty_log: Vec::new(),
             pty_log_flushed_bytes: 0,
@@ -2950,34 +2823,6 @@ mod tests {
             AgentStatus::Failed,
             "exit watcher must not overwrite Failed status"
         );
-    }
-
-    #[test]
-    fn token_regex_parses_input_tokens() {
-        let text = "Input tokens: 1,234";
-        let caps = RE_INPUT_TOKENS.captures(text).unwrap();
-        assert_eq!(parse_token_count(caps.get(1).unwrap().as_str()), 1234);
-    }
-
-    #[test]
-    fn token_regex_parses_output_tokens() {
-        let text = "Output tokens: 56,789";
-        let caps = RE_OUTPUT_TOKENS.captures(text).unwrap();
-        assert_eq!(parse_token_count(caps.get(1).unwrap().as_str()), 56789);
-    }
-
-    #[test]
-    fn token_regex_case_insensitive() {
-        let text = "INPUT TOKENS: 100";
-        assert!(RE_INPUT_TOKENS.captures(text).is_some());
-        let text = "output_token: 200";
-        assert!(RE_OUTPUT_TOKENS.captures(text).is_some());
-    }
-
-    #[test]
-    fn token_regex_no_match_on_unrelated_text() {
-        assert!(RE_INPUT_TOKENS.captures("hello world").is_none());
-        assert!(RE_OUTPUT_TOKENS.captures("no tokens here").is_none());
     }
 
     #[test]
@@ -3137,78 +2982,6 @@ mod tests {
         let lines = vec!["running 5 tests", "test result: ok. 5 passed; 0 ignored"];
         let errors = detect_error_patterns(&lines);
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
-    }
-
-    // ── Token parsing ────────────────────────────────────────────
-
-    #[test]
-    fn parse_token_count_plain_number() {
-        assert_eq!(parse_token_count("12345"), 12345);
-    }
-
-    #[test]
-    fn parse_token_count_with_commas() {
-        assert_eq!(parse_token_count("1,234,567"), 1234567);
-    }
-
-    #[test]
-    fn parse_token_count_invalid_returns_zero() {
-        assert_eq!(parse_token_count("abc"), 0);
-        assert_eq!(parse_token_count(""), 0);
-    }
-
-    // ── Model pricing ────────────────────────────────────────────
-
-    #[test]
-    fn default_model_pricing_contains_known_models() {
-        let pricing = default_model_pricing();
-        assert!(pricing.contains_key("claude-sonnet-4-6"));
-        assert!(pricing.contains_key("claude-opus-4-6"));
-        assert!(pricing.contains_key("claude-haiku-4-5-20251001"));
-        assert!(pricing.contains_key("gpt-5.4"));
-    }
-
-    #[test]
-    fn model_pricing_opus_more_expensive_than_sonnet() {
-        let pricing = default_model_pricing();
-        let opus = pricing.get("claude-opus-4-6").unwrap();
-        let sonnet = pricing.get("claude-sonnet-4-6").unwrap();
-        assert!(opus.input_per_mtok > sonnet.input_per_mtok);
-        assert!(opus.output_per_mtok > sonnet.output_per_mtok);
-    }
-
-    // ── Format helpers ───────────────────────────────────────────
-
-    #[test]
-    fn format_cost_small_values() {
-        assert_eq!(format_cost(0.001), "$0.0010");
-        assert_eq!(format_cost(0.005), "$0.0050");
-    }
-
-    #[test]
-    fn format_cost_medium_values() {
-        assert_eq!(format_cost(1.23), "$1.23");
-        assert_eq!(format_cost(99.99), "$99.99");
-    }
-
-    #[test]
-    fn format_cost_large_values() {
-        assert_eq!(format_cost(150.0), "$150");
-    }
-
-    #[test]
-    fn format_tokens_small() {
-        assert_eq!(format_tokens(500), "500");
-    }
-
-    #[test]
-    fn format_tokens_thousands() {
-        assert_eq!(format_tokens(1500), "1.5K");
-    }
-
-    #[test]
-    fn format_tokens_millions() {
-        assert_eq!(format_tokens(2_500_000), "2.5M");
     }
 
     #[test]
@@ -3564,37 +3337,6 @@ mod tests {
             app.cycle_model();
         }
         assert_eq!(app.selected_model(), first, "should wrap back to first model");
-    }
-
-    // ── Cost tracking ────────────────────────────────────────────
-
-    #[test]
-    fn session_total_cost_sums_all_agents() {
-        let mut app = App::new();
-        let mut a1 = test_agent(1, AgentStatus::Completed);
-        a1.estimated_cost_usd = 1.5;
-        let mut a2 = test_agent(2, AgentStatus::Running);
-        a2.estimated_cost_usd = 0.75;
-        app.agents = vec![a1, a2];
-
-        let total = app.session_total_cost();
-        assert!((total - 2.25).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn session_total_tokens_sums_all_agents() {
-        let mut app = App::new();
-        let mut a1 = test_agent(1, AgentStatus::Completed);
-        a1.input_tokens = 100;
-        a1.output_tokens = 50;
-        let mut a2 = test_agent(2, AgentStatus::Running);
-        a2.input_tokens = 200;
-        a2.output_tokens = 100;
-        app.agents = vec![a1, a2];
-
-        let (input, output) = app.session_total_tokens();
-        assert_eq!(input, 300);
-        assert_eq!(output, 150);
     }
 
     #[test]
@@ -3984,12 +3726,11 @@ mod tests {
         let mut app = App::new();
         app.history_sessions.clear();
 
-        let (sessions, completed, failed, avg_dur, cost) = app.aggregate_stats();
+        let (sessions, completed, failed, avg_dur) = app.aggregate_stats();
         assert_eq!(sessions, 0);
         assert_eq!(completed, 0);
         assert_eq!(failed, 0);
         assert_eq!(avg_dur, 0.0);
-        assert_eq!(cost, 0.0);
     }
 
     #[test]
@@ -4002,11 +3743,9 @@ mod tests {
                 ended_at: "2026-03-12T11:00:00Z".into(),
                 total_completed: 3,
                 total_failed: 1,
-                total_cost_usd: 2.0,
                 agents: vec![SessionAgent {
                     task_id: "t".into(), runtime: "CLAUDE".into(), model: "m".into(),
                     elapsed_secs: 100, status: "Completed".into(),
-                    input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0.0,
                 }],
             },
             SessionRecord {
@@ -4015,21 +3754,18 @@ mod tests {
                 ended_at: "2026-03-12T13:00:00Z".into(),
                 total_completed: 2,
                 total_failed: 0,
-                total_cost_usd: 1.5,
                 agents: vec![SessionAgent {
                     task_id: "t".into(), runtime: "CLAUDE".into(), model: "m".into(),
                     elapsed_secs: 200, status: "Completed".into(),
-                    input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0.0,
                 }],
             },
         ];
 
-        let (sessions, completed, failed, avg_dur, cost) = app.aggregate_stats();
+        let (sessions, completed, failed, avg_dur) = app.aggregate_stats();
         assert_eq!(sessions, 2);
         assert_eq!(completed, 5);
         assert_eq!(failed, 1);
         assert!((avg_dur - 150.0).abs() < f64::EPSILON); // (100+200)/2
-        assert!((cost - 3.5).abs() < f64::EPSILON);
     }
 
     // ── Dep graph ────────────────────────────────────────────────
@@ -4252,7 +3988,6 @@ mod tests {
                 model: "m".into(),
                 elapsed_secs: 60,
                 success: true,
-                cost_usd: 0.0,
             });
             if app.recent_completions.len() > 10 {
                 app.recent_completions.pop_front();

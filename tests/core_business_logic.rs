@@ -3,7 +3,6 @@
 //! These tests exercise the pure logic in `types.rs`, `templates.rs`, and `app.rs`
 //! — everything that doesn't require a real PTY or external CLI.
 
-use obelisk::app;
 use obelisk::templates;
 use obelisk::types::*;
 
@@ -331,16 +330,12 @@ fn session_record_round_trip() {
         ended_at: "2026-03-12T11:00:00Z".into(),
         total_completed: 3,
         total_failed: 1,
-        total_cost_usd: 1.23,
         agents: vec![SessionAgent {
             task_id: "t-1".into(),
             runtime: "CLAUDE".into(),
             model: "claude-sonnet-4-6".into(),
             elapsed_secs: 120,
             status: "Completed".into(),
-            input_tokens: 1000,
-            output_tokens: 500,
-            estimated_cost_usd: 0.05,
         }],
     };
 
@@ -348,25 +343,23 @@ fn session_record_round_trip() {
     let restored: SessionRecord = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.session_id, "sess-test");
     assert_eq!(restored.total_completed, 3);
-    assert_eq!(restored.total_cost_usd, 1.23);
     assert_eq!(restored.agents.len(), 1);
-    assert_eq!(restored.agents[0].input_tokens, 1000);
+    assert_eq!(restored.agents[0].elapsed_secs, 120);
 }
 
 #[test]
-fn session_agent_defaults_for_missing_fields() {
+fn session_agent_minimal_deserialization() {
     let json = r#"{"task_id":"t","runtime":"CLAUDE","model":"m","elapsed_secs":60,"status":"Completed"}"#;
     let agent: SessionAgent = serde_json::from_str(json).unwrap();
-    assert_eq!(agent.input_tokens, 0);
-    assert_eq!(agent.output_tokens, 0);
-    assert_eq!(agent.estimated_cost_usd, 0.0);
+    assert_eq!(agent.task_id, "t");
+    assert_eq!(agent.elapsed_secs, 60);
 }
 
 #[test]
 fn session_record_jsonl_parsing() {
     // Verify multi-line JSONL parsing (same pattern as load_history_sessions)
-    let jsonl = r#"{"session_id":"s1","started_at":"a","ended_at":"b","total_completed":1,"total_failed":0,"total_cost_usd":0.0,"agents":[]}
-{"session_id":"s2","started_at":"c","ended_at":"d","total_completed":2,"total_failed":1,"total_cost_usd":1.0,"agents":[]}"#;
+    let jsonl = r#"{"session_id":"s1","started_at":"a","ended_at":"b","total_completed":1,"total_failed":0,"agents":[]}
+{"session_id":"s2","started_at":"c","ended_at":"d","total_completed":2,"total_failed":1,"agents":[]}"#;
 
     let records: Vec<SessionRecord> = jsonl
         .lines()
@@ -403,53 +396,6 @@ fn dep_node_deserializes_full() {
     assert_eq!(node.depth, 2);
     assert_eq!(node.parent_id.as_deref(), Some("d-1"));
     assert!(node.truncated);
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Public app module functions
-// ═══════════════════════════════════════════════════════════════════
-
-#[test]
-fn format_cost_small_values() {
-    assert_eq!(app::format_cost(0.001), "$0.0010");
-    assert_eq!(app::format_cost(0.005), "$0.0050");
-}
-
-#[test]
-fn format_cost_medium_values() {
-    assert_eq!(app::format_cost(1.23), "$1.23");
-    assert_eq!(app::format_cost(99.99), "$99.99");
-}
-
-#[test]
-fn format_cost_large_values() {
-    assert_eq!(app::format_cost(150.0), "$150");
-}
-
-#[test]
-fn format_cost_boundary_at_one_cent() {
-    // Just under boundary
-    assert_eq!(app::format_cost(0.009), "$0.0090");
-    // At boundary
-    assert_eq!(app::format_cost(0.01), "$0.01");
-}
-
-#[test]
-fn format_tokens_small() {
-    assert_eq!(app::format_tokens(500), "500");
-    assert_eq!(app::format_tokens(0), "0");
-}
-
-#[test]
-fn format_tokens_thousands() {
-    assert_eq!(app::format_tokens(1500), "1.5K");
-    assert_eq!(app::format_tokens(1000), "1.0K");
-}
-
-#[test]
-fn format_tokens_millions() {
-    assert_eq!(app::format_tokens(2_500_000), "2.5M");
-    assert_eq!(app::format_tokens(1_000_000), "1.0M");
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -224,12 +224,6 @@ pub struct AgentInstance {
     pub template_name: String,
     /// Whether this agent is pinned to a split-pane slot
     pub pinned_to_split: Option<usize>,
-    /// Cumulative input tokens parsed from agent CLI output
-    pub input_tokens: u64,
-    /// Cumulative output tokens parsed from agent CLI output
-    pub output_tokens: u64,
-    /// Estimated cost in USD, computed from tokens x model pricing
-    pub estimated_cost_usd: f64,
     /// Running total of output lines (newlines received), survives PTY resizes
     pub total_lines: usize,
     /// Raw PTY bytes captured for log export
@@ -277,7 +271,6 @@ pub struct CompletionRecord {
     pub model: String,
     pub elapsed_secs: u64,
     pub success: bool,
-    pub cost_usd: f64,
 }
 
 /// One agent's outcome within a persisted session record.
@@ -288,12 +281,6 @@ pub struct SessionAgent {
     pub model: String,
     pub elapsed_secs: u64,
     pub status: String,
-    #[serde(default)]
-    pub input_tokens: u64,
-    #[serde(default)]
-    pub output_tokens: u64,
-    #[serde(default)]
-    pub estimated_cost_usd: f64,
 }
 
 /// A single session record appended to `.beads/obelisk_sessions.jsonl` on exit.
@@ -304,16 +291,7 @@ pub struct SessionRecord {
     pub ended_at: String,
     pub total_completed: u32,
     pub total_failed: u32,
-    #[serde(default)]
-    pub total_cost_usd: f64,
     pub agents: Vec<SessionAgent>,
-}
-
-/// Pricing per model: cost in USD per million tokens.
-#[derive(Debug, Clone)]
-pub struct ModelPricing {
-    pub input_per_mtok: f64,
-    pub output_per_mtok: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

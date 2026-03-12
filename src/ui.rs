@@ -1,4 +1,4 @@
-use crate::app::{self, App};
+use crate::app::App;
 use crate::theme::Theme;
 use crate::types::*;
 use chrono::Utc;
@@ -560,14 +560,6 @@ fn render_completions_feed(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(
                     duration,
                     Style::default().fg(t.secondary),
-                ),
-                Span::styled(
-                    if rec.cost_usd > 0.0 {
-                        format!(" ${:.2}", rec.cost_usd)
-                    } else {
-                        String::new()
-                    },
-                    Style::default().fg(t.warn),
                 ),
             ]))
         })
@@ -1683,21 +1675,6 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             Span::styled(" RATE    ", Style::default().fg(t.muted)),
             Span::styled(format!(" {:.1}/s", lines_per_sec), Style::default().fg(t.accent)),
         ]),
-        Line::from(vec![
-            Span::styled(" TOK IN  ", Style::default().fg(t.muted)),
-            Span::styled(format!(" {}", app::format_tokens(agent.input_tokens)), Style::default().fg(t.bright)),
-        ]),
-        Line::from(vec![
-            Span::styled(" TOK OUT ", Style::default().fg(t.muted)),
-            Span::styled(format!(" {}", app::format_tokens(agent.output_tokens)), Style::default().fg(t.bright)),
-        ]),
-        Line::from(vec![
-            Span::styled(" COST    ", Style::default().fg(t.muted)),
-            Span::styled(
-                format!(" {}", app::format_cost(agent.estimated_cost_usd)),
-                Style::default().fg(if agent.estimated_cost_usd > 1.0 { t.warn } else { t.bright }),
-            ),
-        ]),
     ]);
 
     f.render_widget(Paragraph::new(lines).block(block), area);
@@ -1888,7 +1865,7 @@ fn render_event_log(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_history(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let (total_sessions, all_completed, all_failed, avg_duration, all_time_cost) = app.aggregate_stats();
+    let (total_sessions, all_completed, all_failed, avg_duration) = app.aggregate_stats();
     let all_time_total = all_completed + all_failed;
     let success_rate = if all_time_total > 0 {
         all_completed as f64 / all_time_total as f64 * 100.0
@@ -1955,13 +1932,6 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(vec![
-            Span::styled("  TOTAL COST      ", Style::default().fg(t.muted)),
-            Span::styled(
-                app::format_cost(all_time_cost),
-                Style::default().fg(if all_time_cost > 10.0 { t.warn } else { t.accent }).add_modifier(Modifier::BOLD),
-            ),
-        ]),
     ];
 
     f.render_widget(Paragraph::new(stats_lines).block(stats_block), v_chunks[0]);
@@ -2017,7 +1987,6 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(format!("fail:{:>3} ", session.total_failed), Style::default().fg(if session.total_failed > 0 { t.danger } else { t.muted })),
                 Span::styled(format!("{:>5.1}%", rate), Style::default().fg(rate_color).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("  {:>3} agents", session.agents.len()), Style::default().fg(t.muted)),
-                Span::styled(format!("  {}", app::format_cost(session.total_cost_usd)), Style::default().fg(if session.total_cost_usd > 1.0 { t.warn } else { t.accent })),
             ]))
         })
         .collect();
@@ -2683,20 +2652,6 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(t.muted)
             },
         ),
-        Span::styled("  │  ", Style::default().fg(t.muted)),
-        Span::styled("TOKENS: ", Style::default().fg(t.muted)),
-        Span::styled(
-            {
-                let (inp, out) = app.session_total_tokens();
-                format!("{}↑ {}↓", app::format_tokens(inp), app::format_tokens(out))
-            },
-            Style::default().fg(t.muted),
-        ),
-        Span::styled("  COST: ", Style::default().fg(t.muted)),
-        Span::styled(
-            app::format_cost(app.session_total_cost()),
-            Style::default().fg(if app.session_total_cost() > 1.0 { t.warn } else { t.accent }),
-        ),
     ]);
 
     let block = Block::default()
@@ -2750,11 +2705,6 @@ fn render_info_bar_compact(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(
             format!("{}", app.ready_tasks.len()),
             Style::default().fg(if app.ready_tasks.is_empty() { t.muted } else { t.warn }),
-        ),
-        Span::styled(" \u{2502} ", Style::default().fg(t.muted)),
-        Span::styled(
-            app::format_cost(app.session_total_cost()),
-            Style::default().fg(if app.session_total_cost() > 1.0 { t.warn } else { t.accent }),
         ),
     ]);
 

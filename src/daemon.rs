@@ -298,7 +298,6 @@ fn handle_daemon_cmd(
                         "runtime": a.runtime.name(),
                         "model": a.model,
                         "elapsed_secs": a.elapsed_secs,
-                        "cost_usd": a.estimated_cost_usd,
                         "pid": a.pid,
                     })
                 })
