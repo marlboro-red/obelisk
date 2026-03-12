@@ -98,6 +98,7 @@ async fn run_app(
 
     // Initial render before entering event loop
     let mut prev_view = app.active_view;
+    let mut prev_term_size = terminal.size()?;
     terminal.draw(|f| ui::render(f, &app))?;
 
     // Main loop — only render on tick/input, batch data events between frames
@@ -141,6 +142,12 @@ async fn run_app(
             let term_size = terminal.size()?;
             let (pty_rows, pty_cols) = ui::compute_pty_area(term_size.width, term_size.height);
             app.sync_pty_sizes(pty_rows, pty_cols);
+            // Force full redraw on terminal resize so ratatui repaints every
+            // cell and does not leave stale content from the old dimensions.
+            if term_size != prev_term_size {
+                terminal.clear()?;
+                prev_term_size = term_size;
+            }
 
             terminal.draw(|f| ui::render(f, &app))?;
         }
@@ -191,9 +198,9 @@ fn process_event(
         AppEvent::AgentPtyReady { agent_id, handle } => {
             app.on_agent_pty_ready(agent_id, handle);
         }
-        AppEvent::Terminal(Event::Resize(cols, rows)) => {
-            let (pty_rows, pty_cols) = ui::compute_pty_area(cols, rows);
-            app.sync_pty_sizes(pty_rows, pty_cols);
+        AppEvent::Terminal(Event::Resize(_, _)) => {
+            // PTY resize is handled in the render loop via sync_pty_sizes,
+            // which runs before every draw and avoids double-resize here.
         }
         AppEvent::Terminal(_) => {}
     }
