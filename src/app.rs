@@ -252,10 +252,28 @@ pub struct App {
     pub priority_filter: Option<std::ops::RangeInclusive<i32>>,
     /// Index into ALL_TYPES for the "cycle type filter" keybinding
     pub type_filter_cursor: usize,
+
+    // Session tracking
+    pub session_id: String,
+    pub session_started_at: chrono::DateTime<chrono::Local>,
+
+    // Loaded history sessions (from .beads/obelisk_sessions.jsonl)
+    pub history_sessions: Vec<SessionRecord>,
+    pub history_scroll: usize,
 }
 
 impl App {
     pub fn new() -> Self {
+        let session_id = generate_session_id();
+        let history_sessions = load_history_sessions();
+        let last_session_summary = history_sessions.last().map(|last| format!(
+            "Last session {}: {} completed, {} failed ({} agents)",
+            &last.session_id[..8.min(last.session_id.len())],
+            last.total_completed,
+            last.total_failed,
+            last.agents.len(),
+        ));
+
         let mut app = Self {
             ready_tasks: Vec::new(),
             agents: Vec::new(),
@@ -300,10 +318,64 @@ impl App {
             type_filter: HashSet::new(),
             priority_filter: None,
             type_filter_cursor: 0,
+            session_id,
+            session_started_at: chrono::Local::now(),
+            history_sessions,
+            history_scroll: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
+        if let Some(summary) = last_session_summary {
+            app.log(LogCategory::System, summary);
+        }
         app
+    }
+
+    /// Build a SessionRecord from the current session and append it to the
+    /// persistent log file `.beads/obelisk_sessions.jsonl`.
+    pub fn save_session(&self) {
+        let ended_at = chrono::Local::now();
+        let agents: Vec<SessionAgent> = self
+            .agents
+            .iter()
+            .map(|a| SessionAgent {
+                task_id: a.task.id.clone(),
+                runtime: a.runtime.name().to_string(),
+                model: a.model.clone(),
+                elapsed_secs: a.elapsed_secs,
+                status: match a.status {
+                    AgentStatus::Starting => "Starting".to_string(),
+                    AgentStatus::Running => "Running".to_string(),
+                    AgentStatus::Completed => "Completed".to_string(),
+                    AgentStatus::Failed => "Failed".to_string(),
+                },
+            })
+            .collect();
+
+        let record = SessionRecord {
+            session_id: self.session_id.clone(),
+            started_at: self.session_started_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            ended_at: ended_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            total_completed: self.total_completed,
+            total_failed: self.total_failed,
+            agents,
+        };
+
+        if let Ok(json) = serde_json::to_string(&record) {
+            let path = sessions_file_path();
+            // Ensure parent directory exists
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let _ = writeln!(f, "{}", json);
+            }
+        }
     }
 
     pub fn log(&mut self, category: LogCategory, message: String) {
@@ -723,6 +795,9 @@ impl App {
                     self.log_scroll -= 1;
                 }
             }
+            View::History => {
+                self.history_scroll = self.history_scroll.saturating_sub(1);
+            }
         }
     }
 
@@ -774,6 +849,12 @@ impl App {
                 let max_scroll = self.event_log.len();
                 if self.log_scroll < max_scroll {
                     self.log_scroll += 1;
+                }
+            }
+            View::History => {
+                let max = self.history_sessions.len().saturating_sub(1);
+                if self.history_scroll < max {
+                    self.history_scroll += 1;
                 }
             }
         }
@@ -1209,4 +1290,59 @@ impl App {
         let s = secs % 60;
         format!("{:02}:{:02}", m, s)
     }
+
+    /// Compute aggregate stats across all loaded history sessions.
+    /// Returns (total_sessions, all_time_completed, all_time_failed, avg_duration_secs).
+    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64) {
+        let total_sessions = self.history_sessions.len();
+        let all_time_completed: u64 = self.history_sessions
+            .iter()
+            .map(|s| s.total_completed as u64)
+            .sum();
+        let all_time_failed: u64 = self.history_sessions
+            .iter()
+            .map(|s| s.total_failed as u64)
+            .sum();
+
+        // Average agent duration across all history sessions
+        let (total_elapsed, agent_count): (u64, u64) = self.history_sessions
+            .iter()
+            .flat_map(|s| s.agents.iter())
+            .fold((0u64, 0u64), |(sum, cnt), a| (sum + a.elapsed_secs, cnt + 1));
+
+        let avg_duration = if agent_count > 0 {
+            total_elapsed as f64 / agent_count as f64
+        } else {
+            0.0
+        };
+
+        (total_sessions, all_time_completed, all_time_failed, avg_duration)
+    }
+}
+
+/// Return the path to the sessions JSONL file. Tries `.beads/obelisk_sessions.jsonl`
+/// relative to the current working directory (where the binary is run from).
+fn sessions_file_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(".beads").join("obelisk_sessions.jsonl")
+}
+
+/// Load all session records from the persistent JSONL file.
+/// Returns an empty Vec if the file doesn't exist or can't be parsed.
+pub fn load_history_sessions() -> Vec<SessionRecord> {
+    let path = sessions_file_path();
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<SessionRecord>(line).ok())
+        .collect()
+}
+
+/// Generate a simple session ID using the current timestamp (no external UUID crate needed).
+fn generate_session_id() -> String {
+    let now = chrono::Local::now();
+    format!("sess-{}", now.format("%Y%m%d-%H%M%S"))
 }
