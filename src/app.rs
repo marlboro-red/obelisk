@@ -203,6 +203,7 @@ pub struct App {
     pub ready_tasks: Vec<BeadTask>,
     pub agents: Vec<AgentInstance>,
     pub event_log: VecDeque<LogEntry>,
+    pub log_category_filter: Option<LogCategory>,
 
     pub active_view: View,
     pub focus: Focus,
@@ -451,6 +452,7 @@ impl App {
             ready_tasks: Vec::new(),
             agents: Vec::new(),
             event_log: VecDeque::with_capacity(500),
+            log_category_filter: None,
             active_view: View::Dashboard,
             focus: Focus::ReadyQueue,
             task_list_state: ListState::default(),
@@ -838,6 +840,27 @@ impl App {
         }
     }
 
+    /// Cycle through event log category filters:
+    /// None → System → Incoming → Deploy → Complete → Alert → Poll → None
+    pub fn cycle_log_category_filter(&mut self) {
+        use LogCategory::*;
+        self.log_category_filter = match self.log_category_filter {
+            None => Some(System),
+            Some(System) => Some(Incoming),
+            Some(Incoming) => Some(Deploy),
+            Some(Deploy) => Some(Complete),
+            Some(Complete) => Some(Alert),
+            Some(Alert) => Some(Poll),
+            Some(Poll) => None,
+        };
+        self.log_scroll = 0;
+        let label = match self.log_category_filter {
+            Some(cat) => cat.label().to_string(),
+            None => "ALL".to_string(),
+        };
+        self.log(LogCategory::System, format!("Event log filter: {}", label));
+    }
+
     /// Cycle to the next agent status filter. Resets selection to the first
     /// visible agent (or None if no agents match).
     pub fn cycle_agent_status_filter(&mut self) {
@@ -1192,8 +1215,11 @@ impl App {
                 }
             }
             View::EventLog => {
-                let max_scroll = self.event_log.len();
-                if self.log_scroll < max_scroll {
+                let filtered_len = match self.log_category_filter {
+                    Some(cat) => self.event_log.iter().filter(|e| e.category == cat).count(),
+                    None => self.event_log.len(),
+                };
+                if self.log_scroll < filtered_len {
                     self.log_scroll += 1;
                 }
             }
