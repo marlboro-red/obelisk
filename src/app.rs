@@ -937,7 +937,11 @@ impl App {
             let task_id = agent.task.id.clone();
             let rt = agent.runtime.name().to_string();
             let elapsed = agent.elapsed_secs;
-            if exit_code == Some(0) {
+            // Don't overwrite a terminal status — force_complete or kill may
+            // have already set Completed/Failed before the exit watcher fires.
+            if matches!(agent.status, AgentStatus::Completed | AgentStatus::Failed) {
+                None
+            } else if exit_code == Some(0) {
                 agent.status = AgentStatus::Completed;
                 Some((true, unit, task_id, rt, elapsed))
             } else {
@@ -2461,4 +2465,109 @@ pub fn load_history_sessions() -> Vec<SessionRecord> {
 fn generate_session_id() -> String {
     let now = chrono::Local::now();
     format!("sess-{}", now.format("%Y%m%d-%H%M%S"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    fn test_task() -> BeadTask {
+        BeadTask {
+            id: "test-001".into(),
+            title: "test task".into(),
+            status: "open".into(),
+            priority: None,
+            issue_type: None,
+            assignee: None,
+            labels: None,
+            description: None,
+            created_at: None,
+        }
+    }
+
+    fn test_agent(id: usize, status: AgentStatus) -> AgentInstance {
+        AgentInstance {
+            id,
+            unit_number: 1,
+            task: test_task(),
+            runtime: Runtime::ClaudeCode,
+            model: "test-model".into(),
+            status,
+            phase: AgentPhase::Detecting,
+            output: VecDeque::new(),
+            started_at: std::time::Instant::now(),
+            elapsed_secs: 0,
+            exit_code: None,
+            pid: None,
+            retry_count: 0,
+            worktree_path: None,
+            worktree_cleaned: false,
+            completion_detected: false,
+            exit_sent_at: None,
+            completion_buf: String::new(),
+            template_name: String::new(),
+            pinned_to_split: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            estimated_cost_usd: 0.0,
+            total_lines: 0,
+        }
+    }
+
+    #[test]
+    fn exit_code_zero_marks_completed() {
+        let mut app = App::new();
+        app.agents.push(test_agent(42, AgentStatus::Running));
+
+        app.on_agent_exited(42, Some(0));
+
+        let agent = app.agents.iter().find(|a| a.id == 42).unwrap();
+        assert_eq!(agent.status, AgentStatus::Completed);
+        assert_eq!(agent.exit_code, Some(0));
+    }
+
+    #[test]
+    fn exit_code_nonzero_marks_failed() {
+        let mut app = App::new();
+        app.agents.push(test_agent(43, AgentStatus::Running));
+
+        app.on_agent_exited(43, Some(1));
+
+        let agent = app.agents.iter().find(|a| a.id == 43).unwrap();
+        assert_eq!(agent.status, AgentStatus::Failed);
+    }
+
+    #[test]
+    fn exit_does_not_overwrite_completed_status() {
+        let mut app = App::new();
+        app.agents.push(test_agent(44, AgentStatus::Completed));
+
+        // Simulate: force_complete set Completed, then exit watcher fires
+        // with non-zero (process was killed after being marked complete)
+        app.on_agent_exited(44, Some(1));
+
+        let agent = app.agents.iter().find(|a| a.id == 44).unwrap();
+        assert_eq!(
+            agent.status,
+            AgentStatus::Completed,
+            "exit watcher must not overwrite Completed status"
+        );
+    }
+
+    #[test]
+    fn exit_does_not_overwrite_failed_status() {
+        let mut app = App::new();
+        app.agents.push(test_agent(45, AgentStatus::Failed));
+
+        // Simulate: kill_selected_agent set Failed, then exit watcher fires
+        app.on_agent_exited(45, Some(0));
+
+        let agent = app.agents.iter().find(|a| a.id == 45).unwrap();
+        assert_eq!(
+            agent.status,
+            AgentStatus::Failed,
+            "exit watcher must not overwrite Failed status"
+        );
+    }
 }
