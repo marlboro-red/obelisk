@@ -1,4 +1,5 @@
 use crate::templates;
+use crate::theme::{Theme, ThemeConfig};
 use crate::types::*;
 use ratatui::widgets::ListState;
 use regex::Regex;
@@ -58,6 +59,7 @@ struct ModelsConfig {
 struct ObeliskConfig {
     orchestrator: Option<OrchestratorConfig>,
     models: Option<ModelsConfig>,
+    theme: Option<ThemeConfig>,
 }
 
 pub struct SpawnRequest {
@@ -341,6 +343,10 @@ pub struct App {
     // Recent completions feed (Dashboard panel)
     pub recent_completions: VecDeque<CompletionRecord>,
 
+    // Color theme
+    pub theme: Theme,
+    pub theme_config: ThemeConfig,
+
     // Dependency graph view state
     pub dep_graph_nodes: Vec<DepNode>,
     pub dep_graph_rows: Vec<DepGraphRow>,
@@ -458,6 +464,9 @@ impl App {
             last.agents.len(),
         ));
 
+        let theme_config = config.theme.clone().unwrap_or_default();
+        let theme = Theme::from_config(&theme_config);
+
         let poll_countdown = poll_interval_secs as f64;
         let mut app = Self {
             ready_tasks: Vec::new(),
@@ -532,6 +541,8 @@ impl App {
             worktree_sort_mode: WorktreeSortMode::Age,
             worktree_last_scan_frame: 0,
             recent_completions: VecDeque::with_capacity(10),
+            theme,
+            theme_config,
             dep_graph_nodes: Vec::new(),
             dep_graph_rows: Vec::new(),
             dep_graph_list_state: ListState::default(),
@@ -589,6 +600,7 @@ impl App {
                 codex: Some(self.selected_model_for(Runtime::Codex).to_string()),
                 copilot: Some(self.selected_model_for(Runtime::Copilot).to_string()),
             }),
+            theme: Some(self.theme_config.clone()),
         };
         match toml::to_string_pretty(&config) {
             Ok(toml_str) => {

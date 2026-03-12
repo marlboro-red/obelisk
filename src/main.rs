@@ -2,6 +2,7 @@ mod app;
 mod notify;
 mod runtime;
 mod templates;
+mod theme;
 mod types;
 mod ui;
 
