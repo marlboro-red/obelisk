@@ -441,6 +441,8 @@ pub struct App {
     pub split_pane_focus: usize,
     /// Output scroll per pane
     pub split_pane_scroll: [Option<usize>; 4],
+    /// Rotation offset for cycling through agents when > 4 are running
+    pub split_pane_rotation_offset: usize,
 
     /// Layout rectangles from last render — used for mouse hit-testing
     pub layout_areas: LayoutAreas,
@@ -679,6 +681,7 @@ impl App {
             split_pane_agents: [None; 4],
             split_pane_focus: 0,
             split_pane_scroll: [None; 4],
+            split_pane_rotation_offset: 0,
             layout_areas: LayoutAreas::default(),
             mouse_enabled: true,
             jump_active: false,
@@ -2426,7 +2429,10 @@ impl App {
 
     // ── Split-pane view methods ──
 
-    /// Auto-populate split pane slots with running agents if not manually pinned.
+    /// Auto-populate split pane slots with running agents.
+    ///
+    /// When 4 or fewer agents are running, panels are fixed (no cycling).
+    /// Rotation only kicks in when more than 4 agents are active.
     pub fn auto_fill_split_panes(&mut self) {
         let running: Vec<usize> = self
             .agents
@@ -2435,15 +2441,67 @@ impl App {
             .map(|a| a.id)
             .collect();
 
-        for slot in 0..4 {
-            if let Some(id) = self.split_pane_agents[slot] {
+        // Collect pinned slot→agent mappings first
+        let pinned: Vec<(usize, usize)> = (0..4)
+            .filter_map(|slot| {
+                let id = self.split_pane_agents[slot]?;
                 if self.agents.iter().any(|a| a.id == id && a.pinned_to_split == Some(slot)) {
-                    continue;
+                    Some((slot, id))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let pinned_ids: Vec<usize> = pinned.iter().map(|&(_, id)| id).collect();
+
+        // Unpinned running agents (candidates for auto-assignment)
+        let unpinned_running: Vec<usize> = running
+            .iter()
+            .filter(|id| !pinned_ids.contains(id))
+            .copied()
+            .collect();
+
+        // Count available (non-pinned) slots
+        let pinned_slots: Vec<usize> = pinned.iter().map(|&(s, _)| s).collect();
+        let free_slots: Vec<usize> = (0..4).filter(|s| !pinned_slots.contains(s)).collect();
+
+        if unpinned_running.len() <= free_slots.len() {
+            // ≤ 4 agents (accounting for pinned): fixed panels, no rotation
+            self.split_pane_rotation_offset = 0;
+            let mut unpinned_iter = unpinned_running.iter();
+            for &slot in &free_slots {
+                // Keep current agent if still running
+                if let Some(id) = self.split_pane_agents[slot] {
+                    if unpinned_running.contains(&id) {
+                        continue;
+                    }
+                }
+                // Fill with next available agent
+                loop {
+                    match unpinned_iter.next() {
+                        Some(&id) => {
+                            if self.split_pane_agents.contains(&Some(id)) {
+                                continue; // already shown in another slot
+                            }
+                            self.split_pane_agents[slot] = Some(id);
+                            break;
+                        }
+                        None => {
+                            self.split_pane_agents[slot] = None;
+                            break;
+                        }
+                    }
                 }
             }
-            let assigned: Vec<Option<usize>> = self.split_pane_agents.to_vec();
-            let candidate = running.iter().find(|&&id| !assigned.contains(&Some(id)));
-            self.split_pane_agents[slot] = candidate.copied();
+        } else {
+            // > 4 agents: rotate through unpinned agents across free slots
+            let offset = self.split_pane_rotation_offset % unpinned_running.len();
+            for (i, &slot) in free_slots.iter().enumerate() {
+                let idx = (offset + i) % unpinned_running.len();
+                self.split_pane_agents[slot] = Some(unpinned_running[idx]);
+            }
+            self.split_pane_rotation_offset =
+                (self.split_pane_rotation_offset + free_slots.len()) % unpinned_running.len();
         }
     }
 
@@ -3487,6 +3545,91 @@ mod tests {
         assert_eq!(app.split_pane_count(60), 1);
         assert_eq!(app.split_pane_count(100), 2);
         assert_eq!(app.split_pane_count(200), 4);
+    }
+
+    #[test]
+    fn auto_fill_fixed_panels_when_4_or_fewer_agents() {
+        let mut app = App::new();
+        // Add 3 running agents
+        app.agents.push(test_agent(1, AgentStatus::Running));
+        app.agents.push(test_agent(2, AgentStatus::Running));
+        app.agents.push(test_agent(3, AgentStatus::Running));
+
+        app.auto_fill_split_panes();
+        let first_fill = app.split_pane_agents;
+
+        // Call again — panels should NOT rotate
+        app.auto_fill_split_panes();
+        assert_eq!(app.split_pane_agents, first_fill);
+
+        // Call many more times — still stable
+        for _ in 0..20 {
+            app.auto_fill_split_panes();
+        }
+        assert_eq!(app.split_pane_agents, first_fill);
+
+        // All 3 agents should be visible, 4th slot empty
+        assert!(app.split_pane_agents[..3].iter().all(|s| s.is_some()));
+        assert_eq!(app.split_pane_agents[3], None);
+    }
+
+    #[test]
+    fn auto_fill_rotates_when_more_than_4_agents() {
+        let mut app = App::new();
+        // Add 6 running agents
+        for i in 1..=6 {
+            app.agents.push(test_agent(i, AgentStatus::Running));
+        }
+
+        app.auto_fill_split_panes();
+        let first_fill = app.split_pane_agents;
+        // All 4 slots should be occupied
+        assert!(first_fill.iter().all(|s| s.is_some()));
+
+        // Call again — panels should rotate (different agents shown)
+        app.auto_fill_split_panes();
+        assert_ne!(app.split_pane_agents, first_fill);
+    }
+
+    #[test]
+    fn auto_fill_respects_pinned_agents_during_rotation() {
+        let mut app = App::new();
+        for i in 1..=6 {
+            app.agents.push(test_agent(i, AgentStatus::Running));
+        }
+
+        // Pin agent 1 to slot 0
+        app.split_pane_agents[0] = Some(1);
+        app.agents[0].pinned_to_split = Some(0);
+
+        app.auto_fill_split_panes();
+        assert_eq!(app.split_pane_agents[0], Some(1)); // pinned stays
+
+        // Rotate multiple times — pinned agent stays in slot 0
+        for _ in 0..10 {
+            app.auto_fill_split_panes();
+            assert_eq!(app.split_pane_agents[0], Some(1));
+        }
+    }
+
+    #[test]
+    fn auto_fill_replaces_finished_agents_in_fixed_mode() {
+        let mut app = App::new();
+        app.agents.push(test_agent(1, AgentStatus::Running));
+        app.agents.push(test_agent(2, AgentStatus::Running));
+        app.agents.push(test_agent(3, AgentStatus::Running));
+
+        app.auto_fill_split_panes();
+        assert!(app.split_pane_agents.contains(&Some(1)));
+
+        // Agent 1 finishes, agent 4 starts
+        app.agents[0].status = AgentStatus::Completed;
+        app.agents.push(test_agent(4, AgentStatus::Running));
+
+        app.auto_fill_split_panes();
+        // Agent 1 should be gone, agent 4 should appear
+        assert!(!app.split_pane_agents.contains(&Some(1)));
+        assert!(app.split_pane_agents.contains(&Some(4)));
     }
 
     // ── Log ──────────────────────────────────────────────────────
