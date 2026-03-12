@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, Sparkline, Tabs,
+        ScrollbarOrientation, ScrollbarState, Sparkline, Tabs, Wrap,
     },
     Frame,
 };
@@ -209,7 +209,14 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(v_chunks[0]);
 
-    render_ready_queue(f, h_chunks[0], app);
+    // Split left column: queue list on top, task detail preview on bottom
+    let left_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(4), Constraint::Length(9)])
+        .split(h_chunks[0]);
+
+    render_ready_queue(f, left_chunks[0], app);
+    render_task_preview(f, left_chunks[1], app);
     render_agent_panel(f, h_chunks[1], app);
 
     // Bottom: throughput sparkline + mini event log
@@ -377,6 +384,89 @@ fn render_ready_queue(f: &mut Frame, area: Rect, app: &App) {
     );
 
     f.render_stateful_widget(list, area, &mut app.task_list_state.clone());
+}
+
+fn render_task_preview(f: &mut Frame, area: Rect, app: &App) {
+    let is_focused = app.focus == Focus::ReadyQueue && app.active_view == View::Dashboard;
+    let border_color = if is_focused { INFO } else { MUTED };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(
+            " ◆ DETAIL ",
+            Style::default().fg(INFO).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    let task = match app.selected_task() {
+        Some(t) => t,
+        None => {
+            f.render_widget(
+                Paragraph::new(Span::styled(
+                    " Select a task to view details",
+                    Style::default().fg(MUTED),
+                ))
+                .block(block),
+                area,
+            );
+            return;
+        }
+    };
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let priority = task.priority.unwrap_or(3);
+    let p_color = match priority {
+        0 => DANGER,
+        1 => PRIMARY,
+        2 => WARN,
+        _ => BRIGHT,
+    };
+
+    let type_str = match task.issue_type.as_deref().unwrap_or("task") {
+        "bug" => "BUG",
+        "feature" => "FTR",
+        "task" => "TSK",
+        "epic" => "EPC",
+        "chore" => "CHR",
+        _ => "???",
+    };
+
+    let description = task.description.as_deref().unwrap_or("(no description)");
+    let labels_str = task.labels.as_ref().map(|l| l.join(", ")).unwrap_or_default();
+    let assignee = task.assignee.as_deref().unwrap_or("");
+
+    let mut meta_spans = vec![
+        Span::styled(format!("[{}] ", type_str), Style::default().fg(INFO)),
+        Span::styled(format!("P{}  ", priority), Style::default().fg(p_color)),
+    ];
+    if !assignee.is_empty() {
+        meta_spans.push(Span::styled(assignee, Style::default().fg(SECONDARY)));
+    }
+    if !labels_str.is_empty() {
+        meta_spans.push(Span::styled(
+            format!("  ◦ {}", labels_str),
+            Style::default().fg(MUTED),
+        ));
+    }
+
+    let lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            task.title.as_str(),
+            Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(meta_spans),
+        Line::from(""),
+        Line::from(Span::styled(description, Style::default().fg(MUTED))),
+    ];
+
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
@@ -1142,7 +1232,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("m", "Cycle model for current runtime"));
     lines.push(key_line("a", "Toggle auto-spawn mode"));
     lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));
-    lines.push(key_line("↑↓ / j/k", "Navigate list"));
+    lines.push(key_line("↑↓ / j/k", "Navigate list  (detail panel updates)"));
     lines.push(key_line("Enter", "Open Agent Detail for selected"));
     lines.push(key_line("+/-", "Increase/decrease max concurrent slots"));
     lines.push(key_line("1-3", "Switch view"));
