@@ -408,14 +408,26 @@ fn handle_key(
         return;
     }
 
-    // ── Interactive mode: forward everything to PTY except Ctrl+] (detach) ──
+    // ── Interactive mode: forward everything to PTY except double-Escape (detach) ──
     if app.interactive_mode {
-        // Ctrl+] = detach from interactive mode (classic telnet escape)
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(']') {
-            app.interactive_mode = false;
-            app.log(LogCategory::System, "Detached from interactive session".into());
+        // Double-Escape = detach from interactive mode (two Esc within 300ms)
+        if key.code == KeyCode::Esc {
+            let now = std::time::Instant::now();
+            if let Some(prev) = app.last_esc_press {
+                if now.duration_since(prev).as_millis() <= 300 {
+                    app.interactive_mode = false;
+                    app.last_esc_press = None;
+                    app.log(LogCategory::System, "Detached from interactive session".into());
+                    return;
+                }
+            }
+            app.last_esc_press = Some(now);
+            // Forward single Esc to the PTY
+            app.write_to_agent(&[0x1b]);
             return;
         }
+        // Any non-Esc key resets the double-Esc timer
+        app.last_esc_press = None;
         // Forward keystroke to the agent's PTY
         if let Some(bytes) = key_to_pty_bytes(&key) {
             app.write_to_agent(&bytes);
@@ -646,7 +658,7 @@ fn handle_key(
                         app.interactive_mode = true;
                         app.log(
                             LogCategory::System,
-                            format!("Attached to AGENT-{:02} — Ctrl+] to detach", agent_id),
+                            format!("Attached to AGENT-{:02} — double-Esc to detach", agent_id),
                         );
                     }
                 }

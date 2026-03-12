@@ -2875,7 +2875,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
         },
         View::AgentDetail => if app.interactive_mode {
             vec![
-                ("Ctrl+]", "detach"),
+                ("Esc Esc", "detach"),
                 ("", "— all other keys forwarded to agent PTY —"),
             ]
         } else if app.search_active {
@@ -3059,7 +3059,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
 
     // ── Agent Detail — Interactive ──
     lines.push(section_header("AGENT DETAIL  (Interactive mode)"));
-    lines.push(key_line("Ctrl+]", "Detach from PTY (return to Observe)"));
+    lines.push(key_line("Esc Esc", "Detach from PTY (return to Observe)"));
     lines.push(Line::from(vec![
         Span::styled("  ", Style::default()),
         Span::styled("All other keys are forwarded to the agent's PTY.", Style::default().fg(t.muted)),
