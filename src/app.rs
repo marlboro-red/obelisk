@@ -338,6 +338,9 @@ pub struct App {
     /// Frame count at which the last worktree scan was triggered
     pub worktree_last_scan_frame: u64,
 
+    // Distribution bar mode (priority vs type breakdown)
+    pub dist_bar_mode: DistBarMode,
+
     // Dependency graph view state
     pub dep_graph_nodes: Vec<DepNode>,
     pub dep_graph_rows: Vec<DepGraphRow>,
@@ -528,6 +531,7 @@ impl App {
             worktree_list_state: ListState::default(),
             worktree_sort_mode: WorktreeSortMode::Age,
             worktree_last_scan_frame: 0,
+            dist_bar_mode: DistBarMode::Priority,
             dep_graph_nodes: Vec::new(),
             dep_graph_rows: Vec::new(),
             dep_graph_list_state: ListState::default(),

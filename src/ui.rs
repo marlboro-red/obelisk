@@ -291,22 +291,45 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
 
     // When compact: hide sparklines and give full width to event log
     let show_bottom = !compact_rows || area.height > 12;
+    let show_dist_bar = area.height > 14; // hide bar in very tight layouts
     let v_chunks = if show_bottom && !compact_cols {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(8),    // Top: ready queue + agents
-                Constraint::Length(5), // Bottom: throughput + velocity + mini log
-            ])
-            .split(area)
+        if show_dist_bar {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(8),    // Top: ready queue + agents
+                    Constraint::Length(1), // Distribution bar
+                    Constraint::Length(5), // Bottom: throughput + velocity + mini log
+                ])
+                .split(area)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(8),    // Top: ready queue + agents
+                    Constraint::Length(5), // Bottom: throughput + velocity + mini log
+                ])
+                .split(area)
+        }
     } else if show_bottom && compact_cols {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(8),    // Top: ready queue + agents
-                Constraint::Length(3), // Bottom: single-line event log
-            ])
-            .split(area)
+        if show_dist_bar {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(8),    // Top: ready queue + agents
+                    Constraint::Length(1), // Distribution bar
+                    Constraint::Length(3), // Bottom: single-line event log
+                ])
+                .split(area)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(8),    // Top: ready queue + agents
+                    Constraint::Length(3), // Bottom: single-line event log
+                ])
+                .split(area)
+        }
     } else {
         // Very compact: no bottom panel at all
         Layout::default()
@@ -359,11 +382,17 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     app.layout_areas.agent_panel = Some(h_chunks[1]);
     render_agent_panel(f, h_chunks[1], app);
 
+    // Distribution bar (single row between main content and bottom panels)
+    if show_dist_bar && v_chunks.len() > 1 {
+        render_distribution_bar(f, v_chunks[1], app);
+    }
+
     // Bottom panels
-    if v_chunks.len() > 1 {
+    let bottom_idx = if show_dist_bar { 2 } else { 1 };
+    if v_chunks.len() > bottom_idx {
         if compact_cols {
             // < 100 cols: hide sparklines, full-width single-line event log
-            render_mini_event_log(f, v_chunks[1], app);
+            render_mini_event_log(f, v_chunks[bottom_idx], app);
         } else {
             let bottom_chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -372,7 +401,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
                     Constraint::Percentage(25),
                     Constraint::Percentage(50),
                 ])
-                .split(v_chunks[1]);
+                .split(v_chunks[bottom_idx]);
             render_throughput_sparkline(f, bottom_chunks[0], app);
             render_velocity_sparkline(f, bottom_chunks[1], app);
             render_mini_event_log(f, bottom_chunks[2], app);
@@ -442,6 +471,145 @@ fn render_velocity_sparkline(f: &mut Frame, area: Rect, app: &App) {
         .style(Style::default().fg(INFO));
 
     f.render_widget(sparkline, area);
+}
+
+fn render_distribution_bar(f: &mut Frame, area: Rect, app: &App) {
+    use crate::types::DistBarMode;
+
+    if area.width < 10 || area.height < 1 {
+        return;
+    }
+
+    let tasks = &app.ready_tasks;
+    if tasks.is_empty() {
+        let empty = Paragraph::new(Line::from(vec![
+            Span::styled("▏ ", Style::default().fg(MUTED)),
+            Span::styled(
+                "No open issues",
+                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+            ),
+        ]));
+        f.render_widget(empty, area);
+        return;
+    }
+
+    // Collect counts and build segments based on mode
+    let (segments, mode_label): (Vec<(&str, Color, usize)>, &str) = match app.dist_bar_mode {
+        DistBarMode::Priority => {
+            let mut counts = [0usize; 5]; // P0..P4
+            for t in tasks {
+                let p = t.priority.unwrap_or(3).clamp(0, 4) as usize;
+                counts[p] += 1;
+            }
+            let colors = [
+                DANGER,                         // P0: red
+                PRIMARY,                        // P1: orange
+                WARN,                           // P2: yellow/amber
+                INFO,                           // P3: blue
+                MUTED,                          // P4: dim
+            ];
+            let labels = ["P0", "P1", "P2", "P3", "P4"];
+            let segs: Vec<_> = labels
+                .iter()
+                .zip(colors.iter())
+                .zip(counts.iter())
+                .filter(|((_, _), &c)| c > 0)
+                .map(|((&lbl, &col), &cnt)| (lbl, col, cnt))
+                .collect();
+            (segs, "PRIORITY")
+        }
+        DistBarMode::Type => {
+            let type_spec: &[(&str, Color)] = &[
+                ("bug", DANGER),
+                ("feature", ACCENT),
+                ("task", INFO),
+                ("chore", MUTED),
+                ("epic", SECONDARY),
+            ];
+            let mut counts = std::collections::HashMap::<&str, usize>::new();
+            for t in tasks {
+                let itype = t.issue_type.as_deref().unwrap_or("task");
+                *counts.entry(itype).or_default() += 1;
+            }
+            let segs: Vec<_> = type_spec
+                .iter()
+                .filter_map(|&(name, color)| {
+                    counts.get(name).filter(|&&c| c > 0).map(|&c| (name, color, c))
+                })
+                .collect();
+            (segs, "TYPE")
+        }
+    };
+
+    if segments.is_empty() {
+        return;
+    }
+
+    let total: usize = segments.iter().map(|(_, _, c)| c).sum();
+    // Reserve space for the mode label prefix "▏PRIORITY " or "▏TYPE "
+    let prefix = format!("▏{} ", mode_label);
+    let prefix_width = prefix.len() as u16;
+    let bar_width = area.width.saturating_sub(prefix_width) as usize;
+
+    if bar_width < 4 {
+        return;
+    }
+
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::styled(
+        prefix,
+        Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+    ));
+
+    // Build the stacked bar with inline labels
+    let mut used = 0usize;
+    for (i, &(label, color, count)) in segments.iter().enumerate() {
+        // Proportional width, ensure at least 1 char per segment
+        let raw_width = if i == segments.len() - 1 {
+            bar_width.saturating_sub(used)
+        } else {
+            ((count as f64 / total as f64) * bar_width as f64).round() as usize
+        };
+        let seg_width = raw_width.max(1).min(bar_width.saturating_sub(used));
+        if seg_width == 0 {
+            break;
+        }
+
+        // Format: "LABEL:COUNT" centered in segment, padded with '█'
+        let inline_label = format!("{}:{}", label, count);
+        let label_len = inline_label.len();
+
+        if seg_width >= label_len + 2 {
+            // Enough room for label with bar fill around it
+            let pad_total = seg_width - label_len;
+            let pad_left = pad_total / 2;
+            let pad_right = pad_total - pad_left;
+            let bar_left: String = "█".repeat(pad_left);
+            let bar_right: String = "█".repeat(pad_right);
+            spans.push(Span::styled(bar_left, Style::default().fg(color)));
+            spans.push(Span::styled(
+                inline_label,
+                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(bar_right, Style::default().fg(color)));
+        } else if seg_width >= label_len {
+            // Just the label, no bar fill
+            let truncated = &inline_label[..seg_width];
+            spans.push(Span::styled(
+                truncated.to_string(),
+                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            // Too small for label, just fill with bar
+            let bar: String = "█".repeat(seg_width);
+            spans.push(Span::styled(bar, Style::default().fg(color)));
+        }
+
+        used += seg_width;
+    }
+
+    let line = Line::from(spans);
+    f.render_widget(Paragraph::new(line), area);
 }
 
 fn render_mini_event_log(f: &mut Frame, area: Rect, app: &App) {
@@ -2868,6 +3036,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("n", "Toggle desktop notifications on/off"));
     lines.push(key_line("c", "Scan and clean up orphaned worktrees"));
     lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
+    lines.push(key_line("b", "Toggle distribution bar (priority ↔ type)"));
     lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));
     lines.push(key_line("/", "Jump to issue by ID"));
     lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));

@@ -3,6 +3,21 @@ use std::collections::VecDeque;
 use std::io::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistBarMode {
+    Priority,
+    Type,
+}
+
+impl DistBarMode {
+    pub fn toggle(&self) -> Self {
+        match self {
+            DistBarMode::Priority => DistBarMode::Type,
+            DistBarMode::Type => DistBarMode::Priority,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
     Priority,
     Type,
