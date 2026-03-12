@@ -492,6 +492,9 @@ pub struct App {
     // Mark-complete confirmation dialog — Some(agent_id) means dialog is visible
     pub confirm_complete_agent_id: Option<usize>,
 
+    // Quit confirmation dialog — true when agents are still running and user pressed q
+    pub confirm_quit: bool,
+
     // Tab bar badge: event log count at last visit (for "unread" badge)
     pub event_log_seen_count: usize,
 
@@ -711,6 +714,7 @@ impl App {
             velocity_window_size,
             confirm_kill_agent_id: None,
             confirm_complete_agent_id: None,
+            confirm_quit: false,
             event_log_seen_count: 0,
             worktree_entries: Vec::new(),
             worktree_list_state: ListState::default(),

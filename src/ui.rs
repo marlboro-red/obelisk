@@ -147,6 +147,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if let Some(agent_id) = app.confirm_kill_agent_id {
         render_kill_confirm_dialog(f, area, app, agent_id);
     }
+
+    if app.confirm_quit {
+        render_quit_confirm_dialog(f, area, app);
+    }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3241,6 +3245,68 @@ fn render_kill_confirm_dialog(f: &mut Frame, area: Rect, app: &App, agent_id: us
         Line::from(vec![
             Span::styled("  [y/Enter] ", Style::default().fg(t.danger).add_modifier(Modifier::BOLD)),
             Span::styled("Confirm   ", Style::default().fg(t.bright)),
+            Span::styled("[n/Esc] ", Style::default().fg(t.primary).add_modifier(Modifier::BOLD)),
+            Span::styled("Cancel", Style::default().fg(t.bright)),
+        ]),
+    ];
+
+    f.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(t.panel_bg)),
+        inner,
+    );
+}
+
+// ══════════════════════════════════════════════════════════
+//  QUIT CONFIRMATION DIALOG
+// ══════════════════════════════════════════════════════════
+
+fn render_quit_confirm_dialog(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let active = app.active_agent_count();
+
+    let popup_width = 58u16.min(area.width.saturating_sub(4));
+    let popup_height = 7u16.min(area.height.saturating_sub(4));
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+        y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(t.danger))
+        .title(Span::styled(
+            " ⚠ CONFIRM QUIT ",
+            Style::default().fg(t.danger).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(t.panel_bg));
+
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let agent_word = if active == 1 { "agent" } else { "agents" };
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                format!("  {} {} still running. Quit?", active, agent_word),
+                Style::default().fg(t.bright),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  Active agents will be orphaned.",
+                Style::default().fg(t.muted),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  [y/Enter] ", Style::default().fg(t.danger).add_modifier(Modifier::BOLD)),
+            Span::styled("Quit      ", Style::default().fg(t.bright)),
             Span::styled("[n/Esc] ", Style::default().fg(t.primary).add_modifier(Modifier::BOLD)),
             Span::styled("Cancel", Style::default().fg(t.bright)),
         ]),
