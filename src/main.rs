@@ -600,16 +600,6 @@ fn handle_key(
                 ),
             );
         }
-        KeyCode::Char('z') if app.active_view == View::Dashboard => {
-            app.auto_exit_on_completion = !app.auto_exit_on_completion;
-            app.log(
-                LogCategory::System,
-                format!(
-                    "Auto-exit on completion {}",
-                    if app.auto_exit_on_completion { "ENABLED" } else { "DISABLED" }
-                ),
-            );
-        }
         KeyCode::Char('n') if !app.search_active => {
             app.notifications_enabled = !app.notifications_enabled;
             app.log(
