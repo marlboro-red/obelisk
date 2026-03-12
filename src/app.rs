@@ -2086,14 +2086,14 @@ impl App {
                     }
                 }
             }
-            // Track total output lines (newlines received) — survives PTY resizes
-            agent.total_lines += data.iter().filter(|&&b| b == b'\n').count();
+            // total_lines is now derived from the vt100 parser in agent_line_count(),
+            // so we no longer accumulate raw newline bytes here.
         }
         // Recalculate cost for this agent after potential token update
         self.recalculate_agent_cost(agent_id);
-        // Also count for throughput tracking (approximate: count newlines)
+        // Throughput tracking: count actual newlines only (no minimum-1 inflation)
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
-        self.lines_this_tick = self.lines_this_tick.saturating_add(newlines.max(1));
+        self.lines_this_tick = self.lines_this_tick.saturating_add(newlines);
 
     }
 
@@ -2127,12 +2127,16 @@ impl App {
         }
     }
 
-    /// Count total output lines for an agent. Uses the running `total_lines`
-    /// counter (incremented on each newline received), which survives PTY
-    /// resizes and is not capped by terminal dimensions.
+    /// Count total output lines for an agent.  Derives the count from the
+    /// vt100 parser (scrollback + visible screen rows) so it reflects actual
+    /// unique content lines rather than inflated raw-newline throughput.
     pub fn agent_line_count(&self, agent_id: usize) -> usize {
-        if let Some(agent) = self.agents.iter().find(|a| a.id == agent_id) {
-            if agent.total_lines > 0 || self.pty_states.contains_key(&agent_id) {
+        if let Some(state) = self.pty_states.get(&agent_id) {
+            let screen = state.parser.screen();
+            let (rows, _cols) = screen.size();
+            screen.scrollback() as usize + rows as usize
+        } else if let Some(agent) = self.agents.iter().find(|a| a.id == agent_id) {
+            if agent.total_lines > 0 {
                 agent.total_lines
             } else {
                 // Legacy fallback for agents without PTY
