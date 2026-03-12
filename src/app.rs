@@ -211,6 +211,106 @@ fn detect_phase(text: &str) -> Option<AgentPhase> {
     None
 }
 
+/// Detect common error patterns in PTY output lines.
+/// Returns a list of human-readable error summaries.
+fn detect_error_patterns(lines: &[&str]) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    let mut compile_errors = 0u32;
+    let mut test_failures = 0u32;
+    let mut panics = 0u32;
+    let mut permission_denied = false;
+    let mut merge_conflicts = false;
+
+    for line in lines {
+        let lower = line.to_lowercase();
+        // Rust compilation errors
+        if lower.contains("error[e") || (lower.starts_with("error") && lower.contains("-->")) {
+            compile_errors += 1;
+        }
+        // Test failures
+        if lower.contains("test result: failed")
+            || lower.contains("failures:")
+            || lower.contains("failed")
+                && (lower.contains("test") || lower.contains("assert"))
+        {
+            test_failures += 1;
+        }
+        // Panics / stack traces
+        if lower.contains("thread '") && lower.contains("panicked") {
+            panics += 1;
+        }
+        if lower.contains("stack backtrace") {
+            panics = panics.max(1);
+        }
+        // Permission / access errors
+        if lower.contains("permission denied") || lower.contains("access denied") {
+            permission_denied = true;
+        }
+        // Git merge conflicts
+        if lower.contains("merge conflict") || lower.contains("unmerged paths") {
+            merge_conflicts = true;
+        }
+    }
+
+    if compile_errors > 0 {
+        errors.push(format!("- Compilation errors detected ({} error lines)", compile_errors));
+    }
+    if test_failures > 0 {
+        errors.push(format!("- Test failures detected ({} failure indicators)", test_failures));
+    }
+    if panics > 0 {
+        errors.push(format!("- Panic / crash detected ({} panic(s))", panics));
+    }
+    if permission_denied {
+        errors.push("- Permission denied errors".to_string());
+    }
+    if merge_conflicts {
+        errors.push("- Git merge conflicts".to_string());
+    }
+
+    errors
+}
+
+/// Extract failure context from a failed agent's PTY output.
+/// Returns a formatted string with exit code, last N lines of output,
+/// and any detected error patterns.
+fn extract_failure_context(agent: &AgentInstance, context_lines: usize) -> String {
+    let mut sections = Vec::new();
+
+    // Exit code
+    if let Some(code) = agent.exit_code {
+        sections.push(format!("Exit code: {}", code));
+    }
+
+    // Last N lines of PTY output
+    let total = agent.output.len();
+    let take = total.min(context_lines);
+    let tail_lines: Vec<&str> = agent
+        .output
+        .iter()
+        .skip(total.saturating_sub(take))
+        .map(|s| s.as_str())
+        .collect();
+
+    // Detect error patterns in the tail
+    let patterns = detect_error_patterns(&tail_lines);
+    if !patterns.is_empty() {
+        sections.push(format!("Detected errors:\n{}", patterns.join("\n")));
+    }
+
+    // Include the raw tail output
+    if !tail_lines.is_empty() {
+        sections.push(format!(
+            "Last {} lines of output:\n```\n{}\n```",
+            tail_lines.len(),
+            tail_lines.join("\n")
+        ));
+    }
+
+    sections.join("\n\n")
+}
+
 pub struct App {
     pub ready_tasks: Vec<BeadTask>,
     pub agents: Vec<AgentInstance>,
@@ -235,6 +335,8 @@ pub struct App {
     pub total_completed: u32,
     pub total_failed: u32,
     pub max_retries: u32,
+    /// Number of PTY output lines to include in failure context on retry
+    pub retry_context_lines: usize,
 
     pub selected_agent_id: Option<usize>,
     /// None = auto-follow (pinned to bottom), Some(n) = manual scroll at line n from top
@@ -368,6 +470,7 @@ impl App {
             total_completed: 0,
             total_failed: 0,
             max_retries: 3,
+            retry_context_lines: 80,
             selected_agent_id: None,
             agent_output_scroll: None,
             prompt_template: AGENT_PROMPT_TEMPLATE.to_string(),
@@ -1157,7 +1260,7 @@ impl App {
     /// Retry a failed agent: create a new AgentInstance for the same task.
     /// Returns None if the agent is not failed, max retries exceeded, or at capacity.
     pub fn retry_agent(&mut self, agent_id: usize) -> Option<SpawnRequest> {
-        let (task, runtime, model, retry_count) = {
+        let (task, runtime, model, retry_count, failure_context) = {
             let agent = self.agents.iter().find(|a| a.id == agent_id)?;
             if agent.status != AgentStatus::Failed {
                 return None;
@@ -1172,7 +1275,8 @@ impl App {
                 );
                 return None;
             }
-            (agent.task.clone(), agent.runtime, agent.model.clone(), agent.retry_count)
+            let ctx = extract_failure_context(agent, self.retry_context_lines);
+            (agent.task.clone(), agent.runtime, agent.model.clone(), agent.retry_count, ctx)
         };
 
         if self.active_agent_count() >= self.max_concurrent {
@@ -1189,8 +1293,14 @@ impl App {
             .replace("{id}", &task.id)
             .replace("{title}", &task.title);
         let user_prompt = format!(
-            "Work on beads issue {}. Follow the workflow in the Beads Agent Prompt exactly.",
-            task.id
+            "Work on beads issue {}. Follow the workflow in the Beads Agent Prompt exactly.\n\n\
+             ---\n\n\
+             # RETRY CONTEXT (Attempt #{} — previous attempt failed)\n\n\
+             PREVIOUS ATTEMPT FAILED. Review the failure context below and avoid \
+             repeating the same mistakes. Adjust your approach based on what went wrong.\n\n\
+             {}\n\n\
+             ---",
+            task.id, new_retry_count, failure_context
         );
 
         let new_agent = AgentInstance {
