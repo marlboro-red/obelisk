@@ -238,6 +238,8 @@ pub struct AgentInstance {
     pub estimated_cost_usd: f64,
     /// Running total of output lines (newlines received), survives PTY resizes
     pub total_lines: usize,
+    /// Raw PTY bytes captured for log export
+    pub raw_pty_log: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]

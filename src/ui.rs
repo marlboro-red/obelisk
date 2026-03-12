@@ -2476,6 +2476,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             let mut keys = vec![
                 ("i", "interact"),
                 ("d", "diff"),
+                ("e", "export"),
                 ("r", "retry"),
                 ("↑↓", "scroll"),
             ];
