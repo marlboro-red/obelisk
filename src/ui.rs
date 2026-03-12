@@ -47,6 +47,8 @@ fn primary_block(title: &str) -> Block<'_> {
 
 pub fn render(f: &mut Frame, app: &mut App) {
     let area = f.area();
+    let compact_rows = area.height < 40;
+
     // Clear all cells first to prevent artifacts when switching views
     f.render_widget(Clear, area);
     f.render_widget(
@@ -54,29 +56,26 @@ pub fn render(f: &mut Frame, app: &mut App) {
         area,
     );
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Title bar
-            Constraint::Length(1), // Tab bar
-            Constraint::Min(10),  // Main content
-            Constraint::Length(3), // Status gauges
-            Constraint::Length(3), // Info bar
-            Constraint::Length(1), // Keybindings
-        ])
-        .split(area);
-
-    // Store tab bar rect for mouse hit-testing
-    app.layout_areas.tab_bar = Some(chunks[1]);
     // Clear per-view areas before rendering
     app.layout_areas.ready_queue = None;
     app.layout_areas.agent_panel = None;
     app.layout_areas.agent_detail_output = None;
     app.layout_areas.split_panes = [None; 4];
 
-    render_title_bar(f, chunks[0], app);
-    render_tab_bar(f, chunks[1], app);
+    if compact_rows {
+        // Compact vertical layout: drop status gauges, shrink info bar to 1 line
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title bar
+                Constraint::Length(1), // Tab bar
+                Constraint::Min(10),  // Main content
+                Constraint::Length(1), // Info bar (compact)
+                Constraint::Length(1), // Keybindings
+            ])
+            .split(area);
 
+<<<<<<< HEAD
     match app.active_view {
         View::Dashboard => render_dashboard(f, chunks[2], app),
         View::AgentDetail => render_agent_detail(f, chunks[2], app),
@@ -85,19 +84,68 @@ pub fn render(f: &mut Frame, app: &mut App) {
         View::SplitPane => render_split_pane(f, chunks[2], app),
         View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
     }
+=======
+        app.layout_areas.tab_bar = Some(chunks[1]);
+>>>>>>> obelisk-0ys
 
-    render_status_gauges(f, chunks[3], app);
-    render_info_bar(f, chunks[4], app);
-    render_keybindings(f, chunks[5], app);
+        render_title_bar(f, chunks[0], app);
+        render_tab_bar(f, chunks[1], app);
 
-    // Persistent poll-error banner — rendered on top of main content
-    if !app.last_poll_ok {
-        render_poll_error_banner(f, chunks[2], app);
-    }
+        match app.active_view {
+            View::Dashboard => render_dashboard(f, chunks[2], app),
+            View::AgentDetail => render_agent_detail(f, chunks[2], app),
+            View::EventLog => render_event_log(f, chunks[2], app),
+            View::History => render_history(f, chunks[2], app),
+            View::SplitPane => render_split_pane(f, chunks[2], app),
+        }
 
-    // Jump-to-issue bar — rendered over the keybindings line when active
-    if app.jump_active {
-        render_jump_bar(f, chunks[5], app);
+        render_info_bar_compact(f, chunks[3], app);
+        render_keybindings(f, chunks[4], app);
+
+        if !app.last_poll_ok {
+            render_poll_error_banner(f, chunks[2], app);
+        }
+
+        if app.jump_active {
+            render_jump_bar(f, chunks[4], app);
+        }
+    } else {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title bar
+                Constraint::Length(1), // Tab bar
+                Constraint::Min(10),  // Main content
+                Constraint::Length(3), // Status gauges
+                Constraint::Length(3), // Info bar
+                Constraint::Length(1), // Keybindings
+            ])
+            .split(area);
+
+        app.layout_areas.tab_bar = Some(chunks[1]);
+
+        render_title_bar(f, chunks[0], app);
+        render_tab_bar(f, chunks[1], app);
+
+        match app.active_view {
+            View::Dashboard => render_dashboard(f, chunks[2], app),
+            View::AgentDetail => render_agent_detail(f, chunks[2], app),
+            View::EventLog => render_event_log(f, chunks[2], app),
+            View::History => render_history(f, chunks[2], app),
+            View::SplitPane => render_split_pane(f, chunks[2], app),
+        }
+
+        render_status_gauges(f, chunks[3], app);
+        render_info_bar(f, chunks[4], app);
+        render_keybindings(f, chunks[5], app);
+
+        if !app.last_poll_ok {
+            render_poll_error_banner(f, chunks[2], app);
+        }
+
+        if app.jump_active {
+            render_jump_bar(f, chunks[5], app);
+        }
     }
 
     if app.show_help {
@@ -202,13 +250,35 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
 // ══════════════════════════════════════════════════════════
 
 fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
-    let v_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(8),    // Top: ready queue + agents
-            Constraint::Length(5), // Bottom: throughput + mini log
-        ])
-        .split(area);
+    let term = f.area();
+    let compact_rows = term.height < 40;
+    let compact_cols = term.width < 100;
+
+    // When compact: hide sparklines and give full width to event log
+    let show_bottom = !compact_rows || area.height > 12;
+    let v_chunks = if show_bottom && !compact_cols {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(8),    // Top: ready queue + agents
+                Constraint::Length(5), // Bottom: throughput + velocity + mini log
+            ])
+            .split(area)
+    } else if show_bottom && compact_cols {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(8),    // Top: ready queue + agents
+                Constraint::Length(3), // Bottom: single-line event log
+            ])
+            .split(area)
+    } else {
+        // Very compact: no bottom panel at all
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(8)])
+            .split(area)
+    };
 
     // Alert banner overlay
     if let Some((ref msg, _)) = app.alert_message {
@@ -237,33 +307,42 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(v_chunks[0]);
 
-    // Split left column: queue list on top, task detail preview on bottom
-    let left_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(4), Constraint::Length(9)])
-        .split(h_chunks[0]);
-
-    // Store areas for mouse hit-testing
-    app.layout_areas.ready_queue = Some(left_chunks[0]);
+    // Left column: queue list on top, task detail preview on bottom (hidden when compact rows)
+    if compact_rows {
+        // No task preview — give full height to ready queue
+        app.layout_areas.ready_queue = Some(h_chunks[0]);
+        render_ready_queue(f, h_chunks[0], app);
+    } else {
+        let left_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(4), Constraint::Length(9)])
+            .split(h_chunks[0]);
+        app.layout_areas.ready_queue = Some(left_chunks[0]);
+        render_ready_queue(f, left_chunks[0], app);
+        render_task_preview(f, left_chunks[1], app);
+    }
     app.layout_areas.agent_panel = Some(h_chunks[1]);
-
-    render_ready_queue(f, left_chunks[0], app);
-    render_task_preview(f, left_chunks[1], app);
     render_agent_panel(f, h_chunks[1], app);
 
-    // Bottom: throughput sparkline + velocity sparkline + mini event log
-    let bottom_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(50),
-        ])
-        .split(v_chunks[1]);
-
-    render_throughput_sparkline(f, bottom_chunks[0], app);
-    render_velocity_sparkline(f, bottom_chunks[1], app);
-    render_mini_event_log(f, bottom_chunks[2], app);
+    // Bottom panels
+    if v_chunks.len() > 1 {
+        if compact_cols {
+            // < 100 cols: hide sparklines, full-width single-line event log
+            render_mini_event_log(f, v_chunks[1], app);
+        } else {
+            let bottom_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(50),
+                ])
+                .split(v_chunks[1]);
+            render_throughput_sparkline(f, bottom_chunks[0], app);
+            render_velocity_sparkline(f, bottom_chunks[1], app);
+            render_mini_event_log(f, bottom_chunks[2], app);
+        }
+    }
 }
 
 fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
@@ -1027,7 +1106,15 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
     );
 
     // Split output area: output on left, stats/diff on right
-    let output_chunks = if app.show_diff_panel {
+    // < 120 cols: collapse diagnostics sidebar to maximize terminal output
+    let narrow_cols = f.area().width < 120;
+    let output_chunks = if narrow_cols && !app.show_diff_panel {
+        // No sidebar — full width for terminal output
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(40)])
+            .split(chunks[1])
+    } else if app.show_diff_panel {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -1115,11 +1202,13 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // Right panel: diff or stats
-    if app.show_diff_panel {
-        render_diff_panel(f, output_chunks[1], app);
-    } else {
-        render_agent_stats(f, output_chunks[1], agent, app);
+    // Right panel: diff or stats (hidden when < 120 cols and no diff panel)
+    if output_chunks.len() > 1 {
+        if app.show_diff_panel {
+            render_diff_panel(f, output_chunks[1], app);
+        } else {
+            render_agent_stats(f, output_chunks[1], agent, app);
+        }
     }
 }
 
@@ -2289,6 +2378,65 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(line).block(block), area);
 }
 
+/// Compact single-line info bar for terminals with < 40 rows.
+/// Shows the most important stats without a border box.
+fn render_info_bar_compact(f: &mut Frame, area: Rect, app: &App) {
+    let runtime_color = match app.selected_runtime {
+        Runtime::ClaudeCode => PRIMARY,
+        Runtime::Codex => ACCENT,
+        Runtime::Copilot => INFO,
+    };
+
+    let auto_style = if app.auto_spawn {
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(MUTED)
+    };
+
+    let line = Line::from(vec![
+        Span::styled(" ", Style::default().fg(MUTED)),
+        Span::styled(
+            app.selected_runtime.name(),
+            Style::default().fg(runtime_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" \u{2502} ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}/{}", app.active_agent_count(), app.max_concurrent),
+            Style::default().fg(BRIGHT),
+        ),
+        Span::styled(" \u{2502} ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}\u{2713}", app.total_completed),
+            Style::default().fg(ACCENT),
+        ),
+        Span::styled(" ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}\u{2717}", app.total_failed),
+            Style::default().fg(if app.total_failed > 0 { DANGER } else { MUTED }),
+        ),
+        Span::styled(" \u{2502} ", Style::default().fg(MUTED)),
+        Span::styled(
+            if app.auto_spawn { "AUTO" } else { "MANUAL" },
+            auto_style,
+        ),
+        Span::styled(" \u{2502} Q:", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}", app.ready_tasks.len()),
+            Style::default().fg(if app.ready_tasks.is_empty() { MUTED } else { WARN }),
+        ),
+        Span::styled(" \u{2502} ", Style::default().fg(MUTED)),
+        Span::styled(
+            app::format_cost(app.session_total_cost()),
+            Style::default().fg(if app.session_total_cost() > 1.0 { WARN } else { ACCENT }),
+        ),
+    ]);
+
+    f.render_widget(
+        Paragraph::new(line).style(Style::default().bg(PANEL_BG)),
+        area,
+    );
+}
+
 // ══════════════════════════════════════════════════════════
 //  KEYBINDINGS BAR
 // ══════════════════════════════════════════════════════════
@@ -2849,25 +2997,27 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
 /// Compute the inner (rows, cols) of the terminal output panel given the full
 /// terminal size. This mirrors the layout chain: main → agent_detail → output_block.
 pub fn compute_pty_area(term_cols: u16, term_rows: u16) -> (u16, u16) {
-    // Main vertical layout (from render()):
-    //   Length(3)  title bar
-    //   Length(1)  tab bar
-    //   Min(10)    main content  ← this is agent_detail area
-    //   Length(3)  status gauges
-    //   Length(3)  info bar
-    //   Length(1)  keybindings
-    // Chrome = 3+1+3+3+1 = 11
-    let content_height = term_rows.saturating_sub(11);
+    let compact_rows = term_rows < 40;
 
-    // Agent detail vertical layout (from render_agent_detail()):
+    // Main vertical layout chrome:
+    //   Normal:  3+1+3+3+1 = 11
+    //   Compact: 3+1+1+1   = 6  (no status gauges, info bar shrinks to 1)
+    let chrome = if compact_rows { 6 } else { 11 };
+    let content_height = term_rows.saturating_sub(chrome);
+
+    // Agent detail vertical layout:
     //   Length(3)  agent header
     //   Min(5)    output area
     let output_height = content_height.saturating_sub(3);
 
     // Output horizontal split:
-    //   Min(40)      output panel
-    //   Length(28)   stats panel
-    let output_width = term_cols.saturating_sub(28);
+    //   < 120 cols: no stats panel, full width for output
+    //   >= 120 cols: Min(40) output + Length(28) stats panel
+    let output_width = if term_cols < 120 {
+        term_cols
+    } else {
+        term_cols.saturating_sub(28)
+    };
 
     // The output block has Borders::ALL → subtract 2 from each dimension for inner area
     let inner_rows = output_height.saturating_sub(2);
