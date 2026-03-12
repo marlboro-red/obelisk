@@ -442,12 +442,6 @@ pub struct App {
     /// Output scroll per pane
     pub split_pane_scroll: [Option<usize>; 4],
 
-    /// Layout rectangles from last render — used for mouse hit-testing
-    pub layout_areas: LayoutAreas,
-
-    /// Whether mouse support is enabled (toggle with 'M' on dashboard)
-    pub mouse_enabled: bool,
-
     // Jump-to-issue mode
     pub jump_active: bool,
     pub jump_query: String,
@@ -679,8 +673,6 @@ impl App {
             split_pane_agents: [None; 4],
             split_pane_focus: 0,
             split_pane_scroll: [None; 4],
-            layout_areas: LayoutAreas::default(),
-            mouse_enabled: true,
             jump_active: false,
             jump_query: String::new(),
             velocity_window_size,

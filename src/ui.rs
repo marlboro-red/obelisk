@@ -47,12 +47,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         area,
     );
 
-    // Clear per-view areas before rendering
-    app.layout_areas.ready_queue = None;
-    app.layout_areas.agent_panel = None;
-    app.layout_areas.agent_detail_output = None;
-    app.layout_areas.split_panes = [None; 4];
-
     if compact_rows {
         // Compact vertical layout: drop status gauges, shrink info bar to 1 line
         let chunks = Layout::default()
@@ -66,8 +60,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Constraint::Length(1), // Keybindings
             ])
             .split(area);
-
-        app.layout_areas.tab_bar = Some(chunks[1]);
 
         render_title_bar(f, chunks[0], app);
         render_tab_bar(f, chunks[1], app);
@@ -106,8 +98,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Constraint::Length(1), // Keybindings
             ])
             .split(area);
-
-        app.layout_areas.tab_bar = Some(chunks[1]);
 
         render_title_bar(f, chunks[0], app);
         render_tab_bar(f, chunks[1], app);
@@ -403,18 +393,15 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     // Left column: queue list on top, task detail preview on bottom (hidden when compact rows)
     if compact_rows {
         // No task preview — give full height to ready queue
-        app.layout_areas.ready_queue = Some(h_chunks[0]);
         render_ready_queue(f, h_chunks[0], app);
     } else {
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(4), Constraint::Length(9)])
             .split(h_chunks[0]);
-        app.layout_areas.ready_queue = Some(left_chunks[0]);
         render_ready_queue(f, left_chunks[0], app);
         render_task_preview(f, left_chunks[1], app);
     }
-    app.layout_areas.agent_panel = Some(h_chunks[1]);
     render_agent_panel(f, h_chunks[1], app);
 
     // Bottom panels
@@ -1278,9 +1265,6 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
             .split(chunks[1])
     };
 
-    // Store output area for mouse scrolling
-    app.layout_areas.agent_detail_output = Some(output_chunks[0]);
-
     // Output area — use PseudoTerminal widget if PTY is active, else legacy text view
     let mode_label = if app.interactive_mode { "INTERACTIVE" } else { "OBSERVE" };
     let mode_color = if app.interactive_mode { t.accent } else { t.muted };
@@ -1399,11 +1383,6 @@ fn render_split_pane(f: &mut Frame, area: Rect, app: &mut App) {
             .split(rows[1]);
         vec![top[0], top[1], bot[0], bot[1]]
     };
-
-    // Store pane rects for mouse hit-testing
-    for (slot, &rect) in pane_rects.iter().enumerate() {
-        app.layout_areas.split_panes[slot] = Some(rect);
-    }
 
     for (slot, &pane_rect) in pane_rects.iter().enumerate() {
         let agent_id = app.split_pane_agents[slot];
@@ -2984,12 +2963,6 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
     lines.push(key_line("f", "Cycle sort mode (age/status)"));
     lines.push(key_line("w", "Open worktree overview (from Dashboard)"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
-    lines.push(Line::from(""));
-    // ── Mouse ──
-    lines.push(section_header("MOUSE"));
-    lines.push(key_line("Click", "Select items in lists, switch tabs, focus panes"));
-    lines.push(key_line("Scroll", "Navigate lists and scroll output"));
-    lines.push(key_line("M", "Toggle mouse support on/off (Dashboard)"));
     lines.push(Line::from(""));
     // ── Global ──
     lines.push(section_header("GLOBAL"));
