@@ -585,21 +585,6 @@ fn handle_key(
                 ),
             );
         }
-        KeyCode::Char('t') if app.active_view == View::Dashboard => {
-            const PRESETS: &[u64] = &[300, 900, 1800, 3600, 0];
-            let next = PRESETS
-                .iter()
-                .position(|&x| x == app.agent_timeout_secs)
-                .map(|i| PRESETS[(i + 1) % PRESETS.len()])
-                .unwrap_or(1800);
-            app.agent_timeout_secs = next;
-            let label = if next == 0 {
-                "DISABLED".to_string()
-            } else {
-                App::format_elapsed(next)
-            };
-            app.log(LogCategory::System, format!("Agent timeout: {}", label));
-        }
         KeyCode::Char('n') if !app.search_active => {
             app.notifications_enabled = !app.notifications_enabled;
             app.log(
