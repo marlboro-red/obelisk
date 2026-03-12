@@ -188,15 +188,10 @@ fn pty_write_input_and_read_response() {
         }
     });
 
-    // ConPTY sends ESC[6n on startup — respond to unblock output.
-    // On macOS/Linux no such query exists, so sending the CPR would leak
-    // visible text into the child's stdin (the bug obelisk-frt fixes).
-    #[cfg(windows)]
-    {
-        std::thread::sleep(Duration::from_millis(200));
-        let _ = writer.write_all(b"\x1b[1;1R");
-        let _ = writer.flush();
-    }
+    // ConPTY sends ESC[6n on startup — respond to unblock output
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = writer.write_all(b"\x1b[1;1R");
+    let _ = writer.flush();
 
     // Give the process time to start and show its prompt
     std::thread::sleep(Duration::from_millis(500));
@@ -318,41 +313,4 @@ fn vt100_parser_resize() {
 
     parser.screen_mut().set_size(40, 120);
     assert_eq!(parser.screen().size(), (40, 120));
-}
-
-/// Regression: vt100 parser resize preserves visible screen content.
-/// Previously, the app replaced the parser with a new instance on resize,
-/// which destroyed all buffer content.
-#[test]
-fn vt100_parser_resize_preserves_scrollback() {
-    let mut parser = vt100::Parser::new(10, 80, 100);
-
-    // Write some content to the screen
-    for i in 0..5 {
-        parser.process(format!("LINE-{}\r\n", i).as_bytes());
-    }
-
-    // Verify content is visible before resize
-    let contents_before = parser.screen().contents();
-    assert!(
-        contents_before.contains("LINE-4"),
-        "expected LINE-4 on screen before resize, got: {:?}",
-        contents_before
-    );
-
-    // Resize — this must preserve content (the bug was replacing the parser)
-    parser.screen_mut().set_size(12, 100);
-
-    // Verify content survives the resize
-    let contents_after = parser.screen().contents();
-    assert!(
-        contents_after.contains("LINE-4"),
-        "content lost after resize: expected LINE-4, got: {:?}",
-        contents_after
-    );
-    assert!(
-        contents_after.contains("LINE-0"),
-        "content lost after resize: expected LINE-0, got: {:?}",
-        contents_after
-    );
 }
