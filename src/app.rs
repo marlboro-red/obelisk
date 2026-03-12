@@ -297,6 +297,9 @@ pub struct App {
     pub search_query: String,
     pub search_matches: Vec<(usize, usize)>, // (screen_row, screen_col)
     pub search_current_idx: usize,
+
+    /// When true, auto-send /exit to ClaudeCode agents when completion is detected
+    pub auto_exit_on_completion: bool,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -398,6 +401,7 @@ impl App {
             search_query: String::new(),
             search_matches: Vec::new(),
             search_current_idx: 0,
+            auto_exit_on_completion: true,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -800,6 +804,9 @@ impl App {
             retry_count: 0,
             worktree_path: Some(format!("../worktree-{}", task.id)),
             worktree_cleaned: false,
+            completion_detected: false,
+            exit_sent_at: None,
+            completion_buf: String::new(),
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -1202,6 +1209,9 @@ impl App {
             retry_count: new_retry_count,
             worktree_path: Some(format!("../worktree-{}", task.id)),
             worktree_cleaned: false,
+            completion_detected: false,
+            exit_sent_at: None,
+            completion_buf: String::new(),
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -1301,6 +1311,44 @@ impl App {
         let models = self.selected_runtime.models();
         let idx = self.model_indices.entry(self.selected_runtime).or_insert(0);
         *idx = (*idx + 1) % models.len();
+    }
+
+    /// Recompute search matches for the selected agent's PTY screen.
+    pub fn update_search_matches(&mut self) {
+        let agent_id = match self.selected_agent_id {
+            Some(id) => id,
+            None => {
+                self.search_matches.clear();
+                return;
+            }
+        };
+        let matches = if let Some(state) = self.pty_states.get(&agent_id) {
+            compute_search_matches(state.parser.screen(), &self.search_query)
+        } else {
+            Vec::new()
+        };
+        self.search_matches = matches;
+        if !self.search_matches.is_empty() && self.search_current_idx >= self.search_matches.len() {
+            self.search_current_idx = 0;
+        }
+    }
+
+    pub fn search_next(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        self.search_current_idx = (self.search_current_idx + 1) % self.search_matches.len();
+    }
+
+    pub fn search_prev(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        if self.search_current_idx == 0 {
+            self.search_current_idx = self.search_matches.len() - 1;
+        } else {
+            self.search_current_idx -= 1;
+        }
     }
 
     /// Store PTY handle for an agent (called when AgentPtyReady arrives).
