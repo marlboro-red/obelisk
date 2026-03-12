@@ -1,9 +1,37 @@
 use crate::types::*;
 use ratatui::widgets::ListState;
+use regex::Regex;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::LazyLock;
 
 // All valid issue types for cycling the type filter
 const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
+
+// Regexes for parsing token usage from Claude CLI output
+static RE_INPUT_TOKENS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)input[_ ]tokens?[:\s]+([0-9][0-9,]*)").unwrap()
+});
+static RE_OUTPUT_TOKENS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)output[_ ]tokens?[:\s]+([0-9][0-9,]*)").unwrap()
+});
+
+fn parse_token_count(s: &str) -> Option<u64> {
+    s.replace(',', "").parse::<u64>().ok()
+}
+
+/// Build the default model pricing table (USD per million tokens).
+fn default_model_pricing() -> HashMap<String, ModelPricing> {
+    let mut m = HashMap::new();
+    m.insert("claude-sonnet-4-6".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 15.0 });
+    m.insert("claude-opus-4-6".into(), ModelPricing { input_per_mtok: 15.0, output_per_mtok: 75.0 });
+    m.insert("claude-haiku-4-5-20251001".into(), ModelPricing { input_per_mtok: 0.80, output_per_mtok: 4.0 });
+    m.insert("claude-sonnet-4".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 15.0 });
+    m.insert("gpt-5.4".into(), ModelPricing { input_per_mtok: 10.0, output_per_mtok: 30.0 });
+    m.insert("gpt-5.3-codex".into(), ModelPricing { input_per_mtok: 5.0, output_per_mtok: 15.0 });
+    m.insert("gpt-5.3-codex-spark".into(), ModelPricing { input_per_mtok: 2.5, output_per_mtok: 10.0 });
+    m.insert("gpt-5".into(), ModelPricing { input_per_mtok: 10.0, output_per_mtok: 30.0 });
+    m
+}
 
 const AGENT_PROMPT_TEMPLATE: &str = r#"# Beads Agent Prompt — Worktree Workflow
 
@@ -291,6 +319,12 @@ pub struct App {
 
     // Agent list status filter
     pub agent_status_filter: AgentStatusFilter,
+
+    // Model pricing table (model name → pricing)
+    pub model_pricing: HashMap<String, ModelPricing>,
+
+    // Cost threshold warning — flash alert when any agent exceeds this USD amount
+    pub cost_threshold: Option<f64>,
 }
 
 impl App {
@@ -354,6 +388,8 @@ impl App {
             history_sessions,
             history_scroll: 0,
             agent_status_filter: AgentStatusFilter::All,
+            model_pricing: default_model_pricing(),
+            cost_threshold: Some(5.0), // default $5 warning threshold
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -381,8 +417,13 @@ impl App {
                     AgentStatus::Completed => "Completed".to_string(),
                     AgentStatus::Failed => "Failed".to_string(),
                 },
+                input_tokens: a.input_tokens,
+                output_tokens: a.output_tokens,
+                estimated_cost_usd: a.estimated_cost_usd,
             })
             .collect();
+
+        let total_cost_usd: f64 = self.agents.iter().map(|a| a.estimated_cost_usd).sum();
 
         let record = SessionRecord {
             session_id: self.session_id.clone(),
@@ -390,6 +431,7 @@ impl App {
             ended_at: ended_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             total_completed: self.total_completed,
             total_failed: self.total_failed,
+            total_cost_usd,
             agents,
         };
 
@@ -756,6 +798,9 @@ impl App {
             retry_count: 0,
             worktree_path: Some(format!("../worktree-{}", task.id)),
             worktree_cleaned: false,
+            input_tokens: 0,
+            output_tokens: 0,
+            estimated_cost_usd: 0.0,
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -1158,6 +1203,9 @@ impl App {
             retry_count: new_retry_count,
             worktree_path: Some(format!("../worktree-{}", task.id)),
             worktree_cleaned: false,
+            input_tokens: 0,
+            output_tokens: 0,
+            estimated_cost_usd: 0.0,
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -1275,20 +1323,33 @@ impl App {
         if let Some(state) = self.pty_states.get_mut(&agent_id) {
             state.parser.process(data);
         }
-        // Transition Starting → Running on first data received, and detect phase
+        // Transition Starting → Running on first data received, and detect phase + tokens
         if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
             if agent.status == AgentStatus::Starting {
                 agent.status = AgentStatus::Running;
             }
-            // Phase detection — heuristic, best-effort; only advance, never retreat
             if let Ok(text) = std::str::from_utf8(data) {
+                // Phase detection — heuristic, best-effort; only advance, never retreat
                 if let Some(detected) = detect_phase(text) {
                     if detected > agent.phase {
                         agent.phase = detected;
                     }
                 }
+                // Token usage parsing — accumulate from CLI output
+                if let Some(caps) = RE_INPUT_TOKENS.captures(text) {
+                    if let Some(n) = caps.get(1).and_then(|m| parse_token_count(m.as_str())) {
+                        agent.input_tokens = n;
+                    }
+                }
+                if let Some(caps) = RE_OUTPUT_TOKENS.captures(text) {
+                    if let Some(n) = caps.get(1).and_then(|m| parse_token_count(m.as_str())) {
+                        agent.output_tokens = n;
+                    }
+                }
             }
         }
+        // Recalculate cost for this agent after potential token update
+        self.recalculate_agent_cost(agent_id);
         // Also count for throughput tracking (approximate: count newlines)
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
         self.lines_this_tick = self.lines_this_tick.saturating_add(newlines.max(1));
@@ -1378,9 +1439,49 @@ impl App {
         format!("{:02}:{:02}", m, s)
     }
 
+    /// Recalculate estimated cost for a single agent based on its token counts and model pricing.
+    fn recalculate_agent_cost(&mut self, agent_id: usize) {
+        if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
+            let pricing = self.model_pricing.get(&agent.model);
+            let old_cost = agent.estimated_cost_usd;
+            agent.estimated_cost_usd = if let Some(p) = pricing {
+                (agent.input_tokens as f64 * p.input_per_mtok
+                    + agent.output_tokens as f64 * p.output_per_mtok)
+                    / 1_000_000.0
+            } else {
+                0.0
+            };
+            // Check cost threshold — fire alert on first crossing
+            if let Some(threshold) = self.cost_threshold {
+                if agent.estimated_cost_usd >= threshold && old_cost < threshold {
+                    let unit = agent.unit_number;
+                    let cost = agent.estimated_cost_usd;
+                    let msg = format!(
+                        "AGENT-{:02} cost ${:.2} exceeds threshold ${:.2}!",
+                        unit, cost, threshold
+                    );
+                    self.alert_message = Some((msg.clone(), self.frame_count + 100));
+                    self.log(LogCategory::Alert, msg);
+                }
+            }
+        }
+    }
+
+    /// Sum of estimated cost across all agents in the current session.
+    pub fn session_total_cost(&self) -> f64 {
+        self.agents.iter().map(|a| a.estimated_cost_usd).sum()
+    }
+
+    /// Sum of input + output tokens across all agents in the current session.
+    pub fn session_total_tokens(&self) -> (u64, u64) {
+        let input: u64 = self.agents.iter().map(|a| a.input_tokens).sum();
+        let output: u64 = self.agents.iter().map(|a| a.output_tokens).sum();
+        (input, output)
+    }
+
     /// Compute aggregate stats across all loaded history sessions.
-    /// Returns (total_sessions, all_time_completed, all_time_failed, avg_duration_secs).
-    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64) {
+    /// Returns (total_sessions, all_time_completed, all_time_failed, avg_duration_secs, all_time_cost).
+    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64, f64) {
         let total_sessions = self.history_sessions.len();
         let all_time_completed: u64 = self.history_sessions
             .iter()
@@ -1403,7 +1504,34 @@ impl App {
             0.0
         };
 
-        (total_sessions, all_time_completed, all_time_failed, avg_duration)
+        let all_time_cost: f64 = self.history_sessions
+            .iter()
+            .map(|s| s.total_cost_usd)
+            .sum();
+
+        (total_sessions, all_time_completed, all_time_failed, avg_duration, all_time_cost)
+    }
+}
+
+/// Format a USD cost for display: $0.00 for small, $1.23 for larger.
+pub fn format_cost(usd: f64) -> String {
+    if usd < 0.01 {
+        format!("${:.4}", usd)
+    } else if usd < 100.0 {
+        format!("${:.2}", usd)
+    } else {
+        format!("${:.0}", usd)
+    }
+}
+
+/// Format a token count for display with K/M suffixes.
+pub fn format_tokens(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}K", count as f64 / 1_000.0)
+    } else {
+        format!("{}", count)
     }
 }
 

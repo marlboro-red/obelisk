@@ -218,6 +218,12 @@ pub struct AgentInstance {
     pub worktree_path: Option<String>,
     /// True once the worktree has been cleaned up (removed + branch deleted)
     pub worktree_cleaned: bool,
+    /// Cumulative input tokens parsed from agent CLI output
+    pub input_tokens: u64,
+    /// Cumulative output tokens parsed from agent CLI output
+    pub output_tokens: u64,
+    /// Estimated cost in USD, computed from tokens × model pricing
+    pub estimated_cost_usd: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -258,6 +264,12 @@ pub struct SessionAgent {
     pub model: String,
     pub elapsed_secs: u64,
     pub status: String,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub estimated_cost_usd: f64,
 }
 
 /// A single session record appended to `.beads/obelisk_sessions.jsonl` on exit.
@@ -268,7 +280,16 @@ pub struct SessionRecord {
     pub ended_at: String,
     pub total_completed: u32,
     pub total_failed: u32,
+    #[serde(default)]
+    pub total_cost_usd: f64,
     pub agents: Vec<SessionAgent>,
+}
+
+/// Pricing per model: cost in USD per million tokens.
+#[derive(Debug, Clone)]
+pub struct ModelPricing {
+    pub input_per_mtok: f64,
+    pub output_per_mtok: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

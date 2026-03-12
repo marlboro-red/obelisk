@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::{self, App};
 use crate::types::*;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -943,6 +943,14 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
     if let Some(wl) = worktree_line {
         lines.push(wl);
     }
+    let cost_color = if agent.estimated_cost_usd >= app.cost_threshold.unwrap_or(f64::MAX) {
+        DANGER
+    } else if agent.estimated_cost_usd > 0.0 {
+        WARN
+    } else {
+        MUTED
+    };
+
     lines.extend([
         Line::from(""),
         Line::from(vec![
@@ -959,6 +967,22 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
         Line::from(vec![
             Span::styled(" RATE    ", Style::default().fg(MUTED)),
             Span::styled(format!(" {:.1}/s", lines_per_sec), Style::default().fg(ACCENT)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" TOK IN  ", Style::default().fg(MUTED)),
+            Span::styled(format!(" {}", app::format_tokens(agent.input_tokens)), Style::default().fg(INFO)),
+        ]),
+        Line::from(vec![
+            Span::styled(" TOK OUT ", Style::default().fg(MUTED)),
+            Span::styled(format!(" {}", app::format_tokens(agent.output_tokens)), Style::default().fg(INFO)),
+        ]),
+        Line::from(vec![
+            Span::styled(" COST    ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!(" {}", app::format_cost(agent.estimated_cost_usd)),
+                Style::default().fg(cost_color).add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -1020,7 +1044,7 @@ fn render_event_log(f: &mut Frame, area: Rect, app: &App) {
 // ══════════════════════════════════════════════════════════
 
 fn render_history(f: &mut Frame, area: Rect, app: &App) {
-    let (total_sessions, all_completed, all_failed, avg_duration) = app.aggregate_stats();
+    let (total_sessions, all_completed, all_failed, avg_duration, all_time_cost) = app.aggregate_stats();
     let all_time_total = all_completed + all_failed;
     let success_rate = if all_time_total > 0 {
         all_completed as f64 / all_time_total as f64 * 100.0
@@ -1031,7 +1055,7 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
     let v_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7), // Aggregate stats panel
+            Constraint::Length(8), // Aggregate stats panel (one more row for cost)
             Constraint::Min(5),    // Session list
         ])
         .split(area);
@@ -1087,6 +1111,17 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(WARN).add_modifier(Modifier::BOLD),
             ),
         ]),
+        Line::from(vec![
+            Span::styled("  TOTAL COST      ", Style::default().fg(MUTED)),
+            Span::styled(
+                app::format_cost(all_time_cost),
+                if all_time_cost > 0.0 {
+                    Style::default().fg(WARN).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(MUTED)
+                },
+            ),
+        ]),
     ];
 
     f.render_widget(Paragraph::new(stats_lines).block(stats_block), v_chunks[0]);
@@ -1135,12 +1170,14 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 &session.session_id
             };
+            let cost_str = app::format_cost(session.total_cost_usd);
             ListItem::new(Line::from(vec![
                 Span::styled(format!("  {:16} ", short_id), Style::default().fg(SECONDARY)),
                 Span::styled(format!("started: {:<22} ", &session.started_at[..session.started_at.len().min(19)]), Style::default().fg(MUTED)),
                 Span::styled(format!("done:{:>4} ", session.total_completed), Style::default().fg(ACCENT)),
                 Span::styled(format!("fail:{:>3} ", session.total_failed), Style::default().fg(if session.total_failed > 0 { DANGER } else { MUTED })),
                 Span::styled(format!("{:>5.1}%", rate), Style::default().fg(rate_color).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("  {:>8}", cost_str), Style::default().fg(if session.total_cost_usd > 0.0 { WARN } else { MUTED })),
                 Span::styled(format!("  {:>3} agents", session.agents.len()), Style::default().fg(MUTED)),
             ]))
         })
@@ -1374,6 +1411,22 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(
             if app.auto_spawn { "ON" } else { "OFF" },
             auto_style,
+        ),
+        Span::styled("  │  ", Style::default().fg(MUTED)),
+        Span::styled("TOKENS: ", Style::default().fg(MUTED)),
+        {
+            let (tok_in, tok_out) = app.session_total_tokens();
+            let total = tok_in + tok_out;
+            Span::styled(
+                app::format_tokens(total),
+                Style::default().fg(if total > 0 { INFO } else { MUTED }),
+            )
+        },
+        Span::styled("  COST: ", Style::default().fg(MUTED)),
+        Span::styled(
+            app::format_cost(app.session_total_cost()),
+            Style::default().fg(if app.session_total_cost() > 0.0 { WARN } else { MUTED })
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  │  ", Style::default().fg(MUTED)),
         Span::styled("QUEUE: ", Style::default().fg(MUTED)),
