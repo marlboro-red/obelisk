@@ -421,6 +421,10 @@ pub struct PtyHandle {
     pub master: Box<dyn portable_pty::MasterPty + Send>,
     pub writer: Box<dyn Write + Send>,
     pub parser: vt100::Parser,
+    /// Tracks the previous scrollback value so we can detect growth.
+    pub prev_scrollback: usize,
+    /// Cumulative scrollback lines that have ever scrolled off the visible area.
+    pub cumulative_scrollback: usize,
 }
 
 /// Parsed git diff data for an agent's worktree.

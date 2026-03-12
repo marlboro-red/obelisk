@@ -2321,6 +2321,13 @@ impl App {
             // stream before feeding the vt100 parser — defense-in-depth.
             let cleaned = RE_CPR.replace_all(data, &b""[..]);
             state.parser.process(&cleaned);
+            // Track cumulative scrollback: only count positive deltas so that
+            // screen clears / alternate-screen resets never reduce the total.
+            let cur = state.parser.screen().scrollback() as usize;
+            if cur > state.prev_scrollback {
+                state.cumulative_scrollback += cur - state.prev_scrollback;
+            }
+            state.prev_scrollback = cur;
         }
         // Capture raw PTY bytes for log export
         if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
@@ -2388,14 +2395,14 @@ impl App {
         }
     }
 
-    /// Count total output lines for an agent.  Derives the count from the
-    /// vt100 parser (scrollback + visible screen rows) so it reflects actual
-    /// unique content lines rather than inflated raw-newline throughput.
+    /// Count total output lines for an agent.  Uses cumulative scrollback
+    /// (positive deltas only) plus visible rows so the count never regresses
+    /// when the terminal clears or enters alternate-screen mode.
     pub fn agent_line_count(&self, agent_id: usize) -> usize {
         if let Some(state) = self.pty_states.get(&agent_id) {
             let screen = state.parser.screen();
             let (rows, _cols) = screen.size();
-            screen.scrollback() as usize + rows as usize
+            state.cumulative_scrollback + rows as usize
         } else if let Some(agent) = self.agents.iter().find(|a| a.id == agent_id) {
             if agent.total_lines > 0 {
                 agent.total_lines
