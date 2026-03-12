@@ -313,6 +313,59 @@ pub enum View {
     EventLog,
     History,
     SplitPane,
+    WorktreeOverview,
+}
+
+/// Status classification for a worktree entry in the overview panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeStatus {
+    /// An agent is currently running on this worktree
+    Active,
+    /// Worktree exists but no agent is running on it
+    Idle,
+    /// No matching agent or issue — candidate for cleanup
+    Orphaned,
+}
+
+/// A single worktree entry enriched with agent and issue linkage.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct WorktreeEntry {
+    /// Absolute path to the worktree directory
+    pub path: String,
+    /// Git branch name
+    pub branch: String,
+    /// Linked issue ID parsed from worktree-{id} naming
+    pub issue_id: Option<String>,
+    /// Associated agent ID (if any)
+    pub agent_id: Option<usize>,
+    /// Status classification
+    pub status: WorktreeStatus,
+    /// Creation time (from filesystem metadata)
+    pub created_at: Option<chrono::DateTime<chrono::Local>>,
+}
+
+/// Sort mode for the worktree overview panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeSortMode {
+    Age,
+    Status,
+}
+
+impl WorktreeSortMode {
+    pub fn next(&self) -> Self {
+        match self {
+            WorktreeSortMode::Age => WorktreeSortMode::Status,
+            WorktreeSortMode::Status => WorktreeSortMode::Age,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            WorktreeSortMode::Age => "age",
+            WorktreeSortMode::Status => "status",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -375,4 +428,6 @@ pub enum AppEvent {
     WorktreeCleaned { cleaned: Vec<String>, failed: Vec<String> },
     /// Result of a git diff poll for an agent's worktree
     DiffResult { agent_id: usize, diff: DiffData },
+    /// Result of a worktree scan for the overview panel
+    WorktreeScanned(Vec<(String, String)>),
 }
