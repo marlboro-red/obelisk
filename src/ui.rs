@@ -60,6 +60,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .constraints([
                 Constraint::Length(3), // Title bar
                 Constraint::Length(1), // Tab bar
+                Constraint::Length(1), // Status summary
                 Constraint::Min(10),  // Main content
                 Constraint::Length(1), // Info bar (compact)
                 Constraint::Length(1), // Keybindings
@@ -70,26 +71,27 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         render_title_bar(f, chunks[0], app);
         render_tab_bar(f, chunks[1], app);
+        render_status_summary(f, chunks[2], app);
 
         match app.active_view {
-            View::Dashboard => render_dashboard(f, chunks[2], app),
-            View::AgentDetail => render_agent_detail(f, chunks[2], app),
-            View::EventLog => render_event_log(f, chunks[2], app),
-            View::History => render_history(f, chunks[2], app),
-            View::SplitPane => render_split_pane(f, chunks[2], app),
-            View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
-            View::DepGraph => render_dep_graph(f, chunks[2], app),
+            View::Dashboard => render_dashboard(f, chunks[3], app),
+            View::AgentDetail => render_agent_detail(f, chunks[3], app),
+            View::EventLog => render_event_log(f, chunks[3], app),
+            View::History => render_history(f, chunks[3], app),
+            View::SplitPane => render_split_pane(f, chunks[3], app),
+            View::WorktreeOverview => render_worktree_overview(f, chunks[3], app),
+            View::DepGraph => render_dep_graph(f, chunks[3], app),
         }
 
-        render_info_bar_compact(f, chunks[3], app);
-        render_keybindings(f, chunks[4], app);
+        render_info_bar_compact(f, chunks[4], app);
+        render_keybindings(f, chunks[5], app);
 
         if !app.last_poll_ok {
-            render_poll_error_banner(f, chunks[2], app);
+            render_poll_error_banner(f, chunks[3], app);
         }
 
         if app.jump_active {
-            render_jump_bar(f, chunks[4], app);
+            render_jump_bar(f, chunks[5], app);
         }
     } else {
         let chunks = Layout::default()
@@ -97,6 +99,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .constraints([
                 Constraint::Length(3), // Title bar
                 Constraint::Length(1), // Tab bar
+                Constraint::Length(1), // Status summary
                 Constraint::Min(10),  // Main content
                 Constraint::Length(3), // Status gauges
                 Constraint::Length(3), // Info bar
@@ -108,27 +111,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         render_title_bar(f, chunks[0], app);
         render_tab_bar(f, chunks[1], app);
+        render_status_summary(f, chunks[2], app);
 
         match app.active_view {
-            View::Dashboard => render_dashboard(f, chunks[2], app),
-            View::AgentDetail => render_agent_detail(f, chunks[2], app),
-            View::EventLog => render_event_log(f, chunks[2], app),
-            View::History => render_history(f, chunks[2], app),
-            View::SplitPane => render_split_pane(f, chunks[2], app),
-            View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
-            View::DepGraph => render_dep_graph(f, chunks[2], app),
+            View::Dashboard => render_dashboard(f, chunks[3], app),
+            View::AgentDetail => render_agent_detail(f, chunks[3], app),
+            View::EventLog => render_event_log(f, chunks[3], app),
+            View::History => render_history(f, chunks[3], app),
+            View::SplitPane => render_split_pane(f, chunks[3], app),
+            View::WorktreeOverview => render_worktree_overview(f, chunks[3], app),
+            View::DepGraph => render_dep_graph(f, chunks[3], app),
         }
 
-        render_status_gauges(f, chunks[3], app);
-        render_info_bar(f, chunks[4], app);
-        render_keybindings(f, chunks[5], app);
+        render_status_gauges(f, chunks[4], app);
+        render_info_bar(f, chunks[5], app);
+        render_keybindings(f, chunks[6], app);
 
         if !app.last_poll_ok {
-            render_poll_error_banner(f, chunks[2], app);
+            render_poll_error_banner(f, chunks[3], app);
         }
 
         if app.jump_active {
-            render_jump_bar(f, chunks[5], app);
+            render_jump_bar(f, chunks[6], app);
         }
     }
 
@@ -275,6 +279,68 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         .divider(Span::styled(" │ ", Style::default().fg(t.muted)));
 
     f.render_widget(tabs, area);
+}
+
+// ══════════════════════════════════════════════════════════
+//  STATUS SUMMARY BAR
+// ══════════════════════════════════════════════════════════
+
+fn render_status_summary(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+
+    let running = app.count_running();
+    let queued = app.ready_tasks.len();
+    let done = app.count_completed();
+    let failed = app.count_failed();
+
+    let running_style = if running > 0 {
+        Style::default()
+            .fg(t.accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.muted)
+    };
+
+    let queued_style = if queued > 0 {
+        Style::default()
+            .fg(t.warn)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.muted)
+    };
+
+    let done_style = if done > 0 {
+        Style::default().fg(t.info)
+    } else {
+        Style::default().fg(t.muted)
+    };
+
+    let failed_style = if failed > 0 {
+        Style::default()
+            .fg(t.danger)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.muted)
+    };
+
+    let line = Line::from(vec![
+        Span::styled("  ▶ ", running_style),
+        Span::styled(format!("{} running", running), running_style),
+        Span::styled("  │  ", Style::default().fg(t.muted)),
+        Span::styled("◆ ", queued_style),
+        Span::styled(format!("{} queued", queued), queued_style),
+        Span::styled("  │  ", Style::default().fg(t.muted)),
+        Span::styled("✓ ", done_style),
+        Span::styled(format!("{} done", done), done_style),
+        Span::styled("  │  ", Style::default().fg(t.muted)),
+        Span::styled("✗ ", failed_style),
+        Span::styled(format!("{} failed", failed), failed_style),
+    ]);
+
+    f.render_widget(
+        Paragraph::new(line).style(Style::default().bg(t.dark_bg)),
+        area,
+    );
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3482,9 +3548,9 @@ pub fn compute_pty_area(term_cols: u16, term_rows: u16) -> (u16, u16) {
     let compact_rows = term_rows < 40;
 
     // Main vertical layout chrome:
-    //   Normal:  3+1+3+3+1 = 11
-    //   Compact: 3+1+1+1   = 6  (no status gauges, info bar shrinks to 1)
-    let chrome = if compact_rows { 6 } else { 11 };
+    //   Normal:  3+1+1+3+3+1 = 12  (title+tab+status_summary+gauges+info+keys)
+    //   Compact: 3+1+1+1+1   = 7   (title+tab+status_summary+info+keys)
+    let chrome = if compact_rows { 7 } else { 12 };
     let content_height = term_rows.saturating_sub(chrome);
 
     // Agent detail vertical layout:
@@ -3590,22 +3656,22 @@ mod tests {
     use super::compute_pty_area;
 
     /// 80x24 — the classic "small terminal" target.
-    /// Compact rows (<40) → chrome=6, no sidebar (<120 cols).
+    /// Compact rows (<40) → chrome=7, no sidebar (<120 cols).
     #[test]
     fn pty_area_80x24() {
         let (rows, cols) = compute_pty_area(80, 24);
-        // content=18, output=15, inner=13×78
-        assert_eq!(rows, 13);
+        // content=17, output=14, inner=12×78
+        assert_eq!(rows, 12);
         assert_eq!(cols, 78);
     }
 
     /// 120x40 — just above compact thresholds on both axes.
-    /// Normal chrome (11), sidebar present (>=120 cols, 28 cols wide).
+    /// Normal chrome (12), sidebar present (>=120 cols, 28 cols wide).
     #[test]
     fn pty_area_120x40() {
         let (rows, cols) = compute_pty_area(120, 40);
-        // content=29, output=26, inner=24×(120-28-2)=90
-        assert_eq!(rows, 24);
+        // content=28, output=25, inner=23×(120-28-2)=90
+        assert_eq!(rows, 23);
         assert_eq!(cols, 90);
     }
 
@@ -3613,8 +3679,8 @@ mod tests {
     #[test]
     fn pty_area_100x30() {
         let (rows, cols) = compute_pty_area(100, 30);
-        // compact chrome=6, content=24, output=21, inner=19×98
-        assert_eq!(rows, 19);
+        // compact chrome=7, content=23, output=20, inner=18×98
+        assert_eq!(rows, 18);
         assert_eq!(cols, 98);
     }
 
@@ -3622,8 +3688,8 @@ mod tests {
     #[test]
     fn pty_area_large_terminal() {
         let (rows, cols) = compute_pty_area(200, 50);
-        // chrome=11, content=39, output=36, inner=34×(200-28-2)=170
-        assert_eq!(rows, 34);
+        // chrome=12, content=38, output=35, inner=33×(200-28-2)=170
+        assert_eq!(rows, 33);
         assert_eq!(cols, 170);
     }
 
@@ -3631,7 +3697,7 @@ mod tests {
     #[test]
     fn pty_area_tiny_terminal() {
         let (rows, cols) = compute_pty_area(20, 10);
-        // compact chrome=6, content=4, output=1, inner=0×18
+        // compact chrome=7, content=3, output=0, inner=0×18
         // (saturating_sub keeps it at 0, not negative)
         assert!(rows <= 1, "rows should be ≤1 at 10 rows high, got {rows}");
         assert!(cols > 0, "cols should be positive at 20 cols wide, got {cols}");
@@ -3653,10 +3719,10 @@ mod tests {
     fn pty_area_compact_row_threshold() {
         let (rows_39, _) = compute_pty_area(80, 39);
         let (rows_40, _) = compute_pty_area(80, 40);
-        // 39: compact chrome=6, content=33, output=30, inner=28
-        // 40: normal chrome=11, content=29, output=26, inner=24
-        assert_eq!(rows_39, 28);
-        assert_eq!(rows_40, 24);
+        // 39: compact chrome=7, content=32, output=29, inner=27
+        // 40: normal chrome=12, content=28, output=25, inner=23
+        assert_eq!(rows_39, 27);
+        assert_eq!(rows_40, 23);
         // Compact mode gives MORE content rows because chrome is smaller
         assert!(rows_39 > rows_40);
     }
