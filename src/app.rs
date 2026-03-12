@@ -292,6 +292,7 @@ pub struct App {
     // Agent list status filter
     pub agent_status_filter: AgentStatusFilter,
 
+<<<<<<< HEAD
     // Search state (in AgentDetail observe mode)
     pub search_active: bool,
     pub search_query: String,
@@ -334,6 +335,14 @@ fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, us
         }
     }
     matches
+=======
+    // Diff panel state
+    pub show_diff_panel: bool,
+    pub diff_data: Option<DiffData>,
+    pub diff_scroll: usize,
+    /// Frame count at which the last diff poll was triggered
+    pub diff_last_poll_frame: u64,
+>>>>>>> obelisk-px8
 }
 
 impl App {
@@ -397,11 +406,18 @@ impl App {
             history_sessions,
             history_scroll: 0,
             agent_status_filter: AgentStatusFilter::All,
+<<<<<<< HEAD
             search_active: false,
             search_query: String::new(),
             search_matches: Vec::new(),
             search_current_idx: 0,
             auto_exit_on_completion: true,
+=======
+            show_diff_panel: false,
+            diff_data: None,
+            diff_scroll: 0,
+            diff_last_poll_frame: 0,
+>>>>>>> obelisk-px8
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -1293,6 +1309,38 @@ impl App {
                 self.frame_count + 50,
             ));
         }
+    }
+
+    pub fn toggle_diff_panel(&mut self) {
+        self.show_diff_panel = !self.show_diff_panel;
+        if self.show_diff_panel {
+            self.diff_scroll = 0;
+            // Force an immediate diff poll by resetting the timer
+            self.diff_last_poll_frame = 0;
+        } else {
+            self.diff_data = None;
+        }
+    }
+
+    pub fn on_diff_result(&mut self, agent_id: usize, diff: DiffData) {
+        // Only accept if we're still viewing this agent with diff panel open
+        if self.show_diff_panel && self.selected_agent_id == Some(agent_id) {
+            self.diff_data = Some(diff);
+        }
+    }
+
+    /// Returns the worktree path for the currently selected agent, if it has one
+    /// and the worktree hasn't been cleaned up.
+    pub fn selected_agent_worktree(&self) -> Option<String> {
+        self.selected_agent_id
+            .and_then(|id| self.agents.iter().find(|a| a.id == id))
+            .and_then(|a| {
+                if a.worktree_cleaned {
+                    None
+                } else {
+                    a.worktree_path.clone()
+                }
+            })
     }
 
     pub fn selected_model(&self) -> &'static str {
