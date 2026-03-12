@@ -183,6 +183,34 @@ pub struct SpawnRequest {
     pub pty_cols: u16,
 }
 
+/// Scan a chunk of PTY text for phase-indicating patterns.
+/// Returns the most advanced phase detected, or None if no marker found.
+/// Patterns are checked in reverse phase order so the highest phase wins.
+fn detect_phase(text: &str) -> Option<AgentPhase> {
+    if text.contains("bd close") {
+        return Some(AgentPhase::Closing);
+    }
+    if text.contains("--no-ff") {
+        return Some(AgentPhase::Merging);
+    }
+    if text.contains("cargo test")
+        || text.contains("cargo check")
+        || text.contains("cargo clippy")
+    {
+        return Some(AgentPhase::Verifying);
+    }
+    if text.contains("--notes") {
+        return Some(AgentPhase::Implementing);
+    }
+    if text.contains("git worktree add") {
+        return Some(AgentPhase::Worktree);
+    }
+    if text.contains("--claim") {
+        return Some(AgentPhase::Claiming);
+    }
+    None
+}
+
 pub struct App {
     pub ready_tasks: Vec<BeadTask>,
     pub agents: Vec<AgentInstance>,
@@ -684,6 +712,7 @@ impl App {
             runtime,
             model: model.clone(),
             status: AgentStatus::Starting,
+            phase: AgentPhase::Detecting,
             output: VecDeque::new(),
             started_at: std::time::Instant::now(),
             elapsed_secs: 0,
@@ -1071,6 +1100,7 @@ impl App {
             runtime,
             model: model.clone(),
             status: AgentStatus::Starting,
+            phase: AgentPhase::Detecting,
             output: VecDeque::new(),
             started_at: std::time::Instant::now(),
             elapsed_secs: 0,
@@ -1196,10 +1226,18 @@ impl App {
         if let Some(state) = self.pty_states.get_mut(&agent_id) {
             state.parser.process(data);
         }
-        // Transition Starting → Running on first data received
+        // Transition Starting → Running on first data received, and detect phase
         if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
             if agent.status == AgentStatus::Starting {
                 agent.status = AgentStatus::Running;
+            }
+            // Phase detection — heuristic, best-effort; only advance, never retreat
+            if let Ok(text) = std::str::from_utf8(data) {
+                if let Some(detected) = detect_phase(text) {
+                    if detected > agent.phase {
+                        agent.phase = detected;
+                    }
+                }
             }
         }
         // Also count for throughput tracking (approximate: count newlines)

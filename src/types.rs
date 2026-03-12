@@ -103,6 +103,49 @@ pub enum AgentStatus {
     Failed,
 }
 
+/// Tracks which phase of the 7-phase agent workflow is currently executing.
+/// Detected heuristically by scanning PTY output for phase-indicating patterns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AgentPhase {
+    Detecting,
+    Claiming,
+    Worktree,
+    Implementing,
+    Verifying,
+    Merging,
+    Closing,
+    Done,
+}
+
+impl AgentPhase {
+    pub fn label(&self) -> &'static str {
+        match self {
+            AgentPhase::Detecting => "Detecting",
+            AgentPhase::Claiming => "Claiming",
+            AgentPhase::Worktree => "Worktree",
+            AgentPhase::Implementing => "Implementing",
+            AgentPhase::Verifying => "Verifying",
+            AgentPhase::Merging => "Merging",
+            AgentPhase::Closing => "Closing",
+            AgentPhase::Done => "Done",
+        }
+    }
+
+    pub fn short(&self) -> &'static str {
+        match self {
+            AgentPhase::Detecting => "P0",
+            AgentPhase::Claiming => "P1",
+            AgentPhase::Worktree => "P2",
+            AgentPhase::Implementing => "P3",
+            AgentPhase::Verifying => "P4",
+            AgentPhase::Merging => "P5",
+            AgentPhase::Closing => "P6",
+            AgentPhase::Done => "P7",
+        }
+    }
+
+}
+
 impl AgentStatus {
     pub fn symbol(&self) -> &str {
         match self {
@@ -122,6 +165,7 @@ pub struct AgentInstance {
     pub runtime: Runtime,
     pub model: String,
     pub status: AgentStatus,
+    pub phase: AgentPhase,
     pub output: VecDeque<String>,
     pub started_at: std::time::Instant,
     pub elapsed_secs: u64,
