@@ -156,6 +156,9 @@ async fn run_app(
     // Kill all running agent processes before exiting
     app.kill_all_agents();
 
+    // Persist session record
+    app.save_session();
+
     Ok(())
 }
 
@@ -273,6 +276,7 @@ fn handle_key(
             app.active_view = View::AgentDetail;
         }
         KeyCode::Char('3') => app.active_view = View::EventLog,
+        KeyCode::Char('4') => app.active_view = View::History,
 
         // ── Interactive mode: press 'i' in agent detail to attach ──
         KeyCode::Char('i') if app.active_view == View::AgentDetail => {
@@ -302,6 +306,12 @@ fn handle_key(
         KeyCode::Down => app.navigate_down(),
         KeyCode::PageUp if app.active_view == View::AgentDetail => app.page_up(),
         KeyCode::PageDown if app.active_view == View::AgentDetail => app.page_down(),
+        KeyCode::PageUp if app.active_view == View::History => {
+            app.history_scroll = app.history_scroll.saturating_sub(10);
+        }
+        KeyCode::PageDown if app.active_view == View::History => {
+            app.history_scroll = (app.history_scroll + 10).min(app.history_sessions.len().saturating_sub(1));
+        }
         KeyCode::Home if app.active_view == View::AgentDetail => {
             app.agent_output_scroll = Some(0);
         }
