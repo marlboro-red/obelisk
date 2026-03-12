@@ -1,8 +1,8 @@
 //! Headless daemon mode — runs the orchestrator without the TUI.
 //!
-//! Listens on a Unix domain socket (`.beads/obelisk.sock`) for JSON commands
-//! from CLI clients. Manages agent spawning, polling, and lifecycle identically
-//! to the TUI mode but logs to stdout/file instead of rendering.
+//! Listens on a TCP socket (`127.0.0.1`, random port stored in `.beads/obelisk.port`)
+//! for JSON commands from CLI clients. Manages agent spawning, polling, and lifecycle
+//! identically to the TUI mode but logs to stdout/file instead of rendering.
 
 use crate::app::{App, SpawnRequest};
 use crate::runtime;
@@ -10,11 +10,11 @@ use crate::types::{AgentStatus, AppEvent};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixListener;
+use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-const SOCK_NAME: &str = ".beads/obelisk.sock";
+const PORT_FILE: &str = ".beads/obelisk.port";
 
 /// JSON command sent by CLI clients over the socket.
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,27 +42,38 @@ pub struct DaemonResp {
     pub data: Option<serde_json::Value>,
 }
 
-/// Socket path for the daemon, relative to the working directory.
-pub fn socket_path() -> PathBuf {
-    PathBuf::from(SOCK_NAME)
+/// Path to the port file used by the daemon for client discovery.
+pub fn port_file_path() -> PathBuf {
+    PathBuf::from(PORT_FILE)
+}
+
+/// Read the daemon's TCP port from the port file.
+pub fn read_daemon_port() -> Result<u16, String> {
+    let path = port_file_path();
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|_| "daemon is not running (port file not found). Start it with: obelisk serve".to_string())?;
+    contents.trim().parse::<u16>()
+        .map_err(|e| format!("invalid port in {}: {}", path.display(), e))
 }
 
 /// Run the daemon event loop. Blocks until a `stop` command is received or the
 /// process is signalled.
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let sock = socket_path();
-    // Clean up stale socket
-    if sock.exists() {
-        std::fs::remove_file(&sock)?;
+    let port_file = port_file_path();
+    // Clean up stale port file
+    if port_file.exists() {
+        std::fs::remove_file(&port_file)?;
     }
     // Ensure parent directory exists
-    if let Some(parent) = sock.parent() {
+    if let Some(parent) = port_file.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    let listener = UnixListener::bind(&sock)?;
-    info!("daemon listening on {}", sock.display());
-    eprintln!("obelisk daemon listening on {}", sock.display());
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    std::fs::write(&port_file, port.to_string())?;
+    info!("daemon listening on 127.0.0.1:{}", port);
+    eprintln!("obelisk daemon listening on 127.0.0.1:{}", port);
 
     let mut app = App::new();
     // Daemon uses a fixed PTY size (no terminal to measure)
@@ -179,8 +190,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     app.kill_all_agents();
     app.save_session();
 
-    // Clean up socket
-    let _ = std::fs::remove_file(&sock);
+    // Clean up port file
+    let _ = std::fs::remove_file(&port_file);
 
     Ok(())
 }

@@ -1,19 +1,14 @@
-//! CLI client that sends commands to a running obelisk daemon via Unix socket.
+//! CLI client that sends commands to a running obelisk daemon via TCP.
 
 use crate::daemon::{DaemonCmd, DaemonResp};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
+use tokio::net::TcpStream;
 
 /// Connect to the daemon, send a command, and return the response.
 async fn send_cmd(cmd: &DaemonCmd) -> Result<DaemonResp, String> {
-    let sock = crate::daemon::socket_path();
-    if !sock.exists() {
-        return Err(
-            "daemon is not running (socket not found). Start it with: obelisk serve".into(),
-        );
-    }
+    let port = crate::daemon::read_daemon_port()?;
 
-    let mut stream = UnixStream::connect(&sock)
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
         .await
         .map_err(|e| format!("failed to connect to daemon: {}", e))?;
 
