@@ -481,6 +481,10 @@ pub struct App {
     pub theme: Theme,
     pub theme_config: ThemeConfig,
 
+    // Blocked/incoming issues panel
+    pub blocked_tasks: Vec<BlockedTask>,
+    pub blocked_list_state: ListState,
+
     // Dependency graph view state
     pub dep_graph_nodes: Vec<DepNode>,
     pub dep_graph_rows: Vec<DepGraphRow>,
@@ -695,6 +699,8 @@ impl App {
             recent_completions: VecDeque::with_capacity(10),
             theme,
             theme_config,
+            blocked_tasks: Vec::new(),
+            blocked_list_state: ListState::default(),
             dep_graph_nodes: Vec::new(),
             dep_graph_rows: Vec::new(),
             dep_graph_list_state: ListState::default(),
@@ -971,6 +977,18 @@ impl App {
                 self.active_agent_count()
             ),
         );
+    }
+
+    pub fn on_blocked_poll_result(&mut self, tasks: Vec<BlockedTask>) {
+        self.blocked_tasks = tasks;
+        // Sort by priority (highest first), then by remaining deps (most blocked first)
+        self.blocked_tasks.sort_by(|a, b| {
+            let pa = a.task.priority.unwrap_or(3);
+            let pb = b.task.priority.unwrap_or(3);
+            pa.cmp(&pb)
+                .then_with(|| b.remaining_deps.cmp(&a.remaining_deps))
+                .then_with(|| a.task.id.cmp(&b.task.id))
+        });
     }
 
     /// Sort `ready_tasks` in-place according to the current `sort_mode`.
@@ -1353,6 +1371,18 @@ impl App {
                         .unwrap_or(0);
                     self.task_list_state.select(Some(i));
                 }
+                Focus::BlockedQueue => {
+                    let len = self.blocked_tasks.len();
+                    if len == 0 {
+                        return;
+                    }
+                    let i = self
+                        .blocked_list_state
+                        .selected()
+                        .map(|i| if i == 0 { len - 1 } else { i - 1 })
+                        .unwrap_or(0);
+                    self.blocked_list_state.select(Some(i));
+                }
                 Focus::AgentList => {
                     let len = self.filtered_agents().len();
                     if len == 0 {
@@ -1430,6 +1460,18 @@ impl App {
                         .map(|i| if i + 1 >= len { 0 } else { i + 1 })
                         .unwrap_or(0);
                     self.task_list_state.select(Some(i));
+                }
+                Focus::BlockedQueue => {
+                    let len = self.blocked_tasks.len();
+                    if len == 0 {
+                        return;
+                    }
+                    let i = self
+                        .blocked_list_state
+                        .selected()
+                        .map(|i| if i + 1 >= len { 0 } else { i + 1 })
+                        .unwrap_or(0);
+                    self.blocked_list_state.select(Some(i));
                 }
                 Focus::AgentList => {
                     let len = self.filtered_agents().len();
@@ -1533,7 +1575,8 @@ impl App {
     pub fn toggle_focus(&mut self) {
         if self.active_view == View::Dashboard {
             self.focus = match self.focus {
-                Focus::ReadyQueue => Focus::AgentList,
+                Focus::ReadyQueue => Focus::BlockedQueue,
+                Focus::BlockedQueue => Focus::AgentList,
                 Focus::AgentList => {
                     // Reset agent status filter when leaving the agent panel
                     self.agent_status_filter = AgentStatusFilter::All;
@@ -2098,6 +2141,12 @@ impl App {
             View::Dashboard => match self.focus {
                 Focus::ReadyQueue => {
                     self.selected_task().map(|t| t.id.clone())
+                }
+                Focus::BlockedQueue => {
+                    self.blocked_list_state
+                        .selected()
+                        .and_then(|i| self.blocked_tasks.get(i))
+                        .map(|bt| bt.task.id.clone())
                 }
                 Focus::AgentList => {
                     let filtered = self.filtered_agents();
@@ -3253,6 +3302,9 @@ mod tests {
     fn toggle_focus_switches_between_panels() {
         let mut app = App::new();
         assert_eq!(app.focus, Focus::ReadyQueue);
+
+        app.toggle_focus();
+        assert_eq!(app.focus, Focus::BlockedQueue);
 
         app.toggle_focus();
         assert_eq!(app.focus, Focus::AgentList);

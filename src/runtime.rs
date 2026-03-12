@@ -1,4 +1,4 @@
-use crate::types::{BeadTask, DepNode, DiffData, PtyHandle, Runtime};
+use crate::types::{BeadTask, BlockedTask, BlockedTaskRaw, DepNode, DiffData, PtyHandle, Runtime};
 use portable_pty::{CommandBuilder, PtySize};
 use tokio::process::Command;
 
@@ -232,6 +232,57 @@ pub async fn poll_ready() -> Result<Vec<crate::types::BeadTask>, String> {
 
     serde_json::from_str(trimmed)
         .map_err(|e| format!("Failed to parse bd ready JSON: {}", e))
+}
+
+/// Poll blocked issues via `bd list -s blocked --json`.
+/// Returns a list of BlockedTask with the count of remaining (blocked-by) dependencies.
+pub async fn poll_blocked() -> Result<Vec<BlockedTask>, String> {
+    let output = Command::new("bd")
+        .args(["list", "-s", "blocked", "--json"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run bd list -s blocked: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("bd list -s blocked failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return Ok(Vec::new());
+    }
+
+    let raw_tasks: Vec<BlockedTaskRaw> = serde_json::from_str(trimmed)
+        .map_err(|e| format!("Failed to parse blocked issues JSON: {}", e))?;
+
+    let blocked = raw_tasks
+        .into_iter()
+        .map(|raw| {
+            let remaining = raw
+                .dependencies
+                .iter()
+                .filter(|d| d.dep_type == "blocked-by")
+                .count();
+            BlockedTask {
+                task: BeadTask {
+                    id: raw.id,
+                    title: raw.title,
+                    status: raw.status,
+                    priority: raw.priority,
+                    issue_type: raw.issue_type,
+                    assignee: raw.assignee,
+                    labels: raw.labels,
+                    description: raw.description,
+                    created_at: raw.created_at,
+                },
+                remaining_deps: remaining.max(1), // at least 1 if status is blocked
+            }
+        })
+        .collect();
+
+    Ok(blocked)
 }
 
 /// Poll all issues with dependencies via `bd dep tree` for each root issue.

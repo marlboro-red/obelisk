@@ -171,6 +171,7 @@ async fn run_app(
 
     // Poller
     let tx_poll = tx.clone();
+    let tx_blocked_poll = tx.clone();
     let poll_interval = app.poll_interval_secs;
     tokio::spawn(async move {
         loop {
@@ -183,6 +184,10 @@ async fn run_app(
                 Err(e) => {
                     let _ = tx_poll.send(AppEvent::PollFailed(e.to_string()));
                 }
+            }
+            // Poll blocked issues on the same cycle
+            if let Ok(blocked) = runtime::poll_blocked().await {
+                let _ = tx_blocked_poll.send(AppEvent::BlockedPollResult(blocked));
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval)).await;
         }
@@ -389,6 +394,9 @@ fn process_event(
         AppEvent::DepGraphFailed(error) => {
             warn!(%error, "dep graph poll failed");
             app.on_dep_graph_failed(error);
+        }
+        AppEvent::BlockedPollResult(tasks) => {
+            app.on_blocked_poll_result(tasks);
         }
         AppEvent::Terminal(Event::Resize(_, _)) => {
             // PTY resize is handled in the render loop via sync_pty_sizes,
@@ -754,6 +762,7 @@ fn handle_key(
             app.log(LogCategory::Poll, "Manual scan initiated".into());
             app.poll_countdown = 0.0;
             let tx = tx.clone();
+            let tx_blocked = tx.clone();
             tokio::spawn(async move {
                 match runtime::poll_ready().await {
                     Ok(tasks) => {
@@ -762,6 +771,9 @@ fn handle_key(
                     Err(e) => {
                         let _ = tx.send(AppEvent::PollFailed(e.to_string()));
                     }
+                }
+                if let Ok(blocked) = runtime::poll_blocked().await {
+                    let _ = tx_blocked.send(AppEvent::BlockedPollResult(blocked));
                 }
             });
         }
@@ -1075,6 +1087,18 @@ fn handle_mouse(
                     }
                 }
 
+                if let Some(blocked_area) = app.layout_areas.blocked_queue {
+                    if in_rect(&blocked_area) {
+                        app.focus = Focus::BlockedQueue;
+                        let inner_y = row.saturating_sub(blocked_area.y + 1) as usize;
+                        let blocked_len = app.blocked_tasks.len();
+                        if inner_y < blocked_len {
+                            app.blocked_list_state.select(Some(inner_y));
+                        }
+                        return;
+                    }
+                }
+
                 if let Some(agent_area) = app.layout_areas.agent_panel {
                     if in_rect(&agent_area) {
                         app.focus = Focus::AgentList;
@@ -1112,6 +1136,13 @@ fn handle_mouse(
                     if let Some(queue_area) = app.layout_areas.ready_queue {
                         if in_rect(&queue_area) {
                             app.focus = Focus::ReadyQueue;
+                            app.navigate_up();
+                            return;
+                        }
+                    }
+                    if let Some(blocked_area) = app.layout_areas.blocked_queue {
+                        if in_rect(&blocked_area) {
+                            app.focus = Focus::BlockedQueue;
                             app.navigate_up();
                             return;
                         }
@@ -1161,6 +1192,13 @@ fn handle_mouse(
                     if let Some(queue_area) = app.layout_areas.ready_queue {
                         if in_rect(&queue_area) {
                             app.focus = Focus::ReadyQueue;
+                            app.navigate_down();
+                            return;
+                        }
+                    }
+                    if let Some(blocked_area) = app.layout_areas.blocked_queue {
+                        if in_rect(&blocked_area) {
+                            app.focus = Focus::BlockedQueue;
                             app.navigate_down();
                             return;
                         }

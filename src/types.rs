@@ -50,6 +50,47 @@ pub struct BeadTask {
     pub created_at: Option<String>,
 }
 
+/// A dependency record returned by `bd list -s blocked --json`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct BeadDependency {
+    pub issue_id: String,
+    pub depends_on_id: String,
+    #[serde(rename = "type")]
+    pub dep_type: String,
+}
+
+/// A blocked issue with its unresolved dependency info.
+#[derive(Debug, Clone)]
+pub struct BlockedTask {
+    pub task: BeadTask,
+    /// Number of unresolved (non-closed) blocked-by dependencies
+    pub remaining_deps: usize,
+}
+
+/// Raw deserialization target for `bd list -s blocked --json` entries.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct BlockedTaskRaw {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub issue_type: Option<String>,
+    #[serde(default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub dependencies: Vec<BeadDependency>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Runtime {
     ClaudeCode,
@@ -388,6 +429,7 @@ impl WorktreeSortMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     ReadyQueue,
+    BlockedQueue,
     AgentList,
 }
 
@@ -425,6 +467,7 @@ pub struct DiffData {
 pub struct LayoutAreas {
     pub tab_bar: Option<ratatui::layout::Rect>,
     pub ready_queue: Option<ratatui::layout::Rect>,
+    pub blocked_queue: Option<ratatui::layout::Rect>,
     pub agent_panel: Option<ratatui::layout::Rect>,
     pub agent_detail_output: Option<ratatui::layout::Rect>,
     pub split_panes: [Option<ratatui::layout::Rect>; 4],
@@ -455,4 +498,6 @@ pub enum AppEvent {
     DepGraphResult(Vec<DepNode>),
     /// Dependency graph poll failed
     DepGraphFailed(String),
+    /// Result of a blocked-issues poll
+    BlockedPollResult(Vec<BlockedTask>),
 }
