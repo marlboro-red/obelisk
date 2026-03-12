@@ -158,6 +158,8 @@ pub enum AppEvent {
     Terminal(crossterm::event::Event),
     Tick,
     PollResult(Vec<BeadTask>),
+    /// Poll failed — carries the error message for display and logging
+    PollFailed(String),
     AgentOutput { agent_id: usize, line: String },
     AgentExited { agent_id: usize, exit_code: Option<i32> },
     AgentPid { agent_id: usize, pid: u32 },

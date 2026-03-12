@@ -234,6 +234,11 @@ pub struct App {
 
     // Help overlay toggle
     pub show_help: bool,
+
+    // Poll health tracking
+    pub last_poll_ok: bool,
+    pub last_poll_error: Option<String>,
+    pub consecutive_poll_failures: u32,
 }
 
 impl App {
@@ -274,6 +279,9 @@ impl App {
             interactive_mode: false,
             last_pty_size: (24, 120),
             show_help: false,
+            last_poll_ok: true,
+            last_poll_error: None,
+            consecutive_poll_failures: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -331,7 +339,34 @@ impl App {
         }
     }
 
+    pub fn on_poll_failed(&mut self, error: String) {
+        self.consecutive_poll_failures += 1;
+        self.last_poll_ok = false;
+        self.last_poll_error = Some(error.clone());
+        self.poll_countdown = self.poll_interval_secs as f64;
+
+        self.log(
+            LogCategory::Alert,
+            format!("Poll failed ({}): {}", self.consecutive_poll_failures, error),
+        );
+
+        if self.consecutive_poll_failures >= 3 {
+            self.log(
+                LogCategory::Alert,
+                "Repeated poll failures — check dolt server status".into(),
+            );
+        }
+    }
+
     pub fn on_poll_result(&mut self, tasks: Vec<BeadTask>) {
+        // Recover from previous failures
+        if !self.last_poll_ok {
+            self.log(LogCategory::Poll, "Poll recovered — bd CLI is responding again".into());
+        }
+        self.last_poll_ok = true;
+        self.last_poll_error = None;
+        self.consecutive_poll_failures = 0;
+
         self.poll_countdown = self.poll_interval_secs as f64;
         let new_tasks: Vec<BeadTask> = tasks
             .into_iter()
