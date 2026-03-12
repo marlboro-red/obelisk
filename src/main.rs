@@ -708,6 +708,17 @@ fn handle_key(
                 }
             }
         }
+        // Export agent log to file
+        KeyCode::Char('e') if app.active_view == View::AgentDetail => {
+            match app.export_agent_log() {
+                Ok(path) => {
+                    app.alert_message = Some((format!("Log exported: {}", path), app.frame_count + 180));
+                }
+                Err(msg) => {
+                    app.alert_message = Some((format!("Export failed: {}", msg), app.frame_count + 180));
+                }
+            }
+        }
         // Diff panel scroll (Ctrl+Up/Down to not conflict with output scroll)
         KeyCode::Char('J') if app.active_view == View::AgentDetail && app.show_diff_panel => {
             app.diff_scroll = app.diff_scroll.saturating_add(1);

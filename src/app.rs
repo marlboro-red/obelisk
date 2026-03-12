@@ -1026,6 +1026,7 @@ impl App {
             estimated_cost_usd: 0.0,
             template_name: template_name.clone(),
             total_lines: 0,
+            raw_pty_log: Vec::new(),
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -1473,6 +1474,7 @@ impl App {
             estimated_cost_usd: 0.0,
             template_name: template_name.clone(),
             total_lines: 0,
+            raw_pty_log: Vec::new(),
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -1831,6 +1833,10 @@ impl App {
     pub fn on_agent_pty_data(&mut self, agent_id: usize, data: &[u8]) {
         if let Some(state) = self.pty_states.get_mut(&agent_id) {
             state.parser.process(data);
+        }
+        // Capture raw PTY bytes for log export
+        if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
+            agent.raw_pty_log.extend_from_slice(data);
         }
         // Transition Starting → Running on first data received, and detect phase
         if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
@@ -2220,6 +2226,104 @@ impl App {
             self.agent_output_scroll = None;
             self.active_view = View::AgentDetail;
         }
+    }
+
+    /// Export the selected agent's log to a file.
+    /// Writes both raw PTY output and parsed screen content.
+    /// Returns the path on success or an error message on failure.
+    pub fn export_agent_log(&mut self) -> Result<String, String> {
+        let agent_id = self.selected_agent_id.ok_or("No agent selected")?;
+        let agent = self.agents.iter().find(|a| a.id == agent_id)
+            .ok_or("Agent not found")?;
+
+        // Build export path: logs/<task_id>-<timestamp>.log
+        let logs_dir = PathBuf::from("logs");
+        if !logs_dir.exists() {
+            std::fs::create_dir_all(&logs_dir)
+                .map_err(|e| format!("Failed to create logs dir: {}", e))?;
+        }
+        let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let filename = format!("{}-{}.log", agent.task.id, timestamp);
+        let path = logs_dir.join(&filename);
+
+        let mut content = String::new();
+
+        // ── Header ──
+        content.push_str(&format!("=== Obelisk Agent Log Export ===\n"));
+        content.push_str(&format!("Agent:     AGENT-{:02}\n", agent.unit_number));
+        content.push_str(&format!("Task:      {} ({})\n", agent.task.id, agent.task.title));
+        content.push_str(&format!("Runtime:   {}\n", agent.runtime.name()));
+        content.push_str(&format!("Model:     {}\n", agent.model));
+        content.push_str(&format!("Status:    {:?}\n", agent.status));
+        content.push_str(&format!("Phase:     {}\n", agent.phase.label()));
+        content.push_str(&format!("Elapsed:   {}s\n", agent.elapsed_secs));
+        content.push_str(&format!("Tokens:    {} in / {} out\n", agent.input_tokens, agent.output_tokens));
+        content.push_str(&format!("Cost:      {}\n", format_cost(agent.estimated_cost_usd)));
+        if let Some(code) = agent.exit_code {
+            content.push_str(&format!("Exit code: {}\n", code));
+        }
+        content.push_str(&format!("Exported:  {}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")));
+        content.push_str("\n");
+
+        // ── Section 1: Parsed screen content ──
+        content.push_str("════════════════════════════════════════════════════════════════════════════════\n");
+        content.push_str("PARSED SCREEN CONTENT\n");
+        content.push_str("════════════════════════════════════════════════════════════════════════════════\n\n");
+
+        if let Some(pty_state) = self.pty_states.get(&agent_id) {
+            let screen = pty_state.parser.screen();
+            let (rows, cols) = screen.size();
+            let scrollback = screen.scrollback();
+
+            content.push_str(&format!("Terminal size: {}x{}, scrollback: {} lines\n\n", cols, rows, scrollback));
+
+            // Extract visible screen content row by row
+            for row in 0..rows {
+                let line: String = (0..cols)
+                    .map(|col| {
+                        screen.cell(row, col)
+                            .map(|c| {
+                                let s = c.contents();
+                                if s.is_empty() { ' ' } else { s.chars().next().unwrap_or(' ') }
+                            })
+                            .unwrap_or(' ')
+                    })
+                    .collect();
+                content.push_str(line.trim_end());
+                content.push('\n');
+            }
+        } else {
+            // Fallback: legacy output buffer
+            content.push_str("(No PTY state — using legacy output buffer)\n\n");
+            for line in &agent.output {
+                content.push_str(line);
+                content.push('\n');
+            }
+        }
+
+        // ── Section 2: Raw PTY output ──
+        content.push_str("\n════════════════════════════════════════════════════════════════════════════════\n");
+        content.push_str("RAW PTY OUTPUT\n");
+        content.push_str("════════════════════════════════════════════════════════════════════════════════\n\n");
+
+        if agent.raw_pty_log.is_empty() {
+            content.push_str("(No raw PTY data captured)\n");
+        } else {
+            content.push_str(&format!("Raw bytes: {} total\n\n", agent.raw_pty_log.len()));
+            // Write raw bytes as lossy UTF-8 (preserves ANSI escape sequences)
+            content.push_str(&String::from_utf8_lossy(&agent.raw_pty_log));
+        }
+
+        // Write to file
+        std::fs::write(&path, &content)
+            .map_err(|e| format!("Failed to write log: {}", e))?;
+
+        let path_str = path.to_string_lossy().to_string();
+        self.log(
+            LogCategory::System,
+            format!("AGENT-{:02} log exported to {}", agent.unit_number, path_str),
+        );
+        Ok(path_str)
     }
 }
 
