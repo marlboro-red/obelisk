@@ -1110,16 +1110,17 @@ async fn spawn_agent_process(
     let tx_exit = tx.clone();
     tokio::task::spawn_blocking(move || {
         let mut child = child;
-        let status = child.wait();
-        let exit_code = match status {
-            Ok(s) => {
-                if s.success() {
+        let exit_code = match child.wait() {
+            Ok(status) => {
+                if status.success() {
                     Some(0)
                 } else {
+                    // portable_pty::ExitStatus doesn't expose the raw code,
+                    // so we only know it was non-zero.
                     Some(1)
                 }
             }
-            Err(_) => Some(1),
+            Err(_) => None, // wait() itself failed — report as unknown
         };
         let _ = tx_exit.send(AppEvent::AgentExited {
             agent_id,
