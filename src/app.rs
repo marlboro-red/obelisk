@@ -260,6 +260,9 @@ pub struct App {
     // Loaded history sessions (from .beads/obelisk_sessions.jsonl)
     pub history_sessions: Vec<SessionRecord>,
     pub history_scroll: usize,
+
+    // Agent list status filter
+    pub agent_status_filter: AgentStatusFilter,
 }
 
 impl App {
@@ -322,6 +325,7 @@ impl App {
             session_started_at: chrono::Local::now(),
             history_sessions,
             history_scroll: 0,
+            agent_status_filter: AgentStatusFilter::All,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -566,6 +570,37 @@ impl App {
         }
     }
 
+    /// Cycle to the next agent status filter. Resets selection to the first
+    /// visible agent (or None if no agents match).
+    pub fn cycle_agent_status_filter(&mut self) {
+        self.agent_status_filter = self.agent_status_filter.next();
+        self.log(
+            LogCategory::System,
+            format!("Agent filter: {}", self.agent_status_filter.label()),
+        );
+        // Reset selection to first visible agent
+        let visible = self
+            .agents
+            .iter()
+            .filter(|a| self.agent_status_filter.matches(a.status))
+            .count();
+        if visible == 0 {
+            self.agent_list_state.select(None);
+        } else {
+            self.agent_list_state.select(Some(0));
+        }
+    }
+
+    /// Return agents visible under the current agent status filter.
+    /// Returns a Vec of references with their original index in `self.agents`.
+    pub fn filtered_agents(&self) -> Vec<(usize, &AgentInstance)> {
+        self.agents
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| self.agent_status_filter.matches(a.status))
+            .collect()
+    }
+
     /// Return the filtered view of `ready_tasks` according to current filters.
     /// The returned slice preserves the already-sorted order.
     pub fn filtered_tasks(&self) -> Vec<&BeadTask> {
@@ -758,7 +793,7 @@ impl App {
                     self.task_list_state.select(Some(i));
                 }
                 Focus::AgentList => {
-                    let len = self.agents.len();
+                    let len = self.filtered_agents().len();
                     if len == 0 {
                         return;
                     }
@@ -817,7 +852,7 @@ impl App {
                     self.task_list_state.select(Some(i));
                 }
                 Focus::AgentList => {
-                    let len = self.agents.len();
+                    let len = self.filtered_agents().len();
                     if len == 0 {
                         return;
                     }
@@ -897,7 +932,11 @@ impl App {
         if self.active_view == View::Dashboard {
             self.focus = match self.focus {
                 Focus::ReadyQueue => Focus::AgentList,
-                Focus::AgentList => Focus::ReadyQueue,
+                Focus::AgentList => {
+                    // Reset agent status filter when leaving the agent panel
+                    self.agent_status_filter = AgentStatusFilter::All;
+                    Focus::ReadyQueue
+                }
             };
         }
     }
@@ -905,8 +944,9 @@ impl App {
     pub fn enter_pressed(&mut self) {
         if self.active_view == View::Dashboard && self.focus == Focus::AgentList {
             if let Some(sel) = self.agent_list_state.selected() {
-                if sel < self.agents.len() {
-                    self.selected_agent_id = Some(self.agents[sel].id);
+                let visible = self.filtered_agents();
+                if sel < visible.len() {
+                    self.selected_agent_id = Some(visible[sel].1.id);
                     self.agent_output_scroll = None;
                     self.active_view = View::AgentDetail;
                 }
@@ -957,10 +997,15 @@ impl App {
     /// Returns Some(message) describing the outcome; None if no agent was selected.
     pub fn dismiss_selected_agent(&mut self) -> Option<String> {
         let sel = self.agent_list_state.selected()?;
-        if sel >= self.agents.len() {
-            return None;
-        }
-        let agent = &self.agents[sel];
+        // Map filtered-list index → raw index in self.agents
+        let raw_idx = {
+            let visible = self.filtered_agents();
+            if sel >= visible.len() {
+                return None;
+            }
+            visible[sel].0
+        };
+        let agent = &self.agents[raw_idx];
         if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
             return Some(format!(
                 "AGENT-{:02} is active — cannot dismiss",
@@ -969,15 +1014,17 @@ impl App {
         }
         let agent_id = agent.id;
         let unit = agent.unit_number;
-        self.agents.remove(sel);
+        self.agents.remove(raw_idx);
         self.pty_states.remove(&agent_id);
         if self.selected_agent_id == Some(agent_id) {
             self.selected_agent_id = None;
         }
-        if self.agents.is_empty() {
+        // Recompute visible count after removal
+        let new_visible = self.filtered_agents().len();
+        if new_visible == 0 {
             self.agent_list_state.select(None);
-        } else if sel >= self.agents.len() {
-            self.agent_list_state.select(Some(self.agents.len() - 1));
+        } else if sel >= new_visible {
+            self.agent_list_state.select(Some(new_visible - 1));
         }
         Some(format!("AGENT-{:02} dismissed", unit))
     }
@@ -1002,11 +1049,13 @@ impl App {
             self.selected_agent_id = None;
         }
         self.agents.retain(|a| !finished_ids.contains(&a.id));
-        if self.agents.is_empty() {
+        // Re-check against filtered view (since finished agents may be the ones hidden by filter)
+        let new_visible = self.filtered_agents().len();
+        if new_visible == 0 {
             self.agent_list_state.select(None);
         } else if let Some(sel) = self.agent_list_state.selected() {
-            if sel >= self.agents.len() {
-                self.agent_list_state.select(Some(self.agents.len() - 1));
+            if sel >= new_visible {
+                self.agent_list_state.select(Some(new_visible - 1));
             }
         }
         count
