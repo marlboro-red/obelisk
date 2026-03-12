@@ -104,6 +104,7 @@ async fn run_app(
 
     // Poller
     let tx_poll = tx.clone();
+    let poll_interval = app.poll_interval_secs;
     tokio::spawn(async move {
         loop {
             match runtime::poll_ready().await {
@@ -116,7 +117,7 @@ async fn run_app(
                     let _ = tx_poll.send(AppEvent::PollFailed(e.to_string()));
                 }
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval)).await;
         }
     });
 
