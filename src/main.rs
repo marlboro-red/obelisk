@@ -394,6 +394,41 @@ fn handle_key(
         return;
     }
 
+    // ── Mark-complete confirmation dialog: intercept y/n/Esc ──
+    if app.confirm_complete_agent_id.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                if let Some(agent_id) = app.confirm_complete_agent_id.take() {
+                    if let Some((_, worktree)) = app.force_complete_agent(agent_id) {
+                        if let Some(worktree_path) = worktree {
+                            let branch = std::path::Path::new(&worktree_path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .and_then(|n| n.strip_prefix("worktree-"))
+                                .unwrap_or("")
+                                .to_string();
+                            let tx_done = tx.clone();
+                            tokio::spawn(async move {
+                                let mut cleaned = Vec::new();
+                                let mut failed = Vec::new();
+                                match runtime::cleanup_worktree(&worktree_path, &branch).await {
+                                    Ok(()) => cleaned.push(worktree_path),
+                                    Err(_) => failed.push(worktree_path),
+                                }
+                                let _ = tx_done.send(AppEvent::WorktreeCleaned { cleaned, failed });
+                            });
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                app.confirm_complete_agent_id = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // ── Kill confirmation dialog: intercept y/n/Esc ──
     if app.confirm_kill_agent_id.is_some() {
         match key.code {
@@ -573,6 +608,17 @@ fn handle_key(
                 });
                 if is_killable {
                     app.confirm_kill_agent_id = Some(agent_id);
+                }
+            }
+        }
+        KeyCode::Char('D') if app.active_view == View::AgentDetail => {
+            if let Some(agent_id) = app.selected_agent_id {
+                let is_active = app.agents.iter().any(|a| {
+                    a.id == agent_id
+                        && matches!(a.status, crate::types::AgentStatus::Starting | crate::types::AgentStatus::Running)
+                });
+                if is_active {
+                    app.confirm_complete_agent_id = Some(agent_id);
                 }
             }
         }

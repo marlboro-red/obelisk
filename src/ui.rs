@@ -136,6 +136,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
         render_help_overlay(f, area, &app.theme);
     }
 
+    if let Some(agent_id) = app.confirm_complete_agent_id {
+        render_complete_confirm_dialog(f, area, app, agent_id);
+    }
+
     if let Some(agent_id) = app.confirm_kill_agent_id {
         render_kill_confirm_dialog(f, area, app, agent_id);
     }
@@ -2830,6 +2834,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("←→", "prev/next"),
                 ("/", "search"),
                 ("Esc", "back"),
+                ("D", "done"),
                 ("k", "kill"),
                 ("?", "help"),
                 ("q", "back"),
@@ -2981,6 +2986,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
     lines.push(key_line("n / N", "Next / previous search match"));
     lines.push(key_line("Esc (search)", "Close search bar"));
     lines.push(key_line("y", "Copy worktree path to clipboard"));
+    lines.push(key_line("D", "Mark agent as completed + SIGTERM + clean up worktree"));
     lines.push(key_line("k", "Kill (SIGTERM) current agent + clean up worktree"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
     lines.push(Line::from(""));
@@ -3046,6 +3052,72 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
     let display: Vec<Line> = lines.into_iter().take(visible).collect();
 
     f.render_widget(Paragraph::new(display).style(Style::default().bg(t.panel_bg)), inner);
+}
+
+// ══════════════════════════════════════════════════════════
+//  MARK-COMPLETE CONFIRMATION DIALOG
+// ══════════════════════════════════════════════════════════
+
+fn render_complete_confirm_dialog(f: &mut Frame, area: Rect, app: &App, agent_id: usize) {
+    let t = &app.theme;
+    let (agent_label, issue_id) = app
+        .agents
+        .iter()
+        .find(|a| a.id == agent_id)
+        .map(|a| (format!("AGENT-{:02}", a.unit_number), a.task.id.clone()))
+        .unwrap_or_else(|| (format!("AGENT-{}", agent_id), String::from("?")));
+
+    let popup_width = 58u16.min(area.width.saturating_sub(4));
+    let popup_height = 7u16.min(area.height.saturating_sub(4));
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+        y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(t.accent))
+        .title(Span::styled(
+            " MARK COMPLETE ",
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(t.panel_bg));
+
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                format!("  Mark {} ({}) as completed? ", agent_label, issue_id),
+                Style::default().fg(t.bright),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  This will set status to Completed and terminate the process.",
+                Style::default().fg(t.muted),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[y/Enter] ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            Span::styled("Confirm   ", Style::default().fg(t.bright)),
+            Span::styled("[n/Esc] ", Style::default().fg(t.primary).add_modifier(Modifier::BOLD)),
+            Span::styled("Cancel", Style::default().fg(t.bright)),
+        ]),
+    ];
+
+    f.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(t.panel_bg)),
+        inner,
+    );
 }
 
 // ══════════════════════════════════════════════════════════

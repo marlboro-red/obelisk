@@ -330,6 +330,9 @@ pub struct App {
     // Kill confirmation dialog — Some(agent_id) means dialog is visible
     pub confirm_kill_agent_id: Option<usize>,
 
+    // Mark-complete confirmation dialog — Some(agent_id) means dialog is visible
+    pub confirm_complete_agent_id: Option<usize>,
+
     // Tab bar badge: event log count at last visit (for "unread" badge)
     pub event_log_seen_count: usize,
 
@@ -535,6 +538,7 @@ impl App {
             jump_query: String::new(),
             velocity_window_size,
             confirm_kill_agent_id: None,
+            confirm_complete_agent_id: None,
             event_log_seen_count: 0,
             worktree_entries: Vec::new(),
             worktree_list_state: ListState::default(),
@@ -1404,6 +1408,40 @@ impl App {
         self.log(
             LogCategory::Alert,
             format!("AGENT-{:02} terminated (killed)", unit),
+        );
+        Some((unit, worktree))
+    }
+
+    /// Mark an active agent as completed and send SIGTERM to clean up.
+    /// Returns (unit_number, worktree_path) for logging/cleanup.
+    pub fn force_complete_agent(&mut self, agent_id: usize) -> Option<(usize, Option<String>)> {
+        let agent = self.agents.iter_mut().find(|a| a.id == agent_id)?;
+        if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+            return None;
+        }
+        if let Some(pid) = agent.pid {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            #[cfg(windows)]
+            {
+                use std::process::Command;
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+        agent.status = AgentStatus::Completed;
+        agent.elapsed_secs = agent.started_at.elapsed().as_secs();
+        let unit = agent.unit_number;
+        let worktree = agent.worktree_path.clone();
+        self.total_completed += 1;
+        self.log(
+            LogCategory::Complete,
+            format!("AGENT-{:02} marked complete (manual)", unit),
         );
         Some((unit, worktree))
     }
@@ -2603,6 +2641,50 @@ mod tests {
             agent.status,
             AgentStatus::Failed,
             "exit watcher must not overwrite Failed status"
+        );
+    }
+
+    #[test]
+    fn force_complete_sets_completed() {
+        let mut app = App::new();
+        app.agents.push(test_agent(50, AgentStatus::Running));
+
+        let result = app.force_complete_agent(50);
+        assert!(result.is_some());
+
+        let agent = app.agents.iter().find(|a| a.id == 50).unwrap();
+        assert_eq!(agent.status, AgentStatus::Completed);
+        assert_eq!(app.total_completed, 1);
+        assert_eq!(app.total_failed, 0);
+    }
+
+    #[test]
+    fn force_complete_ignores_finished_agents() {
+        let mut app = App::new();
+        app.agents.push(test_agent(51, AgentStatus::Failed));
+
+        let result = app.force_complete_agent(51);
+        assert!(result.is_none(), "should not force-complete a finished agent");
+
+        let agent = app.agents.iter().find(|a| a.id == 51).unwrap();
+        assert_eq!(agent.status, AgentStatus::Failed);
+    }
+
+    #[test]
+    fn force_complete_then_exit_preserves_completed() {
+        let mut app = App::new();
+        app.agents.push(test_agent(52, AgentStatus::Running));
+
+        // Mark complete manually
+        app.force_complete_agent(52);
+        // Then exit watcher fires with non-zero (SIGTERM)
+        app.on_agent_exited(52, Some(143));
+
+        let agent = app.agents.iter().find(|a| a.id == 52).unwrap();
+        assert_eq!(
+            agent.status,
+            AgentStatus::Completed,
+            "exit watcher must not overwrite force-completed status"
         );
     }
 }
