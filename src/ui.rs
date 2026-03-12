@@ -94,6 +94,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
         render_poll_error_banner(f, chunks[2], app);
     }
 
+    // Jump-to-issue bar — rendered over the keybindings line when active
+    if app.jump_active {
+        render_jump_bar(f, chunks[5], app);
+    }
+
     if app.show_help {
         render_help_overlay(f, area);
     }
@@ -2229,6 +2234,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("c", "Scan and clean up orphaned worktrees"));
     lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
     lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));
+    lines.push(key_line("/", "Jump to issue by ID"));
     lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));
     lines.push(key_line("↑↓ / j/k", "Navigate list  (detail panel updates)"));
     lines.push(key_line("Enter", "Open Agent Detail for selected"));
@@ -2423,6 +2429,67 @@ fn render_search_bar(f: &mut Frame, area: Rect, app: &App) {
             ),
         ),
         Span::styled("  [Esc] close", Style::default().fg(MUTED)),
+    ]);
+
+    f.render_widget(
+        Paragraph::new(line).style(Style::default().bg(Color::Rgb(15, 15, 30))),
+        area,
+    );
+}
+
+// ══════════════════════════════════════════════════════════
+//  JUMP BAR
+// ══════════════════════════════════════════════════════════
+
+fn render_jump_bar(f: &mut Frame, area: Rect, app: &App) {
+    let matches = app.jump_matches();
+    let match_info = if app.jump_query.is_empty() {
+        " type issue ID...".to_string()
+    } else if matches.is_empty() {
+        " [no matches]".to_string()
+    } else {
+        let labels: Vec<String> = matches
+            .iter()
+            .take(5)
+            .map(|(id, is_agent)| {
+                if *is_agent {
+                    format!("{} (agent)", id)
+                } else {
+                    id.clone()
+                }
+            })
+            .collect();
+        let suffix = if matches.len() > 5 {
+            format!(" +{} more", matches.len() - 5)
+        } else {
+            String::new()
+        };
+        format!(" [{}{}]", labels.join(", "), suffix)
+    };
+
+    let line = Line::from(vec![
+        Span::styled(
+            " / ",
+            Style::default().fg(INFO).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            app.jump_query.as_str(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("█", Style::default().fg(INFO)),
+        Span::styled(
+            match_info.as_str(),
+            Style::default().fg(
+                if matches.is_empty() && !app.jump_query.is_empty() {
+                    DANGER
+                } else {
+                    MUTED
+                },
+            ),
+        ),
+        Span::styled("  Enter: jump  Esc: cancel", Style::default().fg(MUTED)),
     ]);
 
     f.render_widget(
