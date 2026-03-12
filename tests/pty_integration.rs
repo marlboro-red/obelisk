@@ -35,6 +35,7 @@ fn spawn_and_collect(cmd: CommandBuilder) -> Vec<u8> {
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().expect("clone reader failed");
+    #[allow(unused_mut)]
     let mut writer = pair.master.take_writer().expect("take writer failed");
 
     // Reader thread sends output chunks through channel
@@ -56,9 +57,13 @@ fn spawn_and_collect(cmd: CommandBuilder) -> Vec<u8> {
 
     // ConPTY sends ESC[6n (Device Status Report) on startup and buffers
     // child output until it gets a cursor position response.
-    std::thread::sleep(Duration::from_millis(200));
-    let _ = writer.write_all(b"\x1b[1;1R");
-    let _ = writer.flush();
+    // On Unix, writing this to the master feeds it to the child's stdin — skip it.
+    #[cfg(windows)]
+    {
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = writer.write_all(b"\x1b[1;1R");
+        let _ = writer.flush();
+    }
 
     // Let the command run
     std::thread::sleep(Duration::from_secs(2));
@@ -188,10 +193,15 @@ fn pty_write_input_and_read_response() {
         }
     });
 
-    // ConPTY sends ESC[6n on startup — respond to unblock output
-    std::thread::sleep(Duration::from_millis(200));
-    let _ = writer.write_all(b"\x1b[1;1R");
-    let _ = writer.flush();
+    // ConPTY sends ESC[6n on startup — respond to unblock output.
+    // On Unix, writing this to the master feeds it to the child's stdin,
+    // which contaminates bash's `read` — so only do it on Windows.
+    #[cfg(windows)]
+    {
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = writer.write_all(b"\x1b[1;1R");
+        let _ = writer.flush();
+    }
 
     // Give the process time to start and show its prompt
     std::thread::sleep(Duration::from_millis(500));
