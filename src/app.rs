@@ -318,6 +318,9 @@ pub struct App {
     pub agent_timeout_secs: u64,
     /// Agent IDs that have already received an 80% warning (cleared on kill/complete)
     pub timeout_warned_ids: HashSet<usize>,
+
+    // Recent completions feed (Dashboard panel)
+    pub recent_completions: VecDeque<CompletionRecord>,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -488,7 +491,37 @@ impl App {
             cost_threshold: Some(5.0),
             agent_timeout_secs: 1800,
             timeout_warned_ids: HashSet::new(),
+            recent_completions: VecDeque::new(),
         };
+
+        // Seed recent completions from history sessions (newest first, capped at 10)
+        {
+            let mut seed: Vec<CompletionRecord> = Vec::new();
+            for session in app.history_sessions.iter().rev() {
+                for agent in session.agents.iter().rev() {
+                    if agent.status == "Completed" || agent.status == "Failed" {
+                        seed.push(CompletionRecord {
+                            task_id: agent.task_id.clone(),
+                            title: agent.task_id.clone(),
+                            runtime: agent.runtime.clone(),
+                            model: agent.model.clone(),
+                            elapsed_secs: agent.elapsed_secs,
+                            input_tokens: agent.input_tokens,
+                            output_tokens: agent.output_tokens,
+                            estimated_cost_usd: agent.estimated_cost_usd,
+                            success: agent.status == "Completed",
+                            completed_at: session.ended_at.chars().skip(11).take(8).collect(),
+                        });
+                    }
+                    if seed.len() >= 10 { break; }
+                }
+                if seed.len() >= 10 { break; }
+            }
+            for c in seed.into_iter().rev() {
+                app.recent_completions.push_back(c);
+            }
+        }
+
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
             app.log(LogCategory::System, format!("Config loaded from {}", CONFIG_FILE));
@@ -948,6 +981,26 @@ impl App {
         };
 
         if let Some((success, unit, task_id, rt, elapsed)) = log_info {
+            // Record completion for the Dashboard feed
+            if let Some(agent) = self.agents.iter().find(|a| a.id == agent_id) {
+                let record = CompletionRecord {
+                    task_id: task_id.clone(),
+                    title: agent.task.title.clone(),
+                    runtime: rt.clone(),
+                    model: agent.model.clone(),
+                    elapsed_secs: elapsed,
+                    input_tokens: agent.input_tokens,
+                    output_tokens: agent.output_tokens,
+                    estimated_cost_usd: agent.estimated_cost_usd,
+                    success,
+                    completed_at: chrono::Local::now().format("%H:%M:%S").to_string(),
+                };
+                self.recent_completions.push_front(record);
+                if self.recent_completions.len() > 10 {
+                    self.recent_completions.pop_back();
+                }
+            }
+
             if success {
                 self.total_completed += 1;
                 self.log(

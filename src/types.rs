@@ -297,6 +297,21 @@ pub struct SessionRecord {
     pub agents: Vec<SessionAgent>,
 }
 
+/// A completed agent entry for the "Recent Completions" feed on the Dashboard.
+#[derive(Debug, Clone)]
+pub struct CompletionRecord {
+    pub task_id: String,
+    pub title: String,
+    pub runtime: String,
+    pub model: String,
+    pub elapsed_secs: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub estimated_cost_usd: f64,
+    pub success: bool,
+    pub completed_at: String, // HH:MM:SS
+}
+
 /// Pricing per model: cost in USD per million tokens.
 #[derive(Debug, Clone)]
 pub struct ModelPricing {

@@ -188,8 +188,8 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     let v_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(8),    // Top: ready queue + agents
-            Constraint::Length(5), // Bottom: throughput + mini log
+            Constraint::Min(6),    // Top: ready queue + agents
+            Constraint::Length(7), // Bottom: throughput + completions + mini log
         ])
         .split(area);
 
@@ -230,14 +230,19 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     render_task_preview(f, left_chunks[1], app);
     render_agent_panel(f, h_chunks[1], app);
 
-    // Bottom: throughput sparkline + mini event log
+    // Bottom: throughput sparkline + recent completions + mini event log
     let bottom_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([
+            Constraint::Percentage(25),
+            Constraint::Percentage(45),
+            Constraint::Percentage(30),
+        ])
         .split(v_chunks[1]);
 
     render_throughput_sparkline(f, bottom_chunks[0], app);
-    render_mini_event_log(f, bottom_chunks[1], app);
+    render_recent_completions(f, bottom_chunks[1], app);
+    render_mini_event_log(f, bottom_chunks[2], app);
 }
 
 fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
@@ -306,6 +311,95 @@ fn render_mini_event_log(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(
                     truncate_str(&entry.message, 40),
                     Style::default().fg(BRIGHT),
+                ),
+            ]))
+        })
+        .collect();
+
+    f.render_widget(List::new(items).block(block), area);
+}
+
+fn render_recent_completions(f: &mut Frame, area: Rect, app: &App) {
+    let count = app.recent_completions.len();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(if count > 0 { ACCENT } else { MUTED }))
+        .title(Span::styled(
+            format!(" RECENT COMPLETIONS [{}] ", count),
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    if app.recent_completions.is_empty() {
+        let empty = Paragraph::new(Line::from(vec![
+            Span::styled("  No completions yet — ", Style::default().fg(MUTED)),
+            Span::styled("deploy agents to begin", Style::default().fg(WARN)),
+        ]))
+        .block(block);
+        f.render_widget(empty, area);
+        return;
+    }
+
+    let inner = block.inner(area);
+    let visible = inner.height as usize;
+
+    let items: Vec<ListItem> = app
+        .recent_completions
+        .iter()
+        .take(visible)
+        .map(|rec| {
+            let status_sym = if rec.success { "✓" } else { "✗" };
+            let status_color = if rec.success { ACCENT } else { DANGER };
+            let title_display = truncate_str(&rec.title, 18);
+            let duration = App::format_elapsed(rec.elapsed_secs);
+            let tokens = format!(
+                "{}+{}",
+                app::format_tokens(rec.input_tokens),
+                app::format_tokens(rec.output_tokens),
+            );
+            let cost = app::format_cost(rec.estimated_cost_usd);
+
+            // Compact model display: strip common prefixes for brevity
+            let model_short = rec.model
+                .strip_prefix("claude-")
+                .or_else(|| rec.model.strip_prefix("gpt-"))
+                .unwrap_or(&rec.model);
+
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!(" {} ", status_sym),
+                    Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{} ", rec.completed_at),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(
+                    format!("{} ", rec.task_id),
+                    Style::default().fg(INFO),
+                ),
+                Span::styled(
+                    format!("{} ", title_display),
+                    Style::default().fg(BRIGHT),
+                ),
+                Span::styled(
+                    format!("{}/{} ", rec.runtime, model_short),
+                    Style::default().fg(PRIMARY),
+                ),
+                Span::styled(
+                    format!("{} ", duration),
+                    Style::default().fg(WARN),
+                ),
+                Span::styled(
+                    format!("{} ", tokens),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(
+                    cost,
+                    Style::default().fg(if rec.estimated_cost_usd > 1.0 { WARN } else { ACCENT }),
                 ),
             ]))
         })
