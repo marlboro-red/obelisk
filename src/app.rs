@@ -231,6 +231,9 @@ pub struct App {
 
     // Last known PTY inner area (rows, cols) — used to avoid redundant resizes
     pub last_pty_size: (u16, u16),
+
+    // Help overlay toggle
+    pub show_help: bool,
 }
 
 impl App {
@@ -270,6 +273,7 @@ impl App {
             pty_states: HashMap::new(),
             interactive_mode: false,
             last_pty_size: (24, 120),
+            show_help: false,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());

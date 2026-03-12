@@ -78,6 +78,9 @@ pub fn render(f: &mut Frame, app: &App) {
     render_info_bar(f, chunks[4], app);
     render_keybindings(f, chunks[5], app);
 
+    if app.show_help {
+        render_help_overlay(f, area);
+    }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1033,6 +1036,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("Enter", "detail"),
             ("+/-", "slots"),
             ("1-3", "view"),
+            ("?", "help"),
             ("q", "quit"),
         ],
         View::AgentDetail => if app.interactive_mode {
@@ -1049,12 +1053,14 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("←→", "prev/next"),
                 ("Esc", "back"),
                 ("k", "kill"),
+                ("?", "help"),
                 ("q", "back"),
             ]
         },
         View::EventLog => vec![
             ("↑↓", "scroll"),
             ("1-3", "view"),
+            ("?", "help"),
             ("q", "quit"),
         ],
     };
@@ -1077,6 +1083,108 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
     let line = Line::from(spans);
     let paragraph = Paragraph::new(line).style(Style::default().bg(DARK_BG));
     f.render_widget(paragraph, area);
+}
+
+// ══════════════════════════════════════════════════════════
+//  HELP OVERLAY
+// ══════════════════════════════════════════════════════════
+
+fn render_help_overlay(f: &mut Frame, area: Rect) {
+    // Center a popup of fixed size
+    let popup_width = 64u16.min(area.width.saturating_sub(4));
+    let popup_height = 30u16.min(area.height.saturating_sub(4));
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+        y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(PRIMARY))
+        .title(Span::styled(
+            " ◈ KEYBOARD SHORTCUTS  [? / Esc to close] ",
+            Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    // Build lines for all sections
+    let mut lines: Vec<Line> = Vec::new();
+
+    fn section_header(title: &'static str) -> Line<'static> {
+        Line::from(vec![
+            Span::styled(
+                format!("  ── {} ──", title),
+                Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+            ),
+        ])
+    }
+
+    fn key_line(key: &'static str, desc: &'static str) -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("  {:12}", key), Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD)),
+            Span::styled(desc, Style::default().fg(BRIGHT)),
+        ])
+    }
+
+    // ── Dashboard ──
+    lines.push(section_header("DASHBOARD"));
+    lines.push(key_line("s", "Spawn agent on selected task"));
+    lines.push(key_line("p", "Trigger manual poll / scan"));
+    lines.push(key_line("r", "Cycle runtime (Claude/Codex/Copilot)"));
+    lines.push(key_line("m", "Cycle model for current runtime"));
+    lines.push(key_line("a", "Toggle auto-spawn mode"));
+    lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));
+    lines.push(key_line("↑↓ / j/k", "Navigate list"));
+    lines.push(key_line("Enter", "Open Agent Detail for selected"));
+    lines.push(key_line("+/-", "Increase/decrease max concurrent slots"));
+    lines.push(key_line("1-3", "Switch view"));
+    lines.push(key_line("q", "Quit"));
+    lines.push(Line::from(""));
+
+    // ── Agent Detail — Observe ──
+    lines.push(section_header("AGENT DETAIL  (Observe mode)"));
+    lines.push(key_line("i", "Attach interactive PTY session"));
+    lines.push(key_line("↑↓", "Scroll output one line"));
+    lines.push(key_line("PgUp/PgDn", "Scroll output by page"));
+    lines.push(key_line("Home/End", "Jump to top / re-engage auto-follow"));
+    lines.push(key_line("←/→", "Previous / next agent"));
+    lines.push(key_line("k", "Kill (SIGTERM) current agent"));
+    lines.push(key_line("Esc / q", "Return to Dashboard"));
+    lines.push(Line::from(""));
+
+    // ── Agent Detail — Interactive ──
+    lines.push(section_header("AGENT DETAIL  (Interactive mode)"));
+    lines.push(key_line("Ctrl+]", "Detach from PTY (return to Observe)"));
+    lines.push(Line::from(vec![
+        Span::styled("  ", Style::default()),
+        Span::styled("All other keys are forwarded to the agent's PTY.", Style::default().fg(MUTED)),
+    ]));
+    lines.push(Line::from(""));
+
+    // ── Event Log ──
+    lines.push(section_header("EVENT LOG"));
+    lines.push(key_line("↑↓", "Scroll log"));
+    lines.push(key_line("1-3", "Switch view"));
+    lines.push(key_line("q", "Quit"));
+    lines.push(Line::from(""));
+
+    // ── Global ──
+    lines.push(section_header("GLOBAL"));
+    lines.push(key_line("?", "Toggle this help overlay"));
+    lines.push(key_line("Ctrl+C", "Force quit"));
+
+    let visible = inner.height as usize;
+    let display: Vec<Line> = lines.into_iter().take(visible).collect();
+
+    f.render_widget(Paragraph::new(display).style(Style::default().bg(PANEL_BG)), inner);
 }
 
 // ══════════════════════════════════════════════════════════

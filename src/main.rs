@@ -231,6 +231,18 @@ fn handle_key(
         return;
     }
 
+    // '?' toggles help overlay; Esc also closes it if open
+    if key.code == KeyCode::Char('?') {
+        app.show_help = !app.show_help;
+        return;
+    }
+    if app.show_help {
+        if key.code == KeyCode::Esc {
+            app.show_help = false;
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') => {
             if app.active_view == View::AgentDetail {
