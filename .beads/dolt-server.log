@@ -2301,3 +2301,10 @@ time="2026-03-13T10:40:39+11:00" level=info msg=NewConnection DisableClientMulti
 time="2026-03-13T10:40:39+11:00" level=info msg=ConnectionClosed connectionID=144
 time="2026-03-13T10:40:39+11:00" level=warning msg="error running query" connectTime="2026-03-13 10:40:39.2520908 +1100 AEDT m=+392.577711901" connectionDb=bdOrc connectionID=145 error="nothing to commit" queryTime="2026-03-13 10:40:39.2576213 +1100 AEDT m=+392.583242501"
 time="2026-03-13T10:40:39+11:00" level=info msg=ConnectionClosed connectionID=145
+time="2026-03-13T10:40:48+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=146
+time="2026-03-13T10:40:48+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60192: wsasend: An existing connection was forcibly closed by the remote host.\nWrite(packet) failed\nconn 146"
+time="2026-03-13T10:40:48+11:00" level=info msg=ConnectionClosed connectionID=146
+time="2026-03-13T10:40:49+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=147
+time="2026-03-13T10:40:49+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=148
+time="2026-03-13T10:40:49+11:00" level=info msg=ConnectionClosed connectionID=147
+time="2026-03-13T10:40:49+11:00" level=info msg=ConnectionClosed connectionID=148
