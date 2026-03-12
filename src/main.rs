@@ -316,6 +316,13 @@ fn handle_key(
                 app.kill_agent(agent_id);
             }
         }
+        KeyCode::Char('r') if app.active_view == View::AgentDetail => {
+            if let Some(agent_id) = app.selected_agent_id {
+                if let Some(req) = app.retry_agent(agent_id) {
+                    tokio::spawn(spawn_agent_process(tx.clone(), req));
+                }
+            }
+        }
         KeyCode::Char('j') if app.active_view != View::AgentDetail => app.navigate_down(),
         KeyCode::Char('k') if app.active_view != View::AgentDetail => app.navigate_up(),
         KeyCode::Tab => app.toggle_focus(),

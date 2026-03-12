@@ -778,6 +778,14 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
         .map(|p| format!("P{}", p))
         .unwrap_or_else(|| "P?".into());
 
+    let retry_color = if agent.retry_count >= app.max_retries {
+        DANGER
+    } else if agent.retry_count > 0 {
+        WARN
+    } else {
+        MUTED
+    };
+
     let lines = vec![
         Line::from(Span::styled(
             hex_row,
@@ -809,6 +817,13 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
         Line::from(vec![
             Span::styled(" PRIORITY", Style::default().fg(MUTED)),
             Span::styled(format!(" {}", priority_str), Style::default().fg(WARN)),
+        ]),
+        Line::from(vec![
+            Span::styled(" RETRIES ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!(" {}/{}", agent.retry_count, app.max_retries),
+                Style::default().fg(retry_color),
+            ),
         ]),
         Line::from(""),
         Line::from(vec![
@@ -1156,6 +1171,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
         } else {
             vec![
                 ("i", "interact"),
+                ("r", "retry"),
                 ("↑↓", "scroll"),
                 ("PgUp/Dn", "page"),
                 ("Home/End", "top/bottom"),
@@ -1261,6 +1277,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     // ── Agent Detail — Observe ──
     lines.push(section_header("AGENT DETAIL  (Observe mode)"));
     lines.push(key_line("i", "Attach interactive PTY session"));
+    lines.push(key_line("r", "Retry failed agent (spawn fresh PTY)"));
     lines.push(key_line("↑↓", "Scroll output one line"));
     lines.push(key_line("PgUp/PgDn", "Scroll output by page"));
     lines.push(key_line("Home/End", "Jump to top / re-engage auto-follow"));
