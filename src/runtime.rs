@@ -2,6 +2,13 @@ use crate::types::{BeadTask, DepNode, DiffData, PtyHandle, Runtime};
 use portable_pty::{CommandBuilder, PtySize};
 use tokio::process::Command;
 
+/// Result of spawning an agent PTY: handle, async reader, and child process.
+pub type SpawnPtyResult = (
+    PtyHandle,
+    Box<dyn std::io::Read + Send>,
+    Box<dyn portable_pty::Child + Send + Sync>,
+);
+
 /// On Windows, npm-installed CLIs are `.cmd` scripts which `CreateProcessW`
 /// cannot resolve directly. Wrap them through `cmd /C` so they launch correctly.
 #[cfg(windows)]
@@ -86,11 +93,7 @@ pub fn spawn_agent_pty(
     user_prompt: &str,
     pty_rows: u16,
     pty_cols: u16,
-) -> anyhow::Result<(
-    PtyHandle,
-    Box<dyn std::io::Read + Send>,
-    Box<dyn portable_pty::Child + Send + Sync>,
-)> {
+) -> anyhow::Result<SpawnPtyResult> {
     let pty_system = portable_pty::native_pty_system();
     let size = PtySize {
         rows: pty_rows,
@@ -356,8 +359,8 @@ pub async fn poll_worktree_diff(worktree_path: &str) -> DiffData {
     let mut deletions = 0usize;
 
     // Parse stat lines to extract file names and summary
-    for stat_out in [&stat_output, &stat_cached] {
-        if let Ok(ref out) = stat_out {
+    for out in [&stat_output, &stat_cached].iter().filter_map(|r| r.as_ref().ok()) {
+        {
             let text = String::from_utf8_lossy(&out.stdout);
             for line in text.lines() {
                 let trimmed = line.trim();

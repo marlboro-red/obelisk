@@ -442,7 +442,7 @@ pub enum AppEvent {
     /// Raw bytes from PTY output — fed into vt100 parser on main thread
     AgentPtyData { agent_id: usize, data: Vec<u8> },
     /// PTY is ready — carries the master/writer/parser to store in App
-    AgentPtyReady { agent_id: usize, handle: PtyHandle },
+    AgentPtyReady { agent_id: usize, handle: Box<PtyHandle> },
     /// Orphaned agent worktrees found on startup
     WorktreeOrphans(Vec<String>),
     /// Result of a worktree cleanup operation

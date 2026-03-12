@@ -241,7 +241,7 @@ fn process_daemon_event(
             app.on_agent_pty_data(agent_id, &data);
         }
         AppEvent::AgentPtyReady { agent_id, handle } => {
-            app.on_agent_pty_ready(agent_id, handle);
+            app.on_agent_pty_ready(agent_id, *handle);
         }
         AppEvent::WorktreeOrphans(paths) => {
             warn!(count = paths.len(), "orphaned worktrees");
@@ -438,7 +438,7 @@ async fn spawn_agent_process(
         let _ = tx.send(AppEvent::AgentPid { agent_id, pid });
     }
 
-    let _ = tx.send(AppEvent::AgentPtyReady { agent_id, handle });
+    let _ = tx.send(AppEvent::AgentPtyReady { agent_id, handle: Box::new(handle) });
 
     // Reader task
     let tx_reader = tx.clone();

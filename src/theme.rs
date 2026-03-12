@@ -178,7 +178,7 @@ pub struct ThemeConfig {
 }
 
 /// Parse a hex color string like "#FF6700" or "FF6700" into a ratatui Color.
-fn parse_hex_color(s: &str) -> Option<Color> {
+pub(crate) fn parse_hex_color(s: &str) -> Option<Color> {
     let hex = s.strip_prefix('#').unwrap_or(s);
     if hex.len() != 6 {
         return None;
@@ -187,4 +187,282 @@ fn parse_hex_color(s: &str) -> Option<Color> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(Color::Rgb(r, g, b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_hex_color_with_hash() {
+        assert_eq!(parse_hex_color("#FF6700"), Some(Color::Rgb(255, 103, 0)));
+    }
+
+    #[test]
+    fn parse_hex_color_without_hash() {
+        assert_eq!(parse_hex_color("00FF00"), Some(Color::Rgb(0, 255, 0)));
+    }
+
+    #[test]
+    fn parse_hex_color_black() {
+        assert_eq!(parse_hex_color("#000000"), Some(Color::Rgb(0, 0, 0)));
+    }
+
+    #[test]
+    fn parse_hex_color_white() {
+        assert_eq!(parse_hex_color("#FFFFFF"), Some(Color::Rgb(255, 255, 255)));
+    }
+
+    #[test]
+    fn parse_hex_color_lowercase() {
+        assert_eq!(parse_hex_color("#ff6700"), Some(Color::Rgb(255, 103, 0)));
+    }
+
+    #[test]
+    fn parse_hex_color_too_short() {
+        assert_eq!(parse_hex_color("#FFF"), None);
+    }
+
+    #[test]
+    fn parse_hex_color_too_long() {
+        assert_eq!(parse_hex_color("#FF670000"), None);
+    }
+
+    #[test]
+    fn parse_hex_color_empty() {
+        assert_eq!(parse_hex_color(""), None);
+    }
+
+    #[test]
+    fn parse_hex_color_invalid_chars() {
+        assert_eq!(parse_hex_color("#ZZZZZZ"), None);
+    }
+
+    #[test]
+    fn parse_hex_color_hash_only() {
+        assert_eq!(parse_hex_color("#"), None);
+    }
+
+    #[test]
+    fn all_presets_produce_rgb_colors() {
+        let presets = [
+            Theme::preset_default(),
+            Theme::preset_solarized(),
+            Theme::preset_nord(),
+            Theme::preset_catppuccin(),
+            Theme::preset_gruvbox(),
+        ];
+        for theme in &presets {
+            assert!(matches!(theme.primary, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.accent, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.secondary, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.danger, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.info, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.warn, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.dark_bg, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.panel_bg, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.muted, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.bright, Color::Rgb(_, _, _)));
+            assert!(matches!(theme.dim_accent, Color::Rgb(_, _, _)));
+        }
+    }
+
+    #[test]
+    fn default_theme_matches_preset_default() {
+        let def = Theme::default();
+        let preset = Theme::preset_default();
+        // Compare a representative color — they should match
+        assert!(matches!(
+            (&def.primary, &preset.primary),
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2))
+                if r1 == r2 && g1 == g2 && b1 == b2
+        ));
+    }
+
+    #[test]
+    fn from_config_with_no_preset_uses_default() {
+        let config = ThemeConfig::default();
+        let theme = Theme::from_config(&config);
+        let default = Theme::preset_default();
+        assert!(matches!(
+            (&theme.primary, &default.primary),
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2))
+                if r1 == r2 && g1 == g2 && b1 == b2
+        ));
+    }
+
+    #[test]
+    fn from_config_solarized_preset() {
+        let config = ThemeConfig {
+            preset: Some("solarized".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_solarized();
+        assert!(matches!(
+            (&theme.primary, &expected.primary),
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2))
+                if r1 == r2 && g1 == g2 && b1 == b2
+        ));
+    }
+
+    #[test]
+    fn from_config_frost_alias_maps_to_solarized() {
+        let config = ThemeConfig {
+            preset: Some("frost".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_solarized();
+        assert!(matches!(
+            (&theme.primary, &expected.primary),
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2))
+                if r1 == r2 && g1 == g2 && b1 == b2
+        ));
+    }
+
+    #[test]
+    fn from_config_ember_alias_maps_to_nord() {
+        let config = ThemeConfig {
+            preset: Some("ember".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_nord();
+        assert!(matches!(
+            (&theme.primary, &expected.primary),
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2))
+                if r1 == r2 && g1 == g2 && b1 == b2
+        ));
+    }
+
+    #[test]
+    fn from_config_ash_alias_maps_to_catppuccin() {
+        let config = ThemeConfig {
+            preset: Some("ash".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_catppuccin();
+        assert!(matches!(
+            (&theme.primary, &expected.primary),
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2))
+                if r1 == r2 && g1 == g2 && b1 == b2
+        ));
+    }
+
+    #[test]
+    fn from_config_deep_alias_maps_to_gruvbox() {
+        let config = ThemeConfig {
+            preset: Some("deep".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_gruvbox();
+        assert!(matches!(
+            (&theme.primary, &expected.primary),
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2))
+                if r1 == r2 && g1 == g2 && b1 == b2
+        ));
+    }
+
+    #[test]
+    fn from_config_unknown_preset_falls_back_to_default() {
+        let config = ThemeConfig {
+            preset: Some("nonexistent".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let default = Theme::preset_default();
+        assert!(matches!(
+            (&theme.primary, &default.primary),
+            (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2))
+                if r1 == r2 && g1 == g2 && b1 == b2
+        ));
+    }
+
+    #[test]
+    fn from_config_overrides_individual_colors() {
+        let config = ThemeConfig {
+            primary: Some("#FF0000".into()),
+            accent: Some("00FF00".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        assert_eq!(theme.primary, Color::Rgb(255, 0, 0));
+        assert_eq!(theme.accent, Color::Rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn from_config_invalid_override_keeps_preset_color() {
+        let config = ThemeConfig {
+            primary: Some("not-a-color".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let default = Theme::preset_default();
+        assert_eq!(theme.primary, default.primary);
+    }
+
+    #[test]
+    fn from_config_all_overridable_fields() {
+        let config = ThemeConfig {
+            primary: Some("#010101".into()),
+            accent: Some("#020202".into()),
+            secondary: Some("#030303".into()),
+            danger: Some("#040404".into()),
+            info: Some("#050505".into()),
+            warn: Some("#060606".into()),
+            dark_bg: Some("#070707".into()),
+            panel_bg: Some("#080808".into()),
+            muted: Some("#090909".into()),
+            bright: Some("#0A0A0A".into()),
+            dim_accent: Some("#0B0B0B".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        assert_eq!(theme.primary, Color::Rgb(1, 1, 1));
+        assert_eq!(theme.accent, Color::Rgb(2, 2, 2));
+        assert_eq!(theme.secondary, Color::Rgb(3, 3, 3));
+        assert_eq!(theme.danger, Color::Rgb(4, 4, 4));
+        assert_eq!(theme.info, Color::Rgb(5, 5, 5));
+        assert_eq!(theme.warn, Color::Rgb(6, 6, 6));
+        assert_eq!(theme.dark_bg, Color::Rgb(7, 7, 7));
+        assert_eq!(theme.panel_bg, Color::Rgb(8, 8, 8));
+        assert_eq!(theme.muted, Color::Rgb(9, 9, 9));
+        assert_eq!(theme.bright, Color::Rgb(10, 10, 10));
+        assert_eq!(theme.dim_accent, Color::Rgb(11, 11, 11));
+    }
+
+    #[test]
+    fn theme_config_serde_round_trip() {
+        let config = ThemeConfig {
+            preset: Some("nord".into()),
+            primary: Some("#FF0000".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ThemeConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.preset.as_deref(), Some("nord"));
+        assert_eq!(deserialized.primary.as_deref(), Some("#FF0000"));
+        assert!(deserialized.accent.is_none());
+    }
+
+    #[test]
+    fn presets_have_distinct_primary_colors() {
+        let presets = [
+            Theme::preset_default(),
+            Theme::preset_solarized(),
+            Theme::preset_nord(),
+            Theme::preset_catppuccin(),
+            Theme::preset_gruvbox(),
+        ];
+        // Every pair of presets should have different primary colors
+        for i in 0..presets.len() {
+            for j in (i + 1)..presets.len() {
+                assert_ne!(presets[i].primary, presets[j].primary,
+                    "presets {} and {} have identical primary colors", i, j);
+            }
+        }
+    }
 }

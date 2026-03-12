@@ -524,6 +524,12 @@ fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, us
     matches
 }
 
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl App {
     pub fn new() -> Self {
         let config_exists = std::path::Path::new(CONFIG_FILE).exists();
@@ -750,13 +756,10 @@ impl App {
             }),
             theme: Some(self.theme_config.clone()),
         };
-        match toml::to_string_pretty(&config) {
-            Ok(toml_str) => {
-                if std::fs::write(CONFIG_FILE, toml_str).is_ok() {
-                    self.log(LogCategory::System, format!("Config saved to {}", CONFIG_FILE));
-                }
+        if let Ok(toml_str) = toml::to_string_pretty(&config) {
+            if std::fs::write(CONFIG_FILE, toml_str).is_ok() {
+                self.log(LogCategory::System, format!("Config saved to {}", CONFIG_FILE));
             }
-            Err(_) => {}
         }
     }
 
@@ -863,7 +866,7 @@ impl App {
         }
 
         // Update throughput history every 10 frames (~1 second)
-        if self.frame_count % 10 == 0 {
+        if self.frame_count.is_multiple_of(10) {
             self.throughput_history.push_back(self.lines_this_tick);
             if self.throughput_history.len() > 60 {
                 self.throughput_history.pop_front();
@@ -879,7 +882,7 @@ impl App {
         }
 
         // Periodically flush PTY logs to disk for running agents (~every 30s)
-        if self.frame_count % 300 == 0 {
+        if self.frame_count.is_multiple_of(300) {
             let running_ids: Vec<usize> = self
                 .agents
                 .iter()
@@ -1902,7 +1905,7 @@ impl App {
                 let created_at = std::fs::metadata(&path)
                     .ok()
                     .and_then(|m| m.created().ok())
-                    .map(|t| chrono::DateTime::<chrono::Local>::from(t));
+                    .map(chrono::DateTime::<chrono::Local>::from);
 
                 WorktreeEntry {
                     path,
@@ -1920,7 +1923,7 @@ impl App {
         self.worktree_entries = entries;
     }
 
-    fn sort_worktree_entries(&self, entries: &mut Vec<WorktreeEntry>) {
+    fn sort_worktree_entries(&self, entries: &mut [WorktreeEntry]) {
         match self.worktree_sort_mode {
             WorktreeSortMode::Age => {
                 entries.sort_by(|a, b| {
@@ -2272,20 +2275,19 @@ impl App {
             // ConPTY on Windows sends this on startup; without a response it buffers
             // all output indefinitely. On macOS/Linux the CPR response leaks back as
             // visible text (^[[1;1R), so only send it on Windows.
-            if cfg!(target_os = "windows") {
-                if data.windows(4).any(|w| w == b"\x1b[6n") {
+            if cfg!(target_os = "windows")
+                && data.windows(4).any(|w| w == b"\x1b[6n") {
                     use std::io::Write;
                     let _ = state.writer.write_all(b"\x1b[1;1R");
                     let _ = state.writer.flush();
                 }
-            }
             // Strip any CPR responses (ESC[row;colR) that leak into the output
             // stream before feeding the vt100 parser — defense-in-depth.
             let cleaned = RE_CPR.replace_all(data, &b""[..]);
             state.parser.process(&cleaned);
             // Track cumulative scrollback: only count positive deltas so that
             // screen clears / alternate-screen resets never reduce the total.
-            let cur = state.parser.screen().scrollback() as usize;
+            let cur = state.parser.screen().scrollback();
             if cur > state.prev_scrollback {
                 state.cumulative_scrollback += cur - state.prev_scrollback;
             }
@@ -2622,7 +2624,7 @@ impl App {
         let mut content = String::new();
 
         // ── Header ──
-        content.push_str(&format!("=== Obelisk Agent Log Export ===\n"));
+        content.push_str("=== Obelisk Agent Log Export ===\n");
         content.push_str(&format!("Agent:     AGENT-{:02}\n", agent.unit_number));
         content.push_str(&format!("Task:      {} ({})\n", agent.task.id, agent.task.title));
         content.push_str(&format!("Runtime:   {}\n", agent.runtime.name()));
@@ -2634,7 +2636,7 @@ impl App {
             content.push_str(&format!("Exit code: {}\n", code));
         }
         content.push_str(&format!("Exported:  {}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")));
-        content.push_str("\n");
+        content.push('\n');
 
         // ── Section 1: Parsed screen content ──
         content.push_str("════════════════════════════════════════════════════════════════════════════════\n");

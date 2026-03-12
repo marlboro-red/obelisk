@@ -159,7 +159,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
 fn render_title_bar(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let blink = (app.frame_count / 5) % 2 == 0;
+    let blink = (app.frame_count / 5).is_multiple_of(2);
     let dot = if blink { "●" } else { "○" };
 
     let title = Line::from(vec![
@@ -375,7 +375,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
 
     // Alert banner overlay
     if let Some((ref msg, _)) = app.alert_message {
-        let blink = (app.frame_count / 3) % 2 == 0;
+        let blink = (app.frame_count / 3).is_multiple_of(2);
         if blink {
             let alert_area = Rect {
                 x: area.x,
@@ -534,7 +534,7 @@ fn render_completions_feed(f: &mut Frame, area: Rect, app: &App) {
             };
 
             // Short model name (last component)
-            let model_short = rec.model.split('-').last().unwrap_or(&rec.model);
+            let model_short = rec.model.split('-').next_back().unwrap_or(&rec.model);
 
             ListItem::new(Line::from(vec![
                 Span::styled(
@@ -880,41 +880,41 @@ fn render_markdown(text: &str, t: &Theme) -> Vec<Line<'static>> {
                     }
                     let after = &remaining[pos..];
 
-                    if after.starts_with("**") {
+                    if let Some(stripped) = after.strip_prefix("**") {
                         // Bold
-                        if let Some(end) = after[2..].find("**") {
-                            let content = &after[2..2 + end];
+                        if let Some(end) = stripped.find("**") {
+                            let content = &stripped[..end];
                             spans.push(Span::styled(
                                 content.to_string(),
                                 base_style.add_modifier(Modifier::BOLD),
                             ));
-                            remaining = &after[2 + end + 2..];
+                            remaining = &stripped[end + 2..];
                         } else {
                             spans.push(Span::styled(after.to_string(), base_style));
                             break;
                         }
-                    } else if after.starts_with('`') {
+                    } else if let Some(stripped) = after.strip_prefix('`') {
                         // Inline code
-                        if let Some(end) = after[1..].find('`') {
-                            let content = &after[1..1 + end];
+                        if let Some(end) = stripped.find('`') {
+                            let content = &stripped[..end];
                             spans.push(Span::styled(
                                 content.to_string(),
                                 Style::default().fg(code_color),
                             ));
-                            remaining = &after[1 + end + 1..];
+                            remaining = &stripped[end + 1..];
                         } else {
                             spans.push(Span::styled(after.to_string(), base_style));
                             break;
                         }
-                    } else if after.starts_with('*') {
+                    } else if let Some(stripped) = after.strip_prefix('*') {
                         // Italic
-                        if let Some(end) = after[1..].find('*') {
-                            let content = &after[1..1 + end];
+                        if let Some(end) = stripped.find('*') {
+                            let content = &stripped[..end];
                             spans.push(Span::styled(
                                 content.to_string(),
                                 base_style.add_modifier(Modifier::ITALIC),
                             ));
-                            remaining = &after[1 + end + 1..];
+                            remaining = &stripped[end + 1..];
                         } else {
                             spans.push(Span::styled(after.to_string(), base_style));
                             break;
@@ -2573,7 +2573,7 @@ fn render_wave_monitor(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let blink = (app.frame_count / 8) % 2 == 0;
+    let blink = (app.frame_count / 8).is_multiple_of(2);
 
     let auto_style = if app.auto_spawn {
         if blink {

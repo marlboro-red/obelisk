@@ -295,7 +295,7 @@ fn process_event(
             }
 
             // Auto-fill split panes when in split view (~every 2s = 20 ticks)
-            if app.active_view == View::SplitPane && app.frame_count % 20 == 0 {
+            if app.active_view == View::SplitPane && app.frame_count.is_multiple_of(20) {
                 app.auto_fill_split_panes();
             }
             // Periodic worktree scan (~every 5s = 50 ticks at 100ms) when panel is active
@@ -368,7 +368,7 @@ fn process_event(
             app.on_agent_pty_data(agent_id, &data);
         }
         AppEvent::AgentPtyReady { agent_id, handle } => {
-            app.on_agent_pty_ready(agent_id, handle);
+            app.on_agent_pty_ready(agent_id, *handle);
         }
         AppEvent::WorktreeOrphans(paths) => {
             warn!(count = paths.len(), "orphaned worktrees found");
@@ -513,25 +513,23 @@ fn handle_key(
         match key.code {
             KeyCode::Char('y') | KeyCode::Enter => {
                 if let Some(agent_id) = app.confirm_complete_agent_id.take() {
-                    if let Some((_, worktree)) = app.force_complete_agent(agent_id) {
-                        if let Some(worktree_path) = worktree {
-                            let branch = std::path::Path::new(&worktree_path)
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .and_then(|n| n.strip_prefix("worktree-"))
-                                .unwrap_or("")
-                                .to_string();
-                            let tx_done = tx.clone();
-                            tokio::spawn(async move {
-                                let mut cleaned = Vec::new();
-                                let mut failed = Vec::new();
-                                match runtime::cleanup_worktree(&worktree_path, &branch).await {
-                                    Ok(()) => cleaned.push(worktree_path),
-                                    Err(_) => failed.push(worktree_path),
-                                }
-                                let _ = tx_done.send(AppEvent::WorktreeCleaned { cleaned, failed });
-                            });
-                        }
+                    if let Some((_, Some(worktree_path))) = app.force_complete_agent(agent_id) {
+                        let branch = std::path::Path::new(&worktree_path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .and_then(|n| n.strip_prefix("worktree-"))
+                            .unwrap_or("")
+                            .to_string();
+                        let tx_done = tx.clone();
+                        tokio::spawn(async move {
+                            let mut cleaned = Vec::new();
+                            let mut failed = Vec::new();
+                            match runtime::cleanup_worktree(&worktree_path, &branch).await {
+                                Ok(()) => cleaned.push(worktree_path),
+                                Err(_) => failed.push(worktree_path),
+                            }
+                            let _ = tx_done.send(AppEvent::WorktreeCleaned { cleaned, failed });
+                        });
                     }
                 }
             }
@@ -548,25 +546,23 @@ fn handle_key(
         match key.code {
             KeyCode::Char('y') | KeyCode::Enter => {
                 if let Some(agent_id) = app.confirm_kill_agent_id.take() {
-                    if let Some((_, worktree)) = app.kill_agent(agent_id) {
-                        if let Some(worktree_path) = worktree {
-                            let branch = std::path::Path::new(&worktree_path)
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .and_then(|n| n.strip_prefix("worktree-"))
-                                .unwrap_or("")
-                                .to_string();
-                            let tx_kill = tx.clone();
-                            tokio::spawn(async move {
-                                let mut cleaned = Vec::new();
-                                let mut failed = Vec::new();
-                                match runtime::cleanup_worktree(&worktree_path, &branch).await {
-                                    Ok(()) => cleaned.push(worktree_path),
-                                    Err(_) => failed.push(worktree_path),
-                                }
-                                let _ = tx_kill.send(AppEvent::WorktreeCleaned { cleaned, failed });
-                            });
-                        }
+                    if let Some((_, Some(worktree_path))) = app.kill_agent(agent_id) {
+                        let branch = std::path::Path::new(&worktree_path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .and_then(|n| n.strip_prefix("worktree-"))
+                            .unwrap_or("")
+                            .to_string();
+                        let tx_kill = tx.clone();
+                        tokio::spawn(async move {
+                            let mut cleaned = Vec::new();
+                            let mut failed = Vec::new();
+                            match runtime::cleanup_worktree(&worktree_path, &branch).await {
+                                Ok(()) => cleaned.push(worktree_path),
+                                Err(_) => failed.push(worktree_path),
+                            }
+                            let _ = tx_kill.send(AppEvent::WorktreeCleaned { cleaned, failed });
+                        });
                     }
                 }
             }
@@ -1124,7 +1120,6 @@ fn handle_mouse(
                         if in_rect(&agent_area) {
                             app.focus = Focus::AgentList;
                             app.navigate_up();
-                            return;
                         }
                     }
                 }
@@ -1135,7 +1130,6 @@ fn handle_mouse(
                             for _ in 0..3 {
                                 app.navigate_up();
                             }
-                            return;
                         }
                     }
                 }
@@ -1175,7 +1169,6 @@ fn handle_mouse(
                         if in_rect(&agent_area) {
                             app.focus = Focus::AgentList;
                             app.navigate_down();
-                            return;
                         }
                     }
                 }
@@ -1186,7 +1179,6 @@ fn handle_mouse(
                             for _ in 0..3 {
                                 app.navigate_down();
                             }
-                            return;
                         }
                     }
                 }
@@ -1328,7 +1320,7 @@ async fn spawn_agent_process(
     // Send handle to main thread
     let _ = tx.send(AppEvent::AgentPtyReady {
         agent_id,
-        handle,
+        handle: Box::new(handle),
     });
 
     // Reader task: read raw bytes from PTY, send as events

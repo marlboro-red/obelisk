@@ -1,8 +1,9 @@
-//! Tests for core business logic: types, templates, serialization, and public API.
+//! Tests for core business logic: types, templates, serialization, daemon protocol, and public API.
 //!
-//! These tests exercise the pure logic in `types.rs`, `templates.rs`, and `app.rs`
-//! — everything that doesn't require a real PTY or external CLI.
+//! These tests exercise the pure logic in `types.rs`, `templates.rs`, `daemon.rs`,
+//! `theme.rs`, and `app.rs` — everything that doesn't require a real PTY or external CLI.
 
+use obelisk::daemon::{DaemonCmd, DaemonResp};
 use obelisk::templates;
 use obelisk::types::*;
 
@@ -479,4 +480,341 @@ fn build_pty_command_copilot_has_yolo_flag() {
     let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
     assert!(args_str.contains(&"--yolo".to_string()));
     assert!(args_str.contains(&"-p".to_string()));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Daemon protocol — command serialization & deserialization
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn daemon_cmd_status_serialization_round_trip() {
+    let cmd = DaemonCmd::Status;
+    let json = serde_json::to_string(&cmd).unwrap();
+    assert!(json.contains(r#""cmd":"status"#));
+    let deserialized: DaemonCmd = serde_json::from_str(&json).unwrap();
+    assert!(matches!(deserialized, DaemonCmd::Status));
+}
+
+#[test]
+fn daemon_cmd_agents_serialization_round_trip() {
+    let cmd = DaemonCmd::Agents;
+    let json = serde_json::to_string(&cmd).unwrap();
+    assert!(json.contains(r#""cmd":"agents"#));
+    let deserialized: DaemonCmd = serde_json::from_str(&json).unwrap();
+    assert!(matches!(deserialized, DaemonCmd::Agents));
+}
+
+#[test]
+fn daemon_cmd_spawn_serialization_round_trip() {
+    let cmd = DaemonCmd::Spawn {
+        issue_id: "obelisk-abc".into(),
+    };
+    let json = serde_json::to_string(&cmd).unwrap();
+    assert!(json.contains("obelisk-abc"));
+    let deserialized: DaemonCmd = serde_json::from_str(&json).unwrap();
+    match deserialized {
+        DaemonCmd::Spawn { issue_id } => assert_eq!(issue_id, "obelisk-abc"),
+        _ => panic!("expected Spawn variant"),
+    }
+}
+
+#[test]
+fn daemon_cmd_kill_serialization_round_trip() {
+    let cmd = DaemonCmd::Kill { agent_id: 42 };
+    let json = serde_json::to_string(&cmd).unwrap();
+    assert!(json.contains("42"));
+    let deserialized: DaemonCmd = serde_json::from_str(&json).unwrap();
+    match deserialized {
+        DaemonCmd::Kill { agent_id } => assert_eq!(agent_id, 42),
+        _ => panic!("expected Kill variant"),
+    }
+}
+
+#[test]
+fn daemon_cmd_stop_serialization_round_trip() {
+    let cmd = DaemonCmd::Stop;
+    let json = serde_json::to_string(&cmd).unwrap();
+    let deserialized: DaemonCmd = serde_json::from_str(&json).unwrap();
+    assert!(matches!(deserialized, DaemonCmd::Stop));
+}
+
+#[test]
+fn daemon_resp_ok_with_message() {
+    let resp = DaemonResp {
+        ok: true,
+        message: Some("success".into()),
+        data: None,
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(json.contains("true"));
+    assert!(json.contains("success"));
+    // data should be skipped when None
+    assert!(!json.contains("data"));
+}
+
+#[test]
+fn daemon_resp_error_with_data() {
+    let resp = DaemonResp {
+        ok: false,
+        message: Some("not found".into()),
+        data: Some(serde_json::json!({"details": "missing"})),
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    let restored: DaemonResp = serde_json::from_str(&json).unwrap();
+    assert!(!restored.ok);
+    assert_eq!(restored.message.as_deref(), Some("not found"));
+    assert!(restored.data.is_some());
+}
+
+#[test]
+fn daemon_resp_skip_serializing_none_fields() {
+    let resp = DaemonResp {
+        ok: true,
+        message: None,
+        data: None,
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(!json.contains("message"));
+    assert!(!json.contains("data"));
+}
+
+#[test]
+fn daemon_cmd_rejects_unknown_command() {
+    let json = r#"{"cmd":"unknown_cmd"}"#;
+    let result = serde_json::from_str::<DaemonCmd>(json);
+    assert!(result.is_err());
+}
+
+#[test]
+fn daemon_cmd_spawn_rejects_missing_issue_id() {
+    let json = r#"{"cmd":"spawn"}"#;
+    let result = serde_json::from_str::<DaemonCmd>(json);
+    assert!(result.is_err());
+}
+
+#[test]
+fn daemon_cmd_kill_rejects_missing_agent_id() {
+    let json = r#"{"cmd":"kill"}"#;
+    let result = serde_json::from_str::<DaemonCmd>(json);
+    assert!(result.is_err());
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Daemon port file
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn port_file_path_is_under_beads() {
+    let path = obelisk::daemon::port_file_path();
+    assert!(path.to_str().unwrap().contains(".beads"));
+    assert!(path.to_str().unwrap().contains("obelisk.port"));
+}
+
+#[test]
+fn read_daemon_port_fails_when_no_port_file() {
+    // Ensure we're working from a temp dir where the port file doesn't exist
+    let result = obelisk::daemon::read_daemon_port();
+    // This may or may not fail depending on whether we're in a beads project
+    // But the function should not panic
+    if let Err(e) = result {
+        assert!(e.contains("not running") || e.contains("invalid port"));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Runtime — command argument correctness
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn build_pty_command_claude_includes_system_prompt() {
+    let cmd = obelisk::runtime::build_pty_command(
+        Runtime::ClaudeCode,
+        "claude-sonnet-4-6",
+        "You are a coding agent",
+        "Fix the bug in main.rs",
+    );
+    let argv = cmd.get_argv();
+    let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
+    assert!(args_str.contains(&"--append-system-prompt".to_string()));
+    assert!(args_str.contains(&"You are a coding agent".to_string()));
+}
+
+#[test]
+fn build_pty_command_codex_combines_prompts() {
+    let cmd = obelisk::runtime::build_pty_command(
+        Runtime::Codex,
+        "gpt-5.4",
+        "system prompt text",
+        "user prompt text",
+    );
+    let argv = cmd.get_argv();
+    let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
+    // Codex should have a combined prompt containing both system and user
+    let has_combined = args_str.iter().any(|a| a.contains("user prompt text") && a.contains("system prompt text"));
+    assert!(has_combined, "codex should combine user and system prompts");
+}
+
+#[test]
+fn build_pty_command_copilot_combines_prompts() {
+    let cmd = obelisk::runtime::build_pty_command(
+        Runtime::Copilot,
+        "gpt-5",
+        "system prompt text",
+        "user prompt text",
+    );
+    let argv = cmd.get_argv();
+    let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
+    let has_combined = args_str.iter().any(|a| a.contains("user prompt text") && a.contains("system prompt text"));
+    assert!(has_combined, "copilot should combine user and system prompts");
+}
+
+#[test]
+fn build_pty_command_codex_has_model_flag() {
+    let cmd = obelisk::runtime::build_pty_command(
+        Runtime::Codex,
+        "my-model",
+        "sys",
+        "usr",
+    );
+    let argv = cmd.get_argv();
+    let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
+    assert!(args_str.contains(&"-m".to_string()));
+    assert!(args_str.contains(&"my-model".to_string()));
+}
+
+#[test]
+fn build_pty_command_copilot_has_model_flag() {
+    let cmd = obelisk::runtime::build_pty_command(
+        Runtime::Copilot,
+        "my-model",
+        "sys",
+        "usr",
+    );
+    let argv = cmd.get_argv();
+    let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
+    assert!(args_str.contains(&"--model".to_string()));
+    assert!(args_str.contains(&"my-model".to_string()));
+}
+
+#[test]
+fn build_pty_command_codex_has_bypass_flag() {
+    let cmd = obelisk::runtime::build_pty_command(
+        Runtime::Codex,
+        "m",
+        "s",
+        "u",
+    );
+    let argv = cmd.get_argv();
+    let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
+    assert!(args_str.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Types — additional edge cases
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn bead_task_deserializes_empty_labels() {
+    let json = r#"{"id":"t-1","title":"Test","status":"open","labels":[]}"#;
+    let task: BeadTask = serde_json::from_str(json).unwrap();
+    assert_eq!(task.labels.as_ref().unwrap().len(), 0);
+}
+
+#[test]
+fn bead_task_deserializes_null_optional_fields() {
+    let json = r#"{"id":"t-1","title":"Test","status":"open","priority":null,"issue_type":null}"#;
+    let task: BeadTask = serde_json::from_str(json).unwrap();
+    assert!(task.priority.is_none());
+    assert!(task.issue_type.is_none());
+}
+
+#[test]
+fn dep_node_deserializes_with_all_optional_fields() {
+    let json = r#"{
+        "id":"d-1","title":"Node","status":"open",
+        "priority":0,"issue_type":"epic",
+        "depth":3,"parent_id":"d-0","truncated":false
+    }"#;
+    let node: DepNode = serde_json::from_str(json).unwrap();
+    assert_eq!(node.priority, Some(0));
+    assert_eq!(node.issue_type.as_deref(), Some("epic"));
+    assert_eq!(node.depth, 3);
+}
+
+#[test]
+fn diff_data_preserves_line_order() {
+    let diff = DiffData {
+        lines: vec!["first".into(), "second".into(), "third".into()],
+        files_changed: 1,
+        insertions: 2,
+        deletions: 1,
+        changed_files: vec!["file.rs".into()],
+    };
+    assert_eq!(diff.lines[0], "first");
+    assert_eq!(diff.lines[2], "third");
+}
+
+#[test]
+fn session_record_with_multiple_agents() {
+    let record = SessionRecord {
+        session_id: "s-multi".into(),
+        started_at: "2026-03-12T10:00:00Z".into(),
+        ended_at: "2026-03-12T12:00:00Z".into(),
+        total_completed: 5,
+        total_failed: 2,
+        agents: vec![
+            SessionAgent {
+                task_id: "t-1".into(),
+                runtime: "CLAUDE".into(),
+                model: "claude-sonnet-4-6".into(),
+                elapsed_secs: 120,
+                status: "Completed".into(),
+            },
+            SessionAgent {
+                task_id: "t-2".into(),
+                runtime: "CODEX".into(),
+                model: "gpt-5.4".into(),
+                elapsed_secs: 300,
+                status: "Failed".into(),
+            },
+            SessionAgent {
+                task_id: "t-3".into(),
+                runtime: "COPILOT".into(),
+                model: "gpt-5".into(),
+                elapsed_secs: 45,
+                status: "Completed".into(),
+            },
+        ],
+    };
+    let json = serde_json::to_string(&record).unwrap();
+    let restored: SessionRecord = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.agents.len(), 3);
+    assert_eq!(restored.agents[1].runtime, "CODEX");
+    assert_eq!(restored.agents[2].elapsed_secs, 45);
+}
+
+#[test]
+fn runtime_all_models_are_valid_strings() {
+    for rt in [Runtime::ClaudeCode, Runtime::Codex, Runtime::Copilot] {
+        for model in rt.models() {
+            assert!(!model.is_empty(), "{} has an empty model", rt.name());
+            // Models should not contain whitespace
+            assert!(!model.contains(' '), "{} model '{}' contains space", rt.name(), model);
+        }
+    }
+}
+
+#[test]
+fn agent_status_filter_round_trips_all_variants() {
+    let mut filter = AgentStatusFilter::All;
+    let mut labels = vec![filter.label().to_string()];
+    for _ in 0..5 {
+        filter = filter.next();
+        labels.push(filter.label().to_string());
+    }
+    // After 5 steps (All→Running→Failed→Completed→Starting→All), should be back
+    assert_eq!(filter, AgentStatusFilter::All);
+    // First 5 labels should all be unique (the 6th duplicates the 1st)
+    let unique: std::collections::HashSet<_> = labels[..5].iter().collect();
+    assert_eq!(unique.len(), 5, "all filter labels should be unique");
 }
