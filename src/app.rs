@@ -1,18 +1,37 @@
 use crate::templates;
 use crate::types::*;
 use ratatui::widgets::ListState;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 // All valid issue types for cycling the type filter
 const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
+
+// ── Token parsing regexes ──
+static RE_INPUT_TOKENS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)input[_ ]tokens?[:\s]+([0-9][0-9,]*)").unwrap()
+});
+static RE_OUTPUT_TOKENS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)output[_ ]tokens?[:\s]+([0-9][0-9,]*)").unwrap()
+});
+
+fn parse_token_count(s: &str) -> u64 {
+    s.replace(',', "").parse::<u64>().unwrap_or(0)
+}
 
 fn default_model_pricing() -> HashMap<String, ModelPricing> {
     let mut m = HashMap::new();
     m.insert("claude-sonnet-4-6".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 15.0 });
     m.insert("claude-opus-4-6".into(), ModelPricing { input_per_mtok: 15.0, output_per_mtok: 75.0 });
-    m.insert("claude-haiku-4-5-20251001".into(), ModelPricing { input_per_mtok: 0.8, output_per_mtok: 4.0 });
+    m.insert("claude-haiku-4-5-20251001".into(), ModelPricing { input_per_mtok: 0.80, output_per_mtok: 4.0 });
+    m.insert("claude-sonnet-4".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 15.0 });
+    m.insert("gpt-5.4".into(), ModelPricing { input_per_mtok: 10.0, output_per_mtok: 30.0 });
+    m.insert("gpt-5.3-codex".into(), ModelPricing { input_per_mtok: 6.0, output_per_mtok: 18.0 });
+    m.insert("gpt-5.3-codex-spark".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 9.0 });
+    m.insert("gpt-5".into(), ModelPricing { input_per_mtok: 10.0, output_per_mtok: 30.0 });
     m
 }
 
@@ -530,6 +549,9 @@ impl App {
                     AgentStatus::Completed => "Completed".to_string(),
                     AgentStatus::Failed => "Failed".to_string(),
                 },
+                input_tokens: a.input_tokens,
+                output_tokens: a.output_tokens,
+                estimated_cost_usd: a.estimated_cost_usd,
             })
             .collect();
 
@@ -1683,8 +1705,21 @@ impl App {
                         agent.phase = detected;
                     }
                 }
+                // Token usage parsing
+                if let Some(caps) = RE_INPUT_TOKENS.captures(text) {
+                    if let Some(m) = caps.get(1) {
+                        agent.input_tokens = parse_token_count(m.as_str());
+                    }
+                }
+                if let Some(caps) = RE_OUTPUT_TOKENS.captures(text) {
+                    if let Some(m) = caps.get(1) {
+                        agent.output_tokens = parse_token_count(m.as_str());
+                    }
+                }
             }
         }
+        // Recalculate cost for this agent after potential token update
+        self.recalculate_agent_cost(agent_id);
         // Also count for throughput tracking (approximate: count newlines)
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
         self.lines_this_tick = self.lines_this_tick.saturating_add(newlines.max(1));

@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::{self, App};
 use crate::types::*;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -1207,6 +1207,21 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             Span::styled(" RATE    ", Style::default().fg(MUTED)),
             Span::styled(format!(" {:.1}/s", lines_per_sec), Style::default().fg(ACCENT)),
         ]),
+        Line::from(vec![
+            Span::styled(" TOK IN  ", Style::default().fg(MUTED)),
+            Span::styled(format!(" {}", app::format_tokens(agent.input_tokens)), Style::default().fg(INFO)),
+        ]),
+        Line::from(vec![
+            Span::styled(" TOK OUT ", Style::default().fg(MUTED)),
+            Span::styled(format!(" {}", app::format_tokens(agent.output_tokens)), Style::default().fg(INFO)),
+        ]),
+        Line::from(vec![
+            Span::styled(" COST    ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!(" {}", app::format_cost(agent.estimated_cost_usd)),
+                Style::default().fg(if agent.estimated_cost_usd > 1.0 { WARN } else { ACCENT }),
+            ),
+        ]),
         Line::from(""),
         Line::from(Span::styled(
             hex_row,
@@ -1387,7 +1402,7 @@ fn render_event_log(f: &mut Frame, area: Rect, app: &App) {
 
 
 fn render_history(f: &mut Frame, area: Rect, app: &App) {
-    let (total_sessions, all_completed, all_failed, avg_duration, _all_time_cost) = app.aggregate_stats();
+    let (total_sessions, all_completed, all_failed, avg_duration, all_time_cost) = app.aggregate_stats();
     let all_time_total = all_completed + all_failed;
     let success_rate = if all_time_total > 0 {
         all_completed as f64 / all_time_total as f64 * 100.0
@@ -1398,7 +1413,7 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
     let v_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7), // Aggregate stats panel
+            Constraint::Length(8), // Aggregate stats panel
             Constraint::Min(5),    // Session list
         ])
         .split(area);
@@ -1452,6 +1467,13 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(
                 App::format_elapsed(avg_duration as u64).to_string(),
                 Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  TOTAL COST      ", Style::default().fg(MUTED)),
+            Span::styled(
+                app::format_cost(all_time_cost),
+                Style::default().fg(if all_time_cost > 10.0 { WARN } else { ACCENT }).add_modifier(Modifier::BOLD),
             ),
         ]),
     ];
@@ -1509,6 +1531,7 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(format!("fail:{:>3} ", session.total_failed), Style::default().fg(if session.total_failed > 0 { DANGER } else { MUTED })),
                 Span::styled(format!("{:>5.1}%", rate), Style::default().fg(rate_color).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("  {:>3} agents", session.agents.len()), Style::default().fg(MUTED)),
+                Span::styled(format!("  {}", app::format_cost(session.total_cost_usd)), Style::default().fg(if session.total_cost_usd > 1.0 { WARN } else { ACCENT })),
             ]))
         })
         .collect();
@@ -1761,6 +1784,20 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(MUTED)
             },
+        ),
+        Span::styled("  │  ", Style::default().fg(MUTED)),
+        Span::styled("TOKENS: ", Style::default().fg(MUTED)),
+        Span::styled(
+            {
+                let (inp, out) = app.session_total_tokens();
+                format!("{}↑ {}↓", app::format_tokens(inp), app::format_tokens(out))
+            },
+            Style::default().fg(INFO),
+        ),
+        Span::styled("  COST: ", Style::default().fg(MUTED)),
+        Span::styled(
+            app::format_cost(app.session_total_cost()),
+            Style::default().fg(if app.session_total_cost() > 1.0 { WARN } else { ACCENT }),
         ),
     ]);
 
