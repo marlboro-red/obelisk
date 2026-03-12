@@ -512,18 +512,15 @@ impl App {
             cost_threshold: Some(5.0),
             agent_timeout_secs: 1800,
             timeout_warned_ids: HashSet::new(),
-<<<<<<< HEAD
             layout_areas: LayoutAreas::default(),
             mouse_enabled: true,
             jump_active: false,
             jump_query: String::new(),
             velocity_window_size,
-=======
             worktree_entries: Vec::new(),
             worktree_list_state: ListState::default(),
             worktree_sort_mode: WorktreeSortMode::Age,
             worktree_last_scan_frame: 0,
->>>>>>> obelisk-29j
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {

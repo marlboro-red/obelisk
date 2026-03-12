@@ -909,6 +909,7 @@ fn handle_mouse(
                         }
                     }
                 }
+                View::WorktreeOverview => { app.navigate_up(); }
             }
         }
 
@@ -958,6 +959,7 @@ fn handle_mouse(
                         }
                     }
                 }
+                View::WorktreeOverview => { app.navigate_down(); }
             }
         }
 

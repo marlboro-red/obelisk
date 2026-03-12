@@ -2535,20 +2535,18 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("g", "Pin/unpin agent to focused pane"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
     lines.push(Line::from(""));
-<<<<<<< HEAD
-    // ── Mouse ──
-    lines.push(section_header("MOUSE"));
-    lines.push(key_line("Click", "Select items in lists, switch tabs, focus panes"));
-    lines.push(key_line("Scroll", "Navigate lists and scroll output"));
-    lines.push(key_line("M", "Toggle mouse support on/off (Dashboard)"));
-=======
     // ── Worktree Overview ──
     lines.push(section_header("WORKTREE OVERVIEW"));
     lines.push(key_line("↑↓ / j/k", "Navigate worktree list"));
     lines.push(key_line("f", "Cycle sort mode (age/status)"));
     lines.push(key_line("w", "Open worktree overview (from Dashboard)"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
->>>>>>> obelisk-29j
+    lines.push(Line::from(""));
+    // ── Mouse ──
+    lines.push(section_header("MOUSE"));
+    lines.push(key_line("Click", "Select items in lists, switch tabs, focus panes"));
+    lines.push(key_line("Scroll", "Navigate lists and scroll output"));
+    lines.push(key_line("M", "Toggle mouse support on/off (Dashboard)"));
     lines.push(Line::from(""));
     // ── Global ──
     lines.push(section_header("GLOBAL"));
