@@ -130,6 +130,8 @@ pub fn spawn_agent_pty(
         master: pair.master,
         writer,
         parser,
+        prev_scrollback: 0,
+        cumulative_scrollback: 0,
     };
 
     Ok((handle, reader, child))
