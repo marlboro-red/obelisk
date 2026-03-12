@@ -390,6 +390,26 @@ fn handle_key(
         {
             app.cycle_type_filter();
         }
+        KeyCode::Char('x')
+            if app.active_view == View::Dashboard
+                && app.focus == Focus::AgentList =>
+        {
+            if let Some(msg) = app.dismiss_selected_agent() {
+                app.log(LogCategory::System, msg);
+            }
+        }
+        KeyCode::Char('X')
+            if app.active_view == View::Dashboard
+                && app.focus == Focus::AgentList =>
+        {
+            let count = app.dismiss_all_finished();
+            if count > 0 {
+                app.log(
+                    LogCategory::System,
+                    format!("{} finished agent(s) dismissed", count),
+                );
+            }
+        }
         KeyCode::Left if app.active_view == View::AgentDetail => {
             if let Some(current_id) = app.selected_agent_id {
                 if let Some(i) = app.agents.iter().position(|a| a.id == current_id) {

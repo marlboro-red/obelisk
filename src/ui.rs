@@ -1188,6 +1188,8 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("Tab", "focus"),
             ("j/k", "nav"),
             ("Enter", "detail"),
+            ("x", "dismiss"),
+            ("X", "dismiss all"),
             ("+/-", "slots"),
             ("1-3", "view"),
             ("?", "help"),
@@ -1301,6 +1303,8 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));
     lines.push(key_line("↑↓ / j/k", "Navigate list  (detail panel updates)"));
     lines.push(key_line("Enter", "Open Agent Detail for selected"));
+    lines.push(key_line("x", "Dismiss selected finished agent (focus: Agents)"));
+    lines.push(key_line("X", "Dismiss ALL finished agents (focus: Agents)"));
     lines.push(key_line("+/-", "Increase/decrease max concurrent slots"));
     lines.push(key_line("1-3", "Switch view"));
     lines.push(key_line("q", "Quit"));
