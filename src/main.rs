@@ -481,6 +481,16 @@ fn handle_key(
                 ),
             );
         }
+        KeyCode::Char('z') if app.active_view == View::Dashboard => {
+            app.auto_exit_on_completion = !app.auto_exit_on_completion;
+            app.log(
+                LogCategory::System,
+                format!(
+                    "Auto-exit on completion {}",
+                    if app.auto_exit_on_completion { "ENABLED" } else { "DISABLED" }
+                ),
+            );
+        }
         // Sort mode cycling — 'f' on Dashboard with ReadyQueue focus
         KeyCode::Char('f')
             if app.active_view == View::Dashboard && app.focus == Focus::ReadyQueue =>
