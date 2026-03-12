@@ -1143,11 +1143,15 @@ impl App {
             return None;
         }
         // Respect filters — only auto-spawn from the visible filtered set.
-        // The filtered set is already sorted by priority (highest first).
-        if self.filtered_tasks().is_empty() {
-            return None;
-        }
-        self.task_list_state.select(Some(0));
+        // Always pick the highest-priority task (lowest priority number)
+        // regardless of the current UI sort mode.
+        let filtered = self.filtered_tasks();
+        let best_idx = filtered
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, t)| t.priority.unwrap_or(3))
+            .map(|(i, _)| i)?;
+        self.task_list_state.select(Some(best_idx));
         self.get_spawn_info()
     }
 
