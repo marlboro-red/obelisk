@@ -334,6 +334,7 @@ pub struct App {
     pub worktree_entries: Vec<WorktreeEntry>,
     pub worktree_list_state: ListState,
     pub worktree_sort_mode: WorktreeSortMode,
+    /// Frame count at which the last worktree scan was triggered
     pub worktree_last_scan_frame: u64,
 }
 
@@ -1668,6 +1669,33 @@ impl App {
                     a.worktree_path.clone()
                 }
             })
+    }
+
+    /// Returns context-appropriate text for the 'y' (yank) keybinding:
+    /// - Ready queue: issue ID
+    /// - Agent list: "AGENT-NN issue-id"
+    /// - Agent detail: worktree path
+    pub fn yank_text(&self) -> Option<String> {
+        match self.active_view {
+            View::Dashboard => match self.focus {
+                Focus::ReadyQueue => {
+                    self.selected_task().map(|t| t.id.clone())
+                }
+                Focus::AgentList => {
+                    let filtered = self.filtered_agents();
+                    self.agent_list_state
+                        .selected()
+                        .and_then(|i| filtered.get(i))
+                        .map(|(_, agent)| {
+                            format!("AGENT-{:02} {}", agent.unit_number, agent.task.id)
+                        })
+                }
+            },
+            View::AgentDetail => {
+                self.selected_agent_worktree()
+            }
+            _ => None,
+        }
     }
 
     pub fn selected_model(&self) -> &'static str {
