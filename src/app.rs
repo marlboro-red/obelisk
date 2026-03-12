@@ -324,6 +324,10 @@ pub struct App {
 
     /// Whether mouse support is enabled (toggle with 'M' on dashboard)
     pub mouse_enabled: bool,
+
+    // Jump-to-issue mode
+    pub jump_active: bool,
+    pub jump_query: String,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -496,6 +500,8 @@ impl App {
             timeout_warned_ids: HashSet::new(),
             layout_areas: LayoutAreas::default(),
             mouse_enabled: true,
+            jump_active: false,
+            jump_query: String::new(),
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
@@ -1683,6 +1689,95 @@ impl App {
         } else {
             self.search_current_idx -= 1;
         }
+    }
+
+    // ── Jump-to-issue helpers ──
+
+    /// Collect matches for the current jump query across ready queue and agents.
+    /// Returns vec of (label, is_agent) where label is the issue ID.
+    pub fn jump_matches(&self) -> Vec<(String, bool)> {
+        if self.jump_query.is_empty() {
+            return Vec::new();
+        }
+        let q = self.jump_query.to_lowercase();
+        let mut results = Vec::new();
+
+        // Search ready queue
+        for task in &self.ready_tasks {
+            if task.id.to_lowercase().contains(&q) {
+                results.push((task.id.clone(), false));
+            }
+        }
+
+        // Search agents (by task ID)
+        for agent in &self.agents {
+            if agent.task.id.to_lowercase().contains(&q) {
+                // Avoid duplicates if same ID appears in both
+                let id = agent.task.id.clone();
+                if !results.iter().any(|(existing, is_agent)| existing == &id && *is_agent) {
+                    results.push((id, true));
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Execute jump: find the best match and navigate to it.
+    /// Returns true if a match was found.
+    pub fn jump_execute(&mut self) -> bool {
+        let q = self.jump_query.to_lowercase();
+        if q.is_empty() {
+            return false;
+        }
+
+        // First, try ready queue (filtered view)
+        let filtered = self.filtered_tasks();
+        for (i, task) in filtered.iter().enumerate() {
+            if task.id.to_lowercase().contains(&q) {
+                self.active_view = View::Dashboard;
+                self.focus = Focus::ReadyQueue;
+                self.task_list_state.select(Some(i));
+                return true;
+            }
+        }
+
+        // Then, try agents (filtered view)
+        let agents = self.filtered_agents();
+        for (i, (_, agent)) in agents.iter().enumerate() {
+            if agent.task.id.to_lowercase().contains(&q) {
+                self.active_view = View::Dashboard;
+                self.focus = Focus::AgentList;
+                self.agent_list_state.select(Some(i));
+                return true;
+            }
+        }
+
+        // Try unfiltered ready queue as fallback
+        for (i, task) in self.ready_tasks.iter().enumerate() {
+            if task.id.to_lowercase().contains(&q) {
+                // Clear filters so the item is visible, then select
+                self.type_filter.clear();
+                self.priority_filter = None;
+                self.active_view = View::Dashboard;
+                self.focus = Focus::ReadyQueue;
+                self.task_list_state.select(Some(i));
+                return true;
+            }
+        }
+
+        // Try unfiltered agents as fallback
+        for (i, agent) in self.agents.iter().enumerate() {
+            if agent.task.id.to_lowercase().contains(&q) {
+                self.agent_status_filter = AgentStatusFilter::All;
+                self.active_view = View::Dashboard;
+                self.focus = Focus::AgentList;
+                self.agent_list_state.select(Some(i));
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Store PTY handle for an agent (called when AgentPtyReady arrives).

@@ -326,6 +326,35 @@ fn handle_key(
         return;
     }
 
+    // ── Jump-to-issue mode: intercept keys when jump bar is active ──
+    if app.jump_active {
+        match key.code {
+            KeyCode::Esc => {
+                app.jump_active = false;
+                app.jump_query.clear();
+            }
+            KeyCode::Enter => {
+                let found = app.jump_execute();
+                app.jump_active = false;
+                if !found && !app.jump_query.is_empty() {
+                    app.log(
+                        crate::types::LogCategory::System,
+                        format!("No issue matching \"{}\"", app.jump_query),
+                    );
+                }
+                app.jump_query.clear();
+            }
+            KeyCode::Backspace => {
+                app.jump_query.pop();
+            }
+            KeyCode::Char(c) => {
+                app.jump_query.push(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') => {
             if app.active_view == View::AgentDetail || app.active_view == View::SplitPane {
@@ -426,6 +455,10 @@ fn handle_key(
                 app.search_current_idx = 0;
                 app.update_search_matches();
             }
+        }
+        KeyCode::Char('/') if app.active_view == View::Dashboard => {
+            app.jump_active = true;
+            app.jump_query.clear();
         }
         KeyCode::Char('k') if app.active_view == View::AgentDetail => {
             if let Some(agent_id) = app.selected_agent_id {
