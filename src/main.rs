@@ -1,5 +1,7 @@
 mod app;
+mod notify;
 mod runtime;
+mod templates;
 mod types;
 mod ui;
 
@@ -489,6 +491,16 @@ fn handle_key(
                 format!(
                     "Auto-exit on completion {}",
                     if app.auto_exit_on_completion { "ENABLED" } else { "DISABLED" }
+                ),
+            );
+        }
+        KeyCode::Char('n') if !app.search_active => {
+            app.notifications_enabled = !app.notifications_enabled;
+            app.log(
+                LogCategory::System,
+                format!(
+                    "Notifications {}",
+                    if app.notifications_enabled { "ENABLED" } else { "DISABLED" }
                 ),
             );
         }

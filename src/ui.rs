@@ -957,6 +957,13 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
+        Line::from(vec![
+            Span::styled(" TMPL    ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!(" {}", agent.template_name),
+                Style::default().fg(SECONDARY),
+            ),
+        ]),
     ];
     if let Some(wl) = worktree_line {
         lines.push(wl);
@@ -1522,6 +1529,16 @@ fn render_info_bar(f: &mut Frame, area: Rect, app: &App) {
                 WARN
             }),
         ),
+        Span::styled("  │  ", Style::default().fg(MUTED)),
+        Span::styled("NOTIFY: ", Style::default().fg(MUTED)),
+        Span::styled(
+            if app.notifications_enabled { "ON" } else { "OFF" },
+            if app.notifications_enabled {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            },
+        ),
     ]);
 
     let block = Block::default()
@@ -1560,6 +1577,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("r", "runtime"),
                 ("m", "model"),
                 ("a", "auto"),
+                ("n", "notify"),
                 ("f", "sort"),
                 ("F", "filter"),
                 ("Tab", "focus"),
@@ -1696,6 +1714,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("r", "Cycle runtime (Claude/Codex/Copilot)"));
     lines.push(key_line("m", "Cycle model for current runtime"));
     lines.push(key_line("a", "Toggle auto-spawn mode"));
+    lines.push(key_line("n", "Toggle desktop notifications on/off"));
     lines.push(key_line("c", "Scan and clean up orphaned worktrees"));
     lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
     lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));

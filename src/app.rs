@@ -1,177 +1,21 @@
+use crate::templates;
 use crate::types::*;
 use ratatui::widgets::ListState;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 
 // All valid issue types for cycling the type filter
 const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
 
-const AGENT_PROMPT_TEMPLATE: &str = r#"# Beads Agent Prompt — Worktree Workflow
+fn default_model_pricing() -> HashMap<String, ModelPricing> {
+    let mut m = HashMap::new();
+    m.insert("claude-sonnet-4-6".into(), ModelPricing { input_per_mtok: 3.0, output_per_mtok: 15.0 });
+    m.insert("claude-opus-4-6".into(), ModelPricing { input_per_mtok: 15.0, output_per_mtok: 75.0 });
+    m.insert("claude-haiku-4-5-20251001".into(), ModelPricing { input_per_mtok: 0.8, output_per_mtok: 4.0 });
+    m
+}
 
-You are an autonomous coding agent. You will be given a beads issue ID to work on.
-Your workflow is: **claim → worktree → implement → verify → merge → close**.
-
-Every `bd` command MUST use the `--json` flag for structured output.
-
-**CRITICAL: NEVER make code changes directly on the default branch (main/master).
-ALL implementation work MUST happen in a worktree. The only changes on the default
-branch should be the merge commit from Phase 5.**
-
----
-
-## Phase 0: Detect Project Conventions
-
-Before starting, determine the default branch and how to run tests/lint:
-
-```bash
-# Detect default branch (master or main)
-DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-if [ -z "$DEFAULT_BRANCH" ]; then
-  DEFAULT_BRANCH=$(git branch -l main master --format '%(refname:short)' | head -1)
-fi
-
-# Detect test/lint commands by inspecting project files
-# Look at: Makefile, package.json, Cargo.toml, pyproject.toml, .github/workflows, etc.
-# Use whatever the project already uses — do NOT guess.
-```
-
-Use `$DEFAULT_BRANCH` everywhere below instead of hardcoding a branch name.
-
----
-
-## Phase 1: Claim the Issue
-
-```bash
-git checkout $DEFAULT_BRANCH
-git pull --rebase
-
-# Read the issue — understand scope, acceptance criteria, dependencies
-bd show {id} --json
-
-# Claim it (sets status to in_progress and assigns to you)
-bd update {id} --claim --json
-
-# Commit the beads state change before creating worktree
-git add .beads/
-git commit -m "claim {id}"
-```
-
-If the issue has unresolved blockers (`blocked_by` in the output), STOP and report
-back — do not proceed on a blocked issue.
-
----
-
-## Phase 2: Create a Git Worktree
-
-Work in an isolated worktree so the default branch stays clean and other agents are unaffected.
-
-```bash
-BRANCH="{id}"
-git worktree add "../worktree-${{BRANCH}}" -b "${{BRANCH}}" "$DEFAULT_BRANCH"
-cd "../worktree-${{BRANCH}}"
-
-# Verify bd can see the issue from the worktree
-bd show {id} --json
-```
-
-If `bd show` fails to find the database, set up a redirect to the main repo's `.beads`:
-
-```bash
-mkdir -p .beads
-echo "../../$(basename $(pwd -P | xargs dirname))/.beads" > .beads/redirect
-```
-
----
-
-## Phase 3: Implement
-
-1. **Understand before changing.** Read relevant source files, tests, and docs first.
-2. **Make focused commits.** Include the issue ID in every commit message:
-   ```
-   git commit -m "<description> ({id})"
-   ```
-3. **Discover new work.** If you find bugs or follow-ups, file them:
-   ```bash
-   bd create "Description" -t bug -p 2 --deps discovered-from:{id} --json
-   ```
-4. **Update progress notes.** Record context for future agents:
-   ```bash
-   bd update {id} --notes "COMPLETED: <what>. IN PROGRESS: <what>. DECISIONS: <why>." --json
-   ```
-5. **Do NOT use `bd edit`** — it opens an interactive editor which agents cannot use.
-
----
-
-## Phase 4: Verify Against the Issue
-
-Re-read the issue and confirm every detail has been addressed:
-
-```bash
-bd show {id} --json
-```
-
-Walk through the issue's description, acceptance criteria, and any linked context.
-For each requirement, verify the corresponding change exists in your commits:
-
-```bash
-git log --oneline $DEFAULT_BRANCH..HEAD
-git diff $DEFAULT_BRANCH --stat
-```
-
-If anything is missing or only partially implemented, go back to Phase 3.
-Do NOT proceed to merge until the issue is fully addressed — not "mostly done."
-
----
-
-## Phase 5: Merge
-
-```bash
-cd -   # back to main repo
-git checkout $DEFAULT_BRANCH
-git pull --rebase
-
-# Merge the feature branch
-git merge "{id}" --no-ff -m "Merge {id}: <short summary>"
-
-# For .beads/*.jsonl merge conflicts:
-#   git checkout --theirs .beads/issues.jsonl && bd import -i .beads/issues.jsonl
-
-# Run the project's test and lint commands (discovered in Phase 0)
-```
-
----
-
-## Phase 6: Close the Issue
-
-```bash
-bd close {id} --reason "Completed: <specific summary of deliverables>" --json
-
-# Commit the beads state change
-git add .beads/
-git commit -m "close {id}"
-```
-
----
-
-## Phase 7: Verify Completion
-
-```bash
-bd show {id} --json   # should show status: closed
-git log --oneline $DEFAULT_BRANCH~3..$DEFAULT_BRANCH   # should show your merge commit
-```
-
----
-
-## Error Recovery
-
-| Problem | Action |
-|---|---|
-| Tests fail after merge | Fix on the default branch, amend merge commit, re-run tests |
-| `.beads/` merge conflicts | `git checkout --theirs .beads/issues.jsonl` then `bd import -i .beads/issues.jsonl` |
-| `bd` can't find database in worktree | Set up `.beads/redirect` per Phase 2 |
-| Issue is blocked | STOP. Report back. Do not work on blocked issues |
-| Already claimed by another agent | Run `bd ready --json` and pick different work |
-"#;
 
 const CONFIG_FILE: &str = "obelisk.toml";
 
@@ -366,7 +210,8 @@ pub struct App {
     /// None = auto-follow (pinned to bottom), Some(n) = manual scroll at line n from top
     pub agent_output_scroll: Option<usize>,
 
-    pub prompt_template: String,
+    /// Directory for per-type prompt templates
+    pub template_dir: PathBuf,
 
     pub frame_count: u64,
     pub wave_offset: f64,
@@ -433,6 +278,27 @@ pub struct App {
     pub diff_scroll: usize,
     /// Frame count at which the last diff poll was triggered
     pub diff_last_poll_frame: u64,
+
+    // Desktop notifications
+    pub notifications_enabled: bool,
+
+    // Split-pane view state
+    /// Agent IDs pinned to each pane slot (up to 4)
+    pub split_pane_agents: [Option<usize>; 4],
+    /// Which pane (0-3) is currently focused
+    pub split_pane_focus: usize,
+    /// Output scroll per pane
+    pub split_pane_scroll: [Option<usize>; 4],
+
+    // Cost tracking
+    pub model_pricing: HashMap<String, ModelPricing>,
+    pub cost_threshold: Option<f64>,
+
+    // Timeout watchdog
+    /// Seconds before a running agent is killed for hanging (0 = disabled)
+    pub agent_timeout_secs: u64,
+    /// Agent IDs that have already received an 80% warning (cleared on kill/complete)
+    pub timeout_warned_ids: HashSet<usize>,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -563,7 +429,7 @@ impl App {
             retry_context_lines: 80,
             selected_agent_id: None,
             agent_output_scroll: None,
-            prompt_template: AGENT_PROMPT_TEMPLATE.to_string(),
+            template_dir: templates::default_template_dir(),
             frame_count: 0,
             wave_offset: 0.0,
             throughput_history: VecDeque::from(vec![0; 60]),
@@ -595,6 +461,14 @@ impl App {
             diff_data: None,
             diff_scroll: 0,
             diff_last_poll_frame: 0,
+            notifications_enabled: true,
+            split_pane_agents: [None; 4],
+            split_pane_focus: 0,
+            split_pane_scroll: [None; 4],
+            model_pricing: default_model_pricing(),
+            cost_threshold: Some(5.0),
+            agent_timeout_secs: 1800,
+            timeout_warned_ids: HashSet::new(),
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
@@ -665,6 +539,7 @@ impl App {
             ended_at: ended_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             total_completed: self.total_completed,
             total_failed: self.total_failed,
+            total_cost_usd: self.session_total_cost(),
             agents,
         };
 
@@ -800,6 +675,24 @@ impl App {
                 format!("INCOMING — {} NEW TASK(S) DETECTED", new_count),
                 self.frame_count + 50, // ~5 seconds
             ));
+            // Notify for new P0/P1 tasks
+            if self.notifications_enabled {
+                let high_prio_ids: Vec<&str> = new_tasks
+                    .iter()
+                    .filter(|t| {
+                        !self.ready_tasks.iter().any(|rt| rt.id == t.id)
+                            && t.priority.unwrap_or(3) <= 1
+                    })
+                    .map(|t| t.id.as_str())
+                    .collect();
+                if !high_prio_ids.is_empty() {
+                    crate::notify::send_notification(
+                        "High-Priority Task Available",
+                        &format!("P0/P1 ready: {}", high_prio_ids.join(", ")),
+                    );
+                    crate::notify::send_bell();
+                }
+            }
         }
         self.ready_tasks = new_tasks;
         self.sort_ready_tasks();
@@ -972,24 +865,32 @@ impl App {
             let unit = agent.unit_number;
             let task_id = agent.task.id.clone();
             let rt = agent.runtime.name().to_string();
+            let elapsed = agent.elapsed_secs;
             if exit_code == Some(0) {
                 agent.status = AgentStatus::Completed;
-                Some((true, unit, task_id, rt))
+                Some((true, unit, task_id, rt, elapsed))
             } else {
                 agent.status = AgentStatus::Failed;
-                Some((false, unit, task_id, rt))
+                Some((false, unit, task_id, rt, elapsed))
             }
         } else {
             None
         };
 
-        if let Some((success, unit, task_id, rt)) = log_info {
+        if let Some((success, unit, task_id, rt, elapsed)) = log_info {
             if success {
                 self.total_completed += 1;
                 self.log(
                     LogCategory::Complete,
                     format!("AGENT-{:02} completed {} [{}]", unit, task_id, rt),
                 );
+                if self.notifications_enabled {
+                    crate::notify::send_notification(
+                        "Agent Completed",
+                        &format!("AGENT-{:02} \u{00b7} {} \u{00b7} {}s elapsed", unit, task_id, elapsed),
+                    );
+                    crate::notify::send_bell();
+                }
             } else {
                 self.total_failed += 1;
                 self.log(
@@ -999,6 +900,13 @@ impl App {
                         unit, task_id, exit_code
                     ),
                 );
+                if self.notifications_enabled {
+                    crate::notify::send_notification(
+                        "Agent Failed",
+                        &format!("AGENT-{:02} \u{00b7} {} failed [exit: {:?}]", unit, task_id, exit_code),
+                    );
+                    crate::notify::send_bell();
+                }
             }
         }
     }
@@ -1024,10 +932,16 @@ impl App {
         let unit = self.next_unit;
         self.next_unit += 1;
 
-        let system_prompt = self
-            .prompt_template
-            .replace("{id}", &task.id)
-            .replace("{title}", &task.title);
+        let issue_type = task.issue_type.as_deref().unwrap_or("task");
+        let resolved = templates::resolve(&self.template_dir, issue_type);
+        let system_prompt = templates::interpolate(
+            &resolved.content,
+            &task.id,
+            &task.title,
+            task.priority,
+            task.description.as_deref(),
+        );
+        let template_name = resolved.name.clone();
         let user_prompt = format!(
             "Work on beads issue {}. Follow the workflow in the Beads Agent Prompt exactly.",
             task.id
@@ -1052,6 +966,7 @@ impl App {
             completion_detected: false,
             exit_sent_at: None,
             completion_buf: String::new(),
+            template_name: template_name.clone(),
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -1059,11 +974,12 @@ impl App {
         self.log(
             LogCategory::Deploy,
             format!(
-                "AGENT-{:02} deployed on {} [{}/{}]",
+                "AGENT-{:02} deployed on {} [{}/{}] tmpl={}",
                 unit,
                 task.id,
                 runtime.name(),
-                model
+                model,
+                template_name,
             ),
         );
 
@@ -1430,10 +1346,16 @@ impl App {
         self.next_unit += 1;
         let new_retry_count = retry_count + 1;
 
-        let system_prompt = self
-            .prompt_template
-            .replace("{id}", &task.id)
-            .replace("{title}", &task.title);
+        let issue_type = task.issue_type.as_deref().unwrap_or("task");
+        let resolved = templates::resolve(&self.template_dir, issue_type);
+        let system_prompt = templates::interpolate(
+            &resolved.content,
+            &task.id,
+            &task.title,
+            task.priority,
+            task.description.as_deref(),
+        );
+        let template_name = resolved.name.clone();
         let user_prompt = format!(
             "Work on beads issue {}. Follow the workflow in the Beads Agent Prompt exactly.\n\n\
              ---\n\n\
@@ -1464,6 +1386,7 @@ impl App {
             completion_detected: false,
             exit_sent_at: None,
             completion_buf: String::new(),
+            template_name: template_name.clone(),
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -1474,8 +1397,8 @@ impl App {
         self.log(
             LogCategory::Deploy,
             format!(
-                "AGENT-{:02} RETRY #{} on {} [{}/{}]",
-                unit, new_retry_count, task.id, runtime.name(), model
+                "AGENT-{:02} RETRY #{} on {} [{}/{}] tmpl={}",
+                unit, new_retry_count, task.id, runtime.name(), model, template_name,
             ),
         );
 
@@ -1710,7 +1633,8 @@ impl App {
 
         if let Some(state) = self.pty_states.get_mut(&agent_id) {
             use std::io::Write;
-            let _ = state.writer.write_all(b"/exit");
+            let _ = state.writer.write_all(b"/exit
+");
             let _ = state.writer.flush();
         }
     }
@@ -1902,6 +1826,120 @@ impl App {
         let input: u64 = self.agents.iter().map(|a| a.input_tokens).sum();
         let output: u64 = self.agents.iter().map(|a| a.output_tokens).sum();
         (input, output)
+    }
+
+    // ── Split-pane view methods ──
+
+    /// Auto-populate split pane slots with running agents if not manually pinned.
+    pub fn auto_fill_split_panes(&mut self) {
+        let running: Vec<usize> = self
+            .agents
+            .iter()
+            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+            .map(|a| a.id)
+            .collect();
+
+        for slot in 0..4 {
+            if let Some(id) = self.split_pane_agents[slot] {
+                if self.agents.iter().any(|a| a.id == id && a.pinned_to_split == Some(slot)) {
+                    continue;
+                }
+            }
+            let assigned: Vec<Option<usize>> = self.split_pane_agents.to_vec();
+            let candidate = running.iter().find(|&&id| !assigned.contains(&Some(id)));
+            self.split_pane_agents[slot] = candidate.copied();
+        }
+    }
+
+    /// Pin the agent in the focused pane (toggle).
+    pub fn toggle_pin_split_pane(&mut self) {
+        let slot = self.split_pane_focus;
+        if let Some(agent_id) = self.split_pane_agents[slot] {
+            let (unit, was_pinned) = {
+                let agent = match self.agents.iter_mut().find(|a| a.id == agent_id) {
+                    Some(a) => a,
+                    None => return,
+                };
+                let was = agent.pinned_to_split == Some(slot);
+                if was {
+                    agent.pinned_to_split = None;
+                } else {
+                    agent.pinned_to_split = Some(slot);
+                }
+                (agent.unit_number, was)
+            };
+            if was_pinned {
+                self.log(
+                    LogCategory::System,
+                    format!("Unpinned AGENT-{:02} from pane {}", unit, slot + 1),
+                );
+            } else {
+                self.log(
+                    LogCategory::System,
+                    format!("Pinned AGENT-{:02} to pane {}", unit, slot + 1),
+                );
+            }
+        }
+    }
+
+    /// Number of panes to show based on terminal width.
+    pub fn split_pane_count(&self, term_width: u16) -> usize {
+        if term_width < 80 {
+            1
+        } else if term_width < 160 {
+            2
+        } else {
+            4
+        }
+    }
+
+    /// Scroll up in the focused split pane.
+    pub fn split_pane_scroll_up(&mut self) {
+        let slot = self.split_pane_focus;
+        if let Some(agent_id) = self.split_pane_agents[slot] {
+            if let Some(state) = self.pty_states.get(&agent_id) {
+                let total = state.parser.screen().size().0 as usize;
+                match self.split_pane_scroll[slot] {
+                    None => {
+                        if total > 0 {
+                            self.split_pane_scroll[slot] = Some(total.saturating_sub(1));
+                        }
+                    }
+                    Some(pos) => {
+                        if pos > 0 {
+                            self.split_pane_scroll[slot] = Some(pos - 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Scroll down in the focused split pane.
+    pub fn split_pane_scroll_down(&mut self) {
+        let slot = self.split_pane_focus;
+        if let Some(agent_id) = self.split_pane_agents[slot] {
+            if let Some(state) = self.pty_states.get(&agent_id) {
+                let total = state.parser.screen().size().0 as usize;
+                if let Some(pos) = self.split_pane_scroll[slot] {
+                    if pos + 1 >= total {
+                        self.split_pane_scroll[slot] = None;
+                    } else {
+                        self.split_pane_scroll[slot] = Some(pos + 1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Enter AgentDetail for the agent in the focused split pane.
+    pub fn split_pane_enter_detail(&mut self) {
+        let slot = self.split_pane_focus;
+        if let Some(agent_id) = self.split_pane_agents[slot] {
+            self.selected_agent_id = Some(agent_id);
+            self.agent_output_scroll = None;
+            self.active_view = View::AgentDetail;
+        }
     }
 }
 

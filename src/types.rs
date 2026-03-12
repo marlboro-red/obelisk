@@ -224,6 +224,16 @@ pub struct AgentInstance {
     pub exit_sent_at: Option<std::time::Instant>,
     /// Rolling buffer of recent PTY text used for completion pattern matching
     pub completion_buf: String,
+    /// Which template was used (e.g. "bug.md" or "feature.md (built-in)")
+    pub template_name: String,
+    /// Whether this agent is pinned to a split-pane slot
+    pub pinned_to_split: Option<usize>,
+    /// Cumulative input tokens parsed from agent CLI output
+    pub input_tokens: u64,
+    /// Cumulative output tokens parsed from agent CLI output
+    pub output_tokens: u64,
+    /// Estimated cost in USD, computed from tokens x model pricing
+    pub estimated_cost_usd: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -274,7 +284,16 @@ pub struct SessionRecord {
     pub ended_at: String,
     pub total_completed: u32,
     pub total_failed: u32,
+    #[serde(default)]
+    pub total_cost_usd: f64,
     pub agents: Vec<SessionAgent>,
+}
+
+/// Pricing per model: cost in USD per million tokens.
+#[derive(Debug, Clone)]
+pub struct ModelPricing {
+    pub input_per_mtok: f64,
+    pub output_per_mtok: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +302,7 @@ pub enum View {
     AgentDetail,
     EventLog,
     History,
+    SplitPane,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
