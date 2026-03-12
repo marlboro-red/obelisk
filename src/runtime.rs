@@ -110,14 +110,19 @@ pub fn spawn_agent_pty(
     drop(pair.slave);
 
     let reader = pair.master.try_clone_reader()?;
+    #[allow(unused_mut)]
     let mut writer = pair.master.take_writer()?;
 
     // ConPTY on Windows sends ESC[6n (Device Status Report) on startup and
     // buffers child output until it receives a cursor-position response.
     // Send the response immediately so output is never stalled.
-    use std::io::Write;
-    let _ = writer.write_all(b"\x1b[1;1R");
-    let _ = writer.flush();
+    // On macOS/Linux this is unnecessary and the CPR leaks as visible text.
+    #[cfg(target_os = "windows")]
+    {
+        use std::io::Write;
+        let _ = writer.write_all(b"\x1b[1;1R");
+        let _ = writer.flush();
+    }
 
     let parser = vt100::Parser::new(pty_rows, pty_cols, 10000);
 
