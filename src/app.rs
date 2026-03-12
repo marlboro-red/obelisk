@@ -888,6 +888,19 @@ impl App {
             }
         }
 
+        // Periodically flush PTY logs to disk for running agents (~every 30s)
+        if self.frame_count % 300 == 0 {
+            let running_ids: Vec<usize> = self
+                .agents
+                .iter()
+                .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+                .map(|a| a.id)
+                .collect();
+            for id in running_ids {
+                self.persist_agent_pty_log(id);
+            }
+        }
+
     }
 
     pub fn on_poll_failed(&mut self, error: String) {
@@ -1182,6 +1195,11 @@ impl App {
             }
         }
 
+        // Persist final PTY log to disk on completion/failure
+        if log_info.is_some() {
+            self.persist_agent_pty_log(agent_id);
+        }
+
         if let Some((success, unit, task_id, rt, elapsed)) = log_info {
             if success {
                 self.total_completed += 1;
@@ -1275,6 +1293,7 @@ impl App {
             template_name: template_name.clone(),
             total_lines: 0,
             raw_pty_log: Vec::new(),
+            pty_log_flushed_bytes: 0,
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -1777,6 +1796,7 @@ impl App {
             template_name: template_name.clone(),
             total_lines: 0,
             raw_pty_log: Vec::new(),
+            pty_log_flushed_bytes: 0,
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -2583,6 +2603,71 @@ impl App {
         }
     }
 
+    /// Persist raw PTY log bytes to disk for the given agent.
+    /// On the first call, creates the file with a metadata header.
+    /// On subsequent calls, appends only the new bytes since the last flush.
+    /// Called automatically on agent completion/failure and periodically during long runs.
+    pub fn persist_agent_pty_log(&mut self, agent_id: usize) {
+        let agent = match self.agents.iter().find(|a| a.id == agent_id) {
+            Some(a) => a,
+            None => return,
+        };
+
+        let new_bytes = agent.raw_pty_log.len();
+        let flushed = agent.pty_log_flushed_bytes;
+        if new_bytes <= flushed {
+            return; // nothing new to write
+        }
+
+        let logs_dir = PathBuf::from(".obelisk").join("logs");
+        if let Err(e) = std::fs::create_dir_all(&logs_dir) {
+            tracing::warn!("Failed to create PTY log dir: {}", e);
+            return;
+        }
+
+        let filename = format!("agent-{:02}-{}.log", agent.unit_number, agent.task.id);
+        let path = logs_dir.join(&filename);
+
+        use std::io::Write;
+
+        if flushed == 0 {
+            // First flush — write header then all bytes so far
+            let mut file = match std::fs::File::create(&path) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("Failed to create PTY log file {}: {}", path.display(), e);
+                    return;
+                }
+            };
+            let header = format!(
+                "=== Obelisk PTY Log ===\nAgent: AGENT-{:02}\nTask: {} ({})\nRuntime: {}\nModel: {}\nStarted: {}\n\n",
+                agent.unit_number,
+                agent.task.id,
+                agent.task.title,
+                agent.runtime.name(),
+                agent.model,
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            );
+            let _ = file.write_all(header.as_bytes());
+            let _ = file.write_all(&agent.raw_pty_log[..new_bytes]);
+        } else {
+            // Append only new bytes
+            let mut file = match std::fs::OpenOptions::new().append(true).open(&path) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("Failed to append to PTY log file {}: {}", path.display(), e);
+                    return;
+                }
+            };
+            let _ = file.write_all(&agent.raw_pty_log[flushed..new_bytes]);
+        }
+
+        // Update flushed byte count (need mutable borrow)
+        if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
+            agent.pty_log_flushed_bytes = new_bytes;
+        }
+    }
+
     /// Export the selected agent's log to a file.
     /// Writes both raw PTY output and parsed screen content.
     /// Returns the path on success or an error message on failure.
@@ -2774,6 +2859,7 @@ mod tests {
             estimated_cost_usd: 0.0,
             total_lines: 0,
             raw_pty_log: Vec::new(),
+            pty_log_flushed_bytes: 0,
         }
     }
 
