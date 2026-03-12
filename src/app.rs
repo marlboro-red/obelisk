@@ -260,6 +260,46 @@ pub struct App {
     // Loaded history sessions (from .beads/obelisk_sessions.jsonl)
     pub history_sessions: Vec<SessionRecord>,
     pub history_scroll: usize,
+
+    // Search state (in AgentDetail observe mode)
+    pub search_active: bool,
+    pub search_query: String,
+    pub search_matches: Vec<(usize, usize)>, // (screen_row, screen_col)
+    pub search_current_idx: usize,
+}
+
+fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let query_lower = query.to_lowercase();
+    let (rows, cols) = screen.size();
+    let mut matches = Vec::new();
+
+    for row in 0..rows as usize {
+        let row_text: String = (0..cols)
+            .map(|col| {
+                screen
+                    .cell(row as u16, col)
+                    .and_then(|c| c.contents().chars().next())
+                    .unwrap_or(' ')
+            })
+            .collect();
+
+        let row_lower = row_text.to_lowercase();
+        let mut byte_start = 0usize;
+        while byte_start < row_lower.len() {
+            if let Some(byte_idx) = row_lower[byte_start..].find(&query_lower) {
+                let abs_byte = byte_start + byte_idx;
+                let char_col = row_lower[..abs_byte].chars().count();
+                matches.push((row, char_col));
+                byte_start = abs_byte + 1;
+            } else {
+                break;
+            }
+        }
+    }
+    matches
 }
 
 impl App {
@@ -322,6 +362,10 @@ impl App {
             session_started_at: chrono::Local::now(),
             history_sessions,
             history_scroll: 0,
+            search_active: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_current_idx: 0,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         app.log(LogCategory::System, "System online".into());
@@ -1178,6 +1222,44 @@ impl App {
         let models = self.selected_runtime.models();
         let idx = self.model_indices.entry(self.selected_runtime).or_insert(0);
         *idx = (*idx + 1) % models.len();
+    }
+
+    /// Recompute search matches for the selected agent's PTY screen.
+    pub fn update_search_matches(&mut self) {
+        let agent_id = match self.selected_agent_id {
+            Some(id) => id,
+            None => {
+                self.search_matches.clear();
+                return;
+            }
+        };
+        let matches = if let Some(state) = self.pty_states.get(&agent_id) {
+            compute_search_matches(state.parser.screen(), &self.search_query)
+        } else {
+            Vec::new()
+        };
+        self.search_matches = matches;
+        if !self.search_matches.is_empty() && self.search_current_idx >= self.search_matches.len() {
+            self.search_current_idx = 0;
+        }
+    }
+
+    pub fn search_next(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        self.search_current_idx = (self.search_current_idx + 1) % self.search_matches.len();
+    }
+
+    pub fn search_prev(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        if self.search_current_idx == 0 {
+            self.search_current_idx = self.search_matches.len() - 1;
+        } else {
+            self.search_current_idx -= 1;
+        }
     }
 
     /// Store PTY handle for an agent (called when AgentPtyReady arrives).

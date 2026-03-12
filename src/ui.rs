@@ -728,7 +728,14 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
         // ── PTY mode: render full terminal emulation ──
         let inner = output_block.inner(output_chunks[0]);
         f.render_widget(output_block, output_chunks[0]);
-        render_vt100_screen(f, pty_state.parser.screen(), inner);
+        if app.search_active && inner.height > 1 {
+            let vt100_area = Rect { height: inner.height - 1, ..inner };
+            let search_bar_area = Rect { y: inner.y + inner.height - 1, height: 1, ..inner };
+            render_vt100_screen(f, pty_state.parser.screen(), vt100_area, app);
+            render_search_bar(f, search_bar_area, app);
+        } else {
+            render_vt100_screen(f, pty_state.parser.screen(), inner, app);
+        }
     } else {
         // ── Legacy fallback: line-based output ──
         let inner = output_block.inner(output_chunks[0]);
@@ -1366,6 +1373,12 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("Ctrl+]", "detach"),
                 ("", "— all other keys forwarded to agent PTY —"),
             ]
+        } else if app.search_active {
+            vec![
+                ("type", "search query"),
+                ("n/N", "next/prev match"),
+                ("Esc", "close search"),
+            ]
         } else {
             vec![
                 ("i", "interact"),
@@ -1374,6 +1387,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("PgUp/Dn", "page"),
                 ("Home/End", "top/bottom"),
                 ("←→", "prev/next"),
+                ("/", "search"),
                 ("Esc", "back"),
                 ("k", "kill"),
                 ("1-4", "view"),
@@ -1493,6 +1507,9 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("PgUp/PgDn", "Scroll output by page"));
     lines.push(key_line("Home/End", "Jump to top / re-engage auto-follow"));
     lines.push(key_line("←/→", "Previous / next agent"));
+    lines.push(key_line("/", "Open search bar (searches visible PTY output)"));
+    lines.push(key_line("n / N", "Next / previous search match"));
+    lines.push(key_line("Esc (search)", "Close search bar"));
     lines.push(key_line("k", "Kill (SIGTERM) current agent + clean up worktree"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
     lines.push(Line::from(""));
@@ -1610,18 +1627,88 @@ fn render_poll_error_banner(f: &mut Frame, area: Rect, app: &App) {
 }
 
 // ══════════════════════════════════════════════════════════
+//  SEARCH BAR
+// ══════════════════════════════════════════════════════════
+
+fn render_search_bar(f: &mut Frame, area: Rect, app: &App) {
+    let match_info = if app.search_query.is_empty() {
+        String::new()
+    } else if app.search_matches.is_empty() {
+        " [no matches]".to_string()
+    } else {
+        format!(
+            " [{}/{}]  n/N: next/prev",
+            app.search_current_idx + 1,
+            app.search_matches.len()
+        )
+    };
+
+    let line = Line::from(vec![
+        Span::styled(
+            " / ",
+            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            app.search_query.as_str(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("█", Style::default().fg(WARN)),
+        Span::styled(
+            match_info.as_str(),
+            Style::default().fg(
+                if app.search_matches.is_empty() && !app.search_query.is_empty() {
+                    DANGER
+                } else {
+                    MUTED
+                },
+            ),
+        ),
+        Span::styled("  [Esc] close", Style::default().fg(MUTED)),
+    ]);
+
+    f.render_widget(
+        Paragraph::new(line).style(Style::default().bg(Color::Rgb(15, 15, 30))),
+        area,
+    );
+}
+
+// ══════════════════════════════════════════════════════════
 //  VT100 TERMINAL RENDERER
 // ══════════════════════════════════════════════════════════
 
 /// Render a vt100 screen directly into the ratatui buffer.
-/// Handles colors, bold/italic/underline, and cursor position.
-fn render_vt100_screen(f: &mut Frame, screen: &vt100::Screen, area: Rect) {
+/// Handles colors, bold/italic/underline, cursor position, and search highlights.
+fn render_vt100_screen(f: &mut Frame, screen: &vt100::Screen, area: Rect, app: &App) {
     let buf = f.buffer_mut();
     let rows = area.height as usize;
     let cols = area.width as usize;
     let (screen_rows, screen_cols) = (screen.size().0 as usize, screen.size().1 as usize);
 
+    let query_char_len = app.search_query.chars().count();
+    let search_active = app.search_active && query_char_len > 0;
+
     for row in 0..rows.min(screen_rows) {
+        // Pre-compute match ranges for this row to avoid per-cell O(n) scan
+        let row_matches: Vec<(usize, usize)> = if search_active {
+            app.search_matches
+                .iter()
+                .filter(|&&(mr, _)| mr == row)
+                .map(|&(_, mc)| (mc, mc + query_char_len))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let current_range: Option<(usize, usize)> = if search_active {
+            app.search_matches
+                .get(app.search_current_idx)
+                .filter(|&&(mr, _)| mr == row)
+                .map(|&(_, mc)| (mc, mc + query_char_len))
+        } else {
+            None
+        };
+
         for col in 0..cols.min(screen_cols) {
             let cell = screen.cell(row as u16, col as u16);
             let x = area.x + col as u16;
@@ -1632,8 +1719,25 @@ fn render_vt100_screen(f: &mut Frame, screen: &vt100::Screen, area: Rect) {
             }
 
             if let Some(cell) = cell {
-                let fg = vt100_color_to_ratatui(cell.fgcolor());
-                let bg = vt100_color_to_ratatui(cell.bgcolor());
+                let is_current = current_range
+                    .map(|(s, e)| col >= s && col < e)
+                    .unwrap_or(false);
+                let is_other_match =
+                    !is_current && row_matches.iter().any(|&(s, e)| col >= s && col < e);
+
+                let fg = if is_current {
+                    Color::Black
+                } else {
+                    vt100_color_to_ratatui(cell.fgcolor())
+                };
+                let bg = if is_current {
+                    Color::Rgb(255, 200, 0) // bright yellow — current match
+                } else if is_other_match {
+                    Color::Rgb(80, 70, 0) // dark amber — other matches
+                } else {
+                    vt100_color_to_ratatui(cell.bgcolor())
+                };
+
                 let mut style = Style::default().fg(fg).bg(bg);
 
                 if cell.bold() {
@@ -1645,7 +1749,7 @@ fn render_vt100_screen(f: &mut Frame, screen: &vt100::Screen, area: Rect) {
                 if cell.underline() {
                     style = style.add_modifier(Modifier::UNDERLINED);
                 }
-                if cell.inverse() {
+                if cell.inverse() && !is_current && !is_other_match {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
 
