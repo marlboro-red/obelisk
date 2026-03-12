@@ -347,7 +347,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     let compact_rows = term.height < 40;
     let compact_cols = term.width < 100;
 
-    // When compact: hide sparklines and give full width to event log
+    // When compact: hide charts and give full width to event log
     let show_bottom = !compact_rows || area.height > 12;
     let v_chunks = if show_bottom && !compact_cols {
         Layout::default()
@@ -420,7 +420,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     // Bottom panels
     if v_chunks.len() > 1 {
         if compact_cols {
-            // < 100 cols: hide sparklines, full-width single-line event log
+            // < 100 cols: hide charts, full-width single-line event log
             render_mini_event_log(f, v_chunks[1], app);
         } else {
             let bottom_chunks = Layout::default()

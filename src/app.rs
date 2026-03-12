@@ -452,7 +452,7 @@ pub struct App {
     pub jump_active: bool,
     pub jump_query: String,
 
-    // Velocity sparkline — configurable window (number of data points)
+    // Velocity chart — configurable window (number of data points)
     pub velocity_window_size: usize,
 
     // Kill confirmation dialog — Some(agent_id) means dialog is visible
