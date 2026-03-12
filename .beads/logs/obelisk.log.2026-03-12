@@ -16,3 +16,8 @@
 [2m2026-03-12T13:31:34.986021Z[0m [33m WARN[0m orphaned worktrees found [3mcount[0m[2m=[0m5
 [2m2026-03-12T13:31:42.779048Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m0 [3mtask_id[0m[2m=[0m"obelisk-yu6" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
 [2m2026-03-12T13:31:42.779115Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m1 [3mtask_id[0m[2m=[0m"obelisk-zu0" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-12T13:32:35.288236Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m2 [3mtask_id[0m[2m=[0m"obelisk-6bz" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-12T13:32:35.288256Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m3 [3mtask_id[0m[2m=[0m"obelisk-b45" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-12T13:32:35.288287Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m5 [3mtask_id[0m[2m=[0m"obelisk-3br" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-12T13:32:35.288302Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m6 [3mtask_id[0m[2m=[0m"obelisk-pr4" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-12T13:32:35.288294Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m4 [3mtask_id[0m[2m=[0m"obelisk-nht" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
