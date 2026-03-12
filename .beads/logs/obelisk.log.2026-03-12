@@ -5,3 +5,4 @@
 [2m2026-03-12T13:25:49.763487Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m4 [3mtask_id[0m[2m=[0m"obelisk-3br" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
 [2m2026-03-12T13:25:49.763475Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m3 [3mtask_id[0m[2m=[0m"obelisk-nht" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
 [2m2026-03-12T13:25:49.763507Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m5 [3mtask_id[0m[2m=[0m"obelisk-pr4" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-12T13:27:49.330213Z[0m [33m WARN[0m dep graph poll failed [3merror[0m[2m=[0mFailed to parse bd list JSON: expected value at line 1 column 1
