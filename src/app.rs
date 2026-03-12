@@ -328,6 +328,9 @@ pub struct App {
     // Jump-to-issue mode
     pub jump_active: bool,
     pub jump_query: String,
+
+    // Velocity sparkline — configurable window (number of data points)
+    pub velocity_window_size: usize,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -502,6 +505,7 @@ impl App {
             mouse_enabled: true,
             jump_active: false,
             jump_query: String::new(),
+            velocity_window_size: 24,
         };
         app.log(LogCategory::System, "Orchestrator initialized".into());
         if config_exists {
@@ -2049,6 +2053,21 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Compute velocity sparkline data: completed issues per session.
+    /// Returns the last `velocity_window_size` data points, with the current
+    /// session as the rightmost (most recent) point.
+    pub fn velocity_sparkline_data(&self) -> Vec<u64> {
+        let mut data: Vec<u64> = self
+            .history_sessions
+            .iter()
+            .map(|s| s.total_completed as u64)
+            .collect();
+        // Current session as the live data point
+        data.push(self.total_completed as u64);
+        let skip = data.len().saturating_sub(self.velocity_window_size);
+        data[skip..].to_vec()
     }
 
     /// Sum of estimated cost across all agents in the current session.

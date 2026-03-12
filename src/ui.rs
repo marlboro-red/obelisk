@@ -248,14 +248,19 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
     render_task_preview(f, left_chunks[1], app);
     render_agent_panel(f, h_chunks[1], app);
 
-    // Bottom: throughput sparkline + mini event log
+    // Bottom: throughput sparkline + velocity sparkline + mini event log
     let bottom_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(50),
+        ])
         .split(v_chunks[1]);
 
     render_throughput_sparkline(f, bottom_chunks[0], app);
-    render_mini_event_log(f, bottom_chunks[1], app);
+    render_velocity_sparkline(f, bottom_chunks[1], app);
+    render_mini_event_log(f, bottom_chunks[2], app);
 }
 
 fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
@@ -288,6 +293,36 @@ fn render_throughput_sparkline(f: &mut Frame, area: Rect, app: &App) {
         )
         .data(&data)
         .style(Style::default().fg(ACCENT));
+
+    f.render_widget(sparkline, area);
+}
+
+fn render_velocity_sparkline(f: &mut Frame, area: Rect, app: &App) {
+    let data = app.velocity_sparkline_data();
+
+    let max_val = data.iter().copied().max().unwrap_or(0).max(1);
+    let label = format!("peak: {}/sess", max_val);
+
+    let sparkline = Sparkline::default()
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(INFO))
+                .title(Span::styled(
+                    " VELOCITY ",
+                    Style::default()
+                        .fg(INFO)
+                        .add_modifier(Modifier::BOLD),
+                ))
+                .title_bottom(Line::from(Span::styled(
+                    format!(" {} ", label),
+                    Style::default().fg(MUTED),
+                )))
+                .style(Style::default().bg(PANEL_BG)),
+        )
+        .data(&data)
+        .style(Style::default().fg(INFO));
 
     f.render_widget(sparkline, area);
 }
