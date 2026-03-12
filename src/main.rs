@@ -197,6 +197,17 @@ fn process_event(
             if app.active_view == View::SplitPane && app.frame_count % 20 == 0 {
                 app.auto_fill_split_panes();
             }
+            // Periodic worktree scan (~every 5s = 50 ticks at 100ms) when panel is active
+            if app.active_view == View::WorktreeOverview
+                && app.frame_count.saturating_sub(app.worktree_last_scan_frame) >= 50
+            {
+                app.worktree_last_scan_frame = app.frame_count;
+                let tx_wt = tx.clone();
+                tokio::spawn(async move {
+                    let worktrees = runtime::scan_agent_worktrees().await;
+                    let _ = tx_wt.send(AppEvent::WorktreeScanned(worktrees));
+                });
+            }
             // Periodic diff refresh (~every 3s = 30 ticks at 100ms)
             if app.show_diff_panel
                 && app.active_view == View::AgentDetail
@@ -245,6 +256,9 @@ fn process_event(
         }
         AppEvent::DiffResult { agent_id, diff } => {
             app.on_diff_result(agent_id, diff);
+        }
+        AppEvent::WorktreeScanned(worktrees) => {
+            app.on_worktree_scanned(worktrees);
         }
         AppEvent::Terminal(Event::Resize(_, _)) => {
             // PTY resize is handled in the render loop via sync_pty_sizes,
@@ -322,8 +336,12 @@ fn handle_key(
     }
 
     match key.code {
+        // Worktree overview sort toggle
+        KeyCode::Char('f') if app.active_view == View::WorktreeOverview => {
+            app.cycle_worktree_sort();
+        }
         KeyCode::Char('q') => {
-            if app.active_view == View::AgentDetail || app.active_view == View::SplitPane {
+            if app.active_view == View::AgentDetail || app.active_view == View::SplitPane || app.active_view == View::WorktreeOverview {
                 app.interactive_mode = false;
                 app.search_active = false;
                 app.search_query.clear();
@@ -354,6 +372,16 @@ fn handle_key(
         KeyCode::Char('5') => {
             app.auto_fill_split_panes();
             app.active_view = View::SplitPane;
+        }
+        KeyCode::Char('6') => {
+            app.active_view = View::WorktreeOverview;
+            // Trigger immediate scan
+            app.worktree_last_scan_frame = 0;
+        }
+        KeyCode::Char('w') if app.active_view == View::Dashboard => {
+            app.active_view = View::WorktreeOverview;
+            // Trigger immediate scan
+            app.worktree_last_scan_frame = 0;
         }
 
         // ── Interactive mode: press 'i' in agent detail to attach ──

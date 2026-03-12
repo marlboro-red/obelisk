@@ -74,6 +74,7 @@ pub fn render(f: &mut Frame, app: &App) {
         View::EventLog => render_event_log(f, chunks[2], app),
         View::History => render_history(f, chunks[2], app),
         View::SplitPane => render_split_pane(f, chunks[2], app),
+        View::WorktreeOverview => render_worktree_overview(f, chunks[2], app),
     }
 
     render_status_gauges(f, chunks[3], app);
@@ -157,6 +158,7 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         Line::from(" 3:EVENT LOG "),
         Line::from(" 4:HISTORY "),
         Line::from(" 5:SPLIT "),
+        Line::from(" 6:WORKTREES "),
     ];
 
     let selected = match app.active_view {
@@ -165,6 +167,7 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         View::EventLog => 2,
         View::History => 3,
         View::SplitPane => 4,
+        View::WorktreeOverview => 5,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -1540,6 +1543,202 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
 }
 
 // ══════════════════════════════════════════════════════════
+//  WORKTREE OVERVIEW
+// ══════════════════════════════════════════════════════════
+
+fn render_worktree_overview(f: &mut Frame, area: Rect, app: &App) {
+    use crate::types::WorktreeStatus;
+
+    let total = app.worktree_entries.len();
+    let orphaned_count = app.worktree_entries.iter().filter(|e| e.status == WorktreeStatus::Orphaned).count();
+    let active_count = app.worktree_entries.iter().filter(|e| e.status == WorktreeStatus::Active).count();
+
+    let title = format!(
+        "◆ WORKTREE OVERVIEW [{}] [sort: {}]",
+        total,
+        app.worktree_sort_mode.label(),
+    );
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(PRIMARY))
+        .title(Span::styled(
+            format!(" {} ", title),
+            Style::default()
+                .fg(PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(PANEL_BG));
+
+    if app.worktree_entries.is_empty() {
+        let empty = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No agent worktrees found",
+                Style::default().fg(MUTED),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Worktrees will appear here when agents are spawned",
+                Style::default().fg(MUTED),
+            )),
+        ])
+        .block(block);
+        f.render_widget(empty, area);
+        return;
+    }
+
+    // Layout: summary bar on top, list below
+    let v_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Summary bar
+            Constraint::Min(5),   // Worktree list
+        ])
+        .split(block.inner(area));
+
+    f.render_widget(block, area);
+
+    // Summary bar
+    let summary = Line::from(vec![
+        Span::styled("  TOTAL: ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}", total),
+            Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("    ACTIVE: ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}", active_count),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("    ORPHANED: ", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{}", orphaned_count),
+            if orphaned_count > 0 {
+                Style::default().fg(DANGER).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            },
+        ),
+        if orphaned_count > 0 {
+            Span::styled(
+                "  — press 'c' on dashboard to clean up",
+                Style::default().fg(WARN),
+            )
+        } else {
+            Span::styled("", Style::default())
+        },
+    ]);
+    let summary_block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(MUTED))
+        .style(Style::default().bg(PANEL_BG));
+    f.render_widget(
+        Paragraph::new(summary).block(summary_block),
+        v_chunks[0],
+    );
+
+    // Worktree list
+    let items: Vec<ListItem> = app
+        .worktree_entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let (status_sym, status_color) = match entry.status {
+                WorktreeStatus::Active => ("▶ ACTIVE  ", ACCENT),
+                WorktreeStatus::Idle => ("● IDLE    ", WARN),
+                WorktreeStatus::Orphaned => ("✗ ORPHAN  ", DANGER),
+            };
+
+            let sel_indicator = if Some(i) == app.worktree_list_state.selected() {
+                Span::styled(
+                    " ▸ ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled("   ", Style::default())
+            };
+
+            // Worktree directory name (short)
+            let dir_name = std::path::Path::new(&entry.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&entry.path);
+
+            // Age
+            let age_str = entry.created_at.map(|t| {
+                let dur = chrono::Local::now().signed_duration_since(t);
+                if dur.num_days() > 0 {
+                    format!("{}d ago", dur.num_days())
+                } else if dur.num_hours() > 0 {
+                    format!("{}h ago", dur.num_hours())
+                } else {
+                    format!("{}m ago", dur.num_minutes().max(1))
+                }
+            }).unwrap_or_else(|| "? ago".to_string());
+
+            // Issue ID
+            let issue_span = if let Some(ref id) = entry.issue_id {
+                Span::styled(format!("[{}] ", id), Style::default().fg(SECONDARY))
+            } else {
+                Span::styled("[???] ", Style::default().fg(MUTED))
+            };
+
+            // Branch
+            let branch_span = Span::styled(
+                format!("({})", entry.branch),
+                Style::default().fg(MUTED),
+            );
+
+            // Build line with color coding — orphaned entries use danger styling
+            let row_bg = if entry.status == WorktreeStatus::Orphaned {
+                Style::default().bg(Color::Rgb(40, 10, 10))
+            } else {
+                Style::default()
+            };
+
+            ListItem::new(Line::from(vec![
+                sel_indicator,
+                Span::styled(
+                    status_sym,
+                    Style::default()
+                        .fg(status_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                issue_span,
+                Span::styled(
+                    format!("{:<30} ", truncate_str(dir_name, 30)),
+                    Style::default().fg(BRIGHT),
+                ),
+                branch_span,
+                Span::styled(format!("  {}", age_str), Style::default().fg(MUTED)),
+            ])).style(row_bg)
+        })
+        .collect();
+
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(Color::Rgb(20, 30, 20))
+            .add_modifier(Modifier::BOLD),
+    );
+
+    f.render_stateful_widget(list, v_chunks[1], &mut app.worktree_list_state.clone());
+
+    // Scrollbar if needed
+    if total > v_chunks[1].height as usize {
+        let pos = app.worktree_list_state.selected().unwrap_or(0);
+        let mut scrollbar_state = ScrollbarState::new(total).position(pos);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .style(Style::default().fg(PRIMARY)),
+            v_chunks[1],
+            &mut scrollbar_state,
+        );
+    }
+}
+
+// ══════════════════════════════════════════════════════════
 //  STATUS GAUGES
 // ══════════════════════════════════════════════════════════
 
@@ -1825,7 +2024,8 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("x", "dismiss"),
                 ("X", "dismiss all"),
                 ("+/-", "slots"),
-                ("1-4", "view"),
+                ("w", "worktrees"),
+                ("1-6", "view"),
                 ("?", "help"),
                 ("q", "quit"),
             ]
@@ -1843,11 +2043,9 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("F", "filter"),
                 ("Tab", "focus"),
                 ("j/k", "nav"),
-                ("Enter", "detail"),
-                ("x", "dismiss"),
-                ("X", "dismiss all"),
+                ("w", "worktrees"),
                 ("+/-", "slots"),
-                ("1-4", "view"),
+                ("1-6", "view"),
                 ("?", "help"),
                 ("q", "quit"),
             ]
@@ -1902,7 +2100,14 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("↑↓", "scroll"),
             ("Enter", "detail"),
             ("g", "pin/unpin"),
-            ("1-5", "view"),
+            ("1-6", "view"),
+            ("?", "help"),
+            ("Esc/q", "back"),
+        ],
+        View::WorktreeOverview => vec![
+            ("↑↓/j/k", "nav"),
+            ("f", "sort"),
+            ("1-6", "view"),
             ("?", "help"),
             ("Esc/q", "back"),
         ],
@@ -2047,6 +2252,13 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("↑↓", "Scroll focused pane output"));
     lines.push(key_line("Enter", "Open Agent Detail for focused pane"));
     lines.push(key_line("g", "Pin/unpin agent to focused pane"));
+    lines.push(key_line("Esc / q", "Return to Dashboard"));
+    lines.push(Line::from(""));
+    // ── Worktree Overview ──
+    lines.push(section_header("WORKTREE OVERVIEW"));
+    lines.push(key_line("↑↓ / j/k", "Navigate worktree list"));
+    lines.push(key_line("f", "Cycle sort mode (age/status)"));
+    lines.push(key_line("w", "Open worktree overview (from Dashboard)"));
     lines.push(key_line("Esc / q", "Return to Dashboard"));
     lines.push(Line::from(""));
     // ── Global ──
