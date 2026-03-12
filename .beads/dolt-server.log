@@ -1584,3 +1584,22 @@ time="2026-03-13T00:33:05+11:00" level=info msg=NewConnection DisableClientMulti
 time="2026-03-13T00:33:05+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=298
 time="2026-03-13T00:33:05+11:00" level=info msg=ConnectionClosed connectionID=297
 time="2026-03-13T00:33:05+11:00" level=info msg=ConnectionClosed connectionID=298
+time="2026-03-13T00:33:08+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=299
+time="2026-03-13T00:33:08+11:00" level=info msg=ConnectionClosed connectionID=299
+time="2026-03-13T00:33:08+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=300
+time="2026-03-13T00:33:08+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=301
+time="2026-03-13T00:33:08+11:00" level=info msg=ConnectionClosed connectionID=300
+time="2026-03-13T00:33:08+11:00" level=warning msg="error running query" connectTime="2026-03-13 00:33:08.092768 +1100 AEDT m=+719.700955834" connectionDb=bdOrc connectionID=301 error="nothing to commit" queryTime="2026-03-13 00:33:08.098875 +1100 AEDT m=+719.707062168"
+time="2026-03-13T00:33:08+11:00" level=info msg=ConnectionClosed connectionID=301
+time="2026-03-13T00:33:15+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=302
+time="2026-03-13T00:33:15+11:00" level=info msg=ConnectionClosed connectionID=302
+time="2026-03-13T00:33:15+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=303
+time="2026-03-13T00:33:15+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=304
+time="2026-03-13T00:33:15+11:00" level=info msg=ConnectionClosed connectionID=303
+time="2026-03-13T00:33:15+11:00" level=info msg=ConnectionClosed connectionID=304
+time="2026-03-13T00:33:15+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=305
+time="2026-03-13T00:33:15+11:00" level=info msg=ConnectionClosed connectionID=305
+time="2026-03-13T00:33:15+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=306
+time="2026-03-13T00:33:15+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=307
+time="2026-03-13T00:33:15+11:00" level=info msg=ConnectionClosed connectionID=306
+time="2026-03-13T00:33:15+11:00" level=info msg=ConnectionClosed connectionID=307
