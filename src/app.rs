@@ -627,6 +627,54 @@ impl App {
         for id in timed_out {
             self.force_complete_agent(id);
         }
+
+        // Timeout watchdog: warn at 80% of limit, kill at 100%
+        if self.agent_timeout_secs > 0 {
+            let warn_at = self.agent_timeout_secs * 4 / 5;
+            let timeout_limit = self.agent_timeout_secs;
+            let timed_out_ids: Vec<usize> = self
+                .agents
+                .iter()
+                .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+                .filter(|a| a.elapsed_secs >= timeout_limit)
+                .map(|a| a.id)
+                .collect();
+            let warn_needed: Vec<(usize, usize, u64)> = self
+                .agents
+                .iter()
+                .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+                .filter(|a| {
+                    a.elapsed_secs >= warn_at
+                        && !self.timeout_warned_ids.contains(&a.id)
+                        && a.elapsed_secs < timeout_limit
+                })
+                .map(|a| {
+                    (
+                        a.id,
+                        a.unit_number,
+                        timeout_limit.saturating_sub(a.elapsed_secs),
+                    )
+                })
+                .collect();
+            for (id, unit, remaining) in warn_needed {
+                self.timeout_warned_ids.insert(id);
+                self.log(
+                    LogCategory::Alert,
+                    format!(
+                        "AGENT-{:02} TIMEOUT WARNING  {} remaining",
+                        unit,
+                        App::format_elapsed(remaining)
+                    ),
+                );
+                self.alert_message = Some((
+                    format!("TIMEOUT WARNING  AGENT-{:02}", unit),
+                    self.frame_count + 50,
+                ));
+            }
+            for id in timed_out_ids {
+                self.kill_agent_timeout(id);
+            }
+        }
     }
 
     pub fn on_poll_failed(&mut self, error: String) {
@@ -966,6 +1014,10 @@ impl App {
             completion_detected: false,
             exit_sent_at: None,
             completion_buf: String::new(),
+            pinned_to_split: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            estimated_cost_usd: 0.0,
             template_name: template_name.clone(),
         };
 
@@ -1074,6 +1126,9 @@ impl App {
             View::History => {
                 self.history_scroll = self.history_scroll.saturating_sub(1);
             }
+            View::SplitPane => {
+                self.split_pane_scroll_up();
+            }
         }
     }
 
@@ -1132,6 +1187,9 @@ impl App {
                 if self.history_scroll < max {
                     self.history_scroll += 1;
                 }
+            }
+            View::SplitPane => {
+                self.split_pane_scroll_down();
             }
         }
     }
@@ -1302,6 +1360,41 @@ impl App {
         count
     }
 
+    /// Kill a specific agent that has exceeded the timeout limit.
+    /// Sets status to Failed and logs a Timeout event.
+    pub fn kill_agent_timeout(&mut self, agent_id: usize) -> Option<usize> {
+        let timeout_secs = self.agent_timeout_secs;
+        let agent = self.agents.iter_mut().find(|a| a.id == agent_id)?;
+        if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+            return None;
+        }
+        if let Some(pid) = agent.pid {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .output();
+            }
+        }
+        agent.status = AgentStatus::Failed;
+        agent.elapsed_secs = agent.started_at.elapsed().as_secs();
+        let unit = agent.unit_number;
+        self.total_failed += 1;
+        self.log(
+            LogCategory::Timeout,
+            format!("AGENT-{:02} TIMEOUT  exceeded {}s limit", unit, timeout_secs),
+        );
+        self.alert_message = Some((
+            format!("TIMEOUT  AGENT-{:02} KILLED", unit),
+            self.frame_count + 50,
+        ));
+        Some(unit)
+    }
+
     /// Kill all running agent processes (called on shutdown).
     pub fn kill_all_agents(&mut self) {
         let active_ids: Vec<usize> = self
@@ -1386,6 +1479,10 @@ impl App {
             completion_detected: false,
             exit_sent_at: None,
             completion_buf: String::new(),
+            pinned_to_split: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            estimated_cost_usd: 0.0,
             template_name: template_name.clone(),
         };
 
@@ -1758,7 +1855,7 @@ impl App {
 
     /// Compute aggregate stats across all loaded history sessions.
     /// Returns (total_sessions, all_time_completed, all_time_failed, avg_duration_secs).
-    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64) {
+    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64, f64) {
         let total_sessions = self.history_sessions.len();
         let all_time_completed: u64 = self.history_sessions
             .iter()

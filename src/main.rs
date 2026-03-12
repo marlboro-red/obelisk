@@ -319,7 +319,7 @@ fn handle_key(
 
     match key.code {
         KeyCode::Char('q') => {
-            if app.active_view == View::AgentDetail {
+            if app.active_view == View::AgentDetail || app.active_view == View::SplitPane {
                 app.interactive_mode = false;
                 app.search_active = false;
                 app.search_query.clear();
@@ -347,6 +347,10 @@ fn handle_key(
         }
         KeyCode::Char('3') => app.active_view = View::EventLog,
         KeyCode::Char('4') => app.active_view = View::History,
+        KeyCode::Char('5') => {
+            app.auto_fill_split_panes();
+            app.active_view = View::SplitPane;
+        }
 
         // ── Interactive mode: press 'i' in agent detail to attach ──
         KeyCode::Char('i') if app.active_view == View::AgentDetail => {
@@ -372,6 +376,23 @@ fn handle_key(
             }
         }
 
+        // ── Split-pane view keys ──
+        KeyCode::Up if app.active_view == View::SplitPane => {
+            app.split_pane_scroll_up();
+        }
+        KeyCode::Down if app.active_view == View::SplitPane => {
+            app.split_pane_scroll_down();
+        }
+        KeyCode::Tab if app.active_view == View::SplitPane => {
+            let count = app.split_pane_count(160);
+            app.split_pane_focus = (app.split_pane_focus + 1) % count.max(1);
+        }
+        KeyCode::Enter if app.active_view == View::SplitPane => {
+            app.split_pane_enter_detail();
+        }
+        KeyCode::Char('g') if app.active_view == View::SplitPane => {
+            app.toggle_pin_split_pane();
+        }
         KeyCode::Up => app.navigate_up(),
         KeyCode::Down => app.navigate_down(),
         KeyCode::PageUp if app.active_view == View::AgentDetail => app.page_up(),
@@ -493,6 +514,21 @@ fn handle_key(
                     if app.auto_exit_on_completion { "ENABLED" } else { "DISABLED" }
                 ),
             );
+        }
+        KeyCode::Char('t') if app.active_view == View::Dashboard => {
+            const PRESETS: &[u64] = &[300, 900, 1800, 3600, 0];
+            let next = PRESETS
+                .iter()
+                .position(|&x| x == app.agent_timeout_secs)
+                .map(|i| PRESETS[(i + 1) % PRESETS.len()])
+                .unwrap_or(1800);
+            app.agent_timeout_secs = next;
+            let label = if next == 0 {
+                "DISABLED".to_string()
+            } else {
+                App::format_elapsed(next)
+            };
+            app.log(LogCategory::System, format!("Agent timeout: {}", label));
         }
         KeyCode::Char('n') if !app.search_active => {
             app.notifications_enabled = !app.notifications_enabled;

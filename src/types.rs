@@ -251,6 +251,7 @@ pub enum LogCategory {
     Complete,
     Alert,
     Poll,
+    Timeout,
 }
 
 impl LogCategory {
@@ -262,6 +263,7 @@ impl LogCategory {
             LogCategory::Complete => "COMPLETE",
             LogCategory::Alert => "ALERT",
             LogCategory::Poll => "POLL",
+            LogCategory::Timeout => "TIMEOUT",
         }
     }
 }

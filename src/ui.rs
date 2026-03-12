@@ -73,6 +73,7 @@ pub fn render(f: &mut Frame, app: &App) {
         View::AgentDetail => render_agent_detail(f, chunks[2], app),
         View::EventLog => render_event_log(f, chunks[2], app),
         View::History => render_history(f, chunks[2], app),
+        View::SplitPane => render_split_pane(f, chunks[2], app),
     }
 
     render_status_gauges(f, chunks[3], app);
@@ -155,6 +156,7 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         Line::from(" 2:AGENTS "),
         Line::from(" 3:EVENT LOG "),
         Line::from(" 4:HISTORY "),
+        Line::from(" 5:SPLIT "),
     ];
 
     let selected = match app.active_view {
@@ -162,6 +164,7 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         View::AgentDetail => 1,
         View::EventLog => 2,
         View::History => 3,
+        View::SplitPane => 4,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -842,6 +845,201 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+
+// ══════════════════════════════════════════════════════════
+//  SPLIT-PANE VIEW
+// ══════════════════════════════════════════════════════════
+
+fn render_split_pane(f: &mut Frame, area: Rect, app: &App) {
+    let pane_count = app.split_pane_count(area.width);
+
+    if pane_count <= 1 {
+        let block = primary_block("SPLIT VIEW — terminal too narrow for multi-pane");
+        let p = Paragraph::new("Widen your terminal to at least 80 columns for 2-up, or 160 for 4-up")
+            .block(block)
+            .style(Style::default().fg(MUTED));
+        f.render_widget(p, area);
+        return;
+    }
+
+    let pane_rects = if pane_count == 2 {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        vec![chunks[0], chunks[1]]
+    } else {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        let top = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(rows[0]);
+        let bot = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(rows[1]);
+        vec![top[0], top[1], bot[0], bot[1]]
+    };
+
+    for (slot, &pane_rect) in pane_rects.iter().enumerate() {
+        let agent_id = app.split_pane_agents[slot];
+        let agent = agent_id.and_then(|id| app.agents.iter().find(|a| a.id == id));
+        let is_focused = slot == app.split_pane_focus;
+        let is_pinned = agent.map(|a| a.pinned_to_split == Some(slot)).unwrap_or(false);
+
+        match agent {
+            Some(agent) => {
+                let status_str = match agent.status {
+                    AgentStatus::Starting => "INIT",
+                    AgentStatus::Running => "▶",
+                    AgentStatus::Completed => "✓",
+                    AgentStatus::Failed => "✗",
+                };
+
+                let status_color = match agent.status {
+                    AgentStatus::Starting => WARN,
+                    AgentStatus::Running => ACCENT,
+                    AgentStatus::Completed => INFO,
+                    AgentStatus::Failed => DANGER,
+                };
+
+                let pin_indicator = if is_pinned { " [PIN]" } else { "" };
+                let title = format!(
+                    " AGENT-{:02} {} {} {} {}{}",
+                    agent.unit_number,
+                    status_str,
+                    agent.task.id,
+                    App::format_elapsed(agent.elapsed_secs),
+                    agent.phase.short(),
+                    pin_indicator,
+                );
+
+                let border_color = if is_focused { PRIMARY } else { MUTED };
+                let border_type = if is_focused {
+                    BorderType::Double
+                } else {
+                    BorderType::Rounded
+                };
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(border_type)
+                    .border_style(Style::default().fg(border_color))
+                    .title(Span::styled(
+                        title,
+                        Style::default()
+                            .fg(status_color)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                    .style(Style::default().bg(PANEL_BG));
+
+                let inner = block.inner(pane_rect);
+                f.render_widget(block, pane_rect);
+
+                if let Some(pty_state) = app.pty_states.get(&agent.id) {
+                    render_vt100_screen_plain(f, pty_state.parser.screen(), inner);
+                } else {
+                    let visible_height = inner.height as usize;
+                    let total_lines = agent.output.len();
+                    let max_scroll = total_lines.saturating_sub(visible_height);
+                    let scroll = match app.split_pane_scroll[slot] {
+                        None => max_scroll,
+                        Some(pos) => pos.min(max_scroll),
+                    };
+
+                    let lines: Vec<Line> = agent
+                        .output
+                        .iter()
+                        .skip(scroll)
+                        .take(visible_height)
+                        .map(|line| {
+                            Line::from(Span::styled(line.as_str(), Style::default().fg(ACCENT)))
+                        })
+                        .collect();
+
+                    let paragraph = Paragraph::new(lines);
+                    f.render_widget(paragraph, inner);
+                }
+            }
+            None => {
+                let border_color = if is_focused { PRIMARY } else { MUTED };
+                let border_type = if is_focused {
+                    BorderType::Double
+                } else {
+                    BorderType::Rounded
+                };
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(border_type)
+                    .border_style(Style::default().fg(border_color))
+                    .title(Span::styled(
+                        format!(" PANE {} — empty ", slot + 1),
+                        Style::default().fg(MUTED),
+                    ))
+                    .style(Style::default().bg(PANEL_BG));
+
+                let p = Paragraph::new(Line::from(Span::styled(
+                    "  No agent assigned",
+                    Style::default().fg(MUTED),
+                )))
+                .block(block);
+                f.render_widget(p, pane_rect);
+            }
+        }
+    }
+}
+
+/// Render a vt100 screen without search highlighting (for split panes).
+fn render_vt100_screen_plain(f: &mut Frame, screen: &vt100::Screen, area: Rect) {
+    let buf = f.buffer_mut();
+    let rows = area.height as usize;
+    let cols = area.width as usize;
+    let (screen_rows, screen_cols) = (screen.size().0 as usize, screen.size().1 as usize);
+
+    for row in 0..rows.min(screen_rows) {
+        for col in 0..cols.min(screen_cols) {
+            let cell = screen.cell(row as u16, col as u16);
+            let x = area.x + col as u16;
+            let y = area.y + row as u16;
+
+            if x >= area.x + area.width || y >= area.y + area.height {
+                continue;
+            }
+
+            if let Some(cell) = cell {
+                let fg = vt100_color_to_ratatui(cell.fgcolor());
+                let bg = vt100_color_to_ratatui(cell.bgcolor());
+                let mut style = Style::default().fg(fg).bg(bg);
+
+                if cell.bold() {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                if cell.italic() {
+                    style = style.add_modifier(Modifier::ITALIC);
+                }
+                if cell.underline() {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                if cell.inverse() {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+
+                let contents = cell.contents();
+                let ch = if contents.is_empty() {
+                    ' '
+                } else {
+                    contents.chars().next().unwrap_or(' ')
+                };
+
+                buf[(x, y)].set_char(ch).set_style(style);
+            }
+        }
+    }
+}
 fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -858,6 +1056,29 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
     let total_lines = app.agent_line_count(agent.id);
     let elapsed = agent.elapsed_secs.max(1);
     let lines_per_sec = total_lines as f64 / elapsed as f64;
+
+    let timeout_line = {
+        let (timeout_text, timeout_color) = if app.agent_timeout_secs == 0 {
+            (" DISABLED".to_string(), MUTED)
+        } else if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+            (" --".to_string(), MUTED)
+        } else {
+            let limit = app.agent_timeout_secs;
+            let warn_at = limit * 4 / 5;
+            if agent.elapsed_secs >= limit {
+                (" EXPIRED".to_string(), DANGER)
+            } else {
+                let remaining = limit.saturating_sub(agent.elapsed_secs);
+                let text = format!(" in {}", App::format_elapsed(remaining));
+                let color = if agent.elapsed_secs >= warn_at { WARN } else { BRIGHT };
+                (text, color)
+            }
+        };
+        Line::from(vec![
+            Span::styled(" TIMEOUT ", Style::default().fg(MUTED)),
+            Span::styled(timeout_text, Style::default().fg(timeout_color)),
+        ])
+    };
 
     let status_indicator = match agent.status {
         AgentStatus::Starting => ("◐ INITIALIZING", WARN),
@@ -977,6 +1198,7 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
                 Style::default().fg(BRIGHT),
             ),
         ]),
+        timeout_line,
         Line::from(vec![
             Span::styled(" LINES   ", Style::default().fg(MUTED)),
             Span::styled(format!(" {}", total_lines), Style::default().fg(BRIGHT)),
@@ -1163,8 +1385,9 @@ fn render_event_log(f: &mut Frame, area: Rect, app: &App) {
 //  HISTORY VIEW
 // ══════════════════════════════════════════════════════════
 
+
 fn render_history(f: &mut Frame, area: Rect, app: &App) {
-    let (total_sessions, all_completed, all_failed, avg_duration) = app.aggregate_stats();
+    let (total_sessions, all_completed, all_failed, avg_duration, _all_time_cost) = app.aggregate_stats();
     let all_time_total = all_completed + all_failed;
     let success_rate = if all_time_total > 0 {
         all_completed as f64 / all_time_total as f64 * 100.0
@@ -1578,6 +1801,7 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("m", "model"),
                 ("a", "auto"),
                 ("n", "notify"),
+                ("t", "timeout"),
                 ("f", "sort"),
                 ("F", "filter"),
                 ("Tab", "focus"),
@@ -1635,6 +1859,15 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
             ("1-4", "view"),
             ("?", "help"),
             ("q", "quit"),
+        ],
+        View::SplitPane => vec![
+            ("Tab", "focus pane"),
+            ("↑↓", "scroll"),
+            ("Enter", "detail"),
+            ("g", "pin/unpin"),
+            ("1-5", "view"),
+            ("?", "help"),
+            ("Esc/q", "back"),
         ],
     };
 
@@ -1715,6 +1948,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("m", "Cycle model for current runtime"));
     lines.push(key_line("a", "Toggle auto-spawn mode"));
     lines.push(key_line("n", "Toggle desktop notifications on/off"));
+    lines.push(key_line("t", "Cycle agent timeout (5m / 15m / 30m / 1h / off)"));
     lines.push(key_line("c", "Scan and clean up orphaned worktrees"));
     lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
     lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));
@@ -2049,6 +2283,7 @@ fn log_category_color(cat: LogCategory) -> Color {
         LogCategory::Complete => ACCENT,
         LogCategory::Alert => DANGER,
         LogCategory::Poll => SECONDARY,
+        LogCategory::Timeout => WARN,
     }
 }
 
