@@ -1424,28 +1424,6 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
     let elapsed = agent.elapsed_secs.max(1);
     let lines_per_sec = total_lines as f64 / elapsed as f64;
 
-    let timeout_line = {
-        let (timeout_text, timeout_color) = if app.agent_timeout_secs == 0 {
-            (" DISABLED".to_string(), MUTED)
-        } else if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
-            (" --".to_string(), MUTED)
-        } else {
-            let limit = app.agent_timeout_secs;
-            let warn_at = limit * 4 / 5;
-            if agent.elapsed_secs >= limit {
-                (" EXPIRED".to_string(), DANGER)
-            } else {
-                let remaining = limit.saturating_sub(agent.elapsed_secs);
-                let text = format!(" in {}", App::format_elapsed(remaining));
-                let color = if agent.elapsed_secs >= warn_at { WARN } else { BRIGHT };
-                (text, color)
-            }
-        };
-        Line::from(vec![
-            Span::styled(" TIMEOUT ", Style::default().fg(MUTED)),
-            Span::styled(timeout_text, Style::default().fg(timeout_color)),
-        ])
-    };
 
     let status_indicator = match agent.status {
         AgentStatus::Starting => ("◐ INITIALIZING", WARN),
@@ -1565,7 +1543,6 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
                 Style::default().fg(BRIGHT),
             ),
         ]),
-        timeout_line,
         Line::from(vec![
             Span::styled(" LINES   ", Style::default().fg(MUTED)),
             Span::styled(format!(" {}", total_lines), Style::default().fg(BRIGHT)),
@@ -2461,7 +2438,6 @@ fn render_keybindings(f: &mut Frame, area: Rect, app: &App) {
                 ("m", "model"),
                 ("a", "auto"),
                 ("n", "notify"),
-                ("t", "timeout"),
                 ("f", "sort"),
                 ("F", "filter"),
                 ("Tab", "focus"),
@@ -2613,7 +2589,6 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     lines.push(key_line("m", "Cycle model for current runtime"));
     lines.push(key_line("a", "Toggle auto-spawn mode"));
     lines.push(key_line("n", "Toggle desktop notifications on/off"));
-    lines.push(key_line("t", "Cycle agent timeout (5m / 15m / 30m / 1h / off)"));
     lines.push(key_line("c", "Scan and clean up orphaned worktrees"));
     lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
     lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));
@@ -3098,7 +3073,6 @@ fn log_category_color(cat: LogCategory) -> Color {
         LogCategory::Complete => ACCENT,
         LogCategory::Alert => DANGER,
         LogCategory::Poll => SECONDARY,
-        LogCategory::Timeout => WARN,
     }
 }
 

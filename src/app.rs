@@ -314,12 +314,6 @@ pub struct App {
     pub model_pricing: HashMap<String, ModelPricing>,
     pub cost_threshold: Option<f64>,
 
-    // Timeout watchdog
-    /// Seconds before a running agent is killed for hanging (0 = disabled)
-    pub agent_timeout_secs: u64,
-    /// Agent IDs that have already received an 80% warning (cleared on kill/complete)
-    pub timeout_warned_ids: HashSet<usize>,
-
     /// Layout rectangles from last render — used for mouse hit-testing
     pub layout_areas: LayoutAreas,
 
@@ -514,8 +508,6 @@ impl App {
             split_pane_scroll: [None; 4],
             model_pricing: default_model_pricing(),
             cost_threshold: Some(5.0),
-            agent_timeout_secs: 1800,
-            timeout_warned_ids: HashSet::new(),
             layout_areas: LayoutAreas::default(),
             mouse_enabled: true,
             jump_active: false,
@@ -689,53 +681,6 @@ impl App {
             self.force_complete_agent(id);
         }
 
-        // Timeout watchdog: warn at 80% of limit, kill at 100%
-        if self.agent_timeout_secs > 0 {
-            let warn_at = self.agent_timeout_secs * 4 / 5;
-            let timeout_limit = self.agent_timeout_secs;
-            let timed_out_ids: Vec<usize> = self
-                .agents
-                .iter()
-                .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
-                .filter(|a| a.elapsed_secs >= timeout_limit)
-                .map(|a| a.id)
-                .collect();
-            let warn_needed: Vec<(usize, usize, u64)> = self
-                .agents
-                .iter()
-                .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
-                .filter(|a| {
-                    a.elapsed_secs >= warn_at
-                        && !self.timeout_warned_ids.contains(&a.id)
-                        && a.elapsed_secs < timeout_limit
-                })
-                .map(|a| {
-                    (
-                        a.id,
-                        a.unit_number,
-                        timeout_limit.saturating_sub(a.elapsed_secs),
-                    )
-                })
-                .collect();
-            for (id, unit, remaining) in warn_needed {
-                self.timeout_warned_ids.insert(id);
-                self.log(
-                    LogCategory::Alert,
-                    format!(
-                        "AGENT-{:02} TIMEOUT WARNING  {} remaining",
-                        unit,
-                        App::format_elapsed(remaining)
-                    ),
-                );
-                self.alert_message = Some((
-                    format!("TIMEOUT WARNING  AGENT-{:02}", unit),
-                    self.frame_count + 50,
-                ));
-            }
-            for id in timed_out_ids {
-                self.kill_agent_timeout(id);
-            }
-        }
     }
 
     pub fn on_poll_failed(&mut self, error: String) {
@@ -1436,41 +1381,6 @@ impl App {
             }
         }
         count
-    }
-
-    /// Kill a specific agent that has exceeded the timeout limit.
-    /// Sets status to Failed and logs a Timeout event.
-    pub fn kill_agent_timeout(&mut self, agent_id: usize) -> Option<usize> {
-        let timeout_secs = self.agent_timeout_secs;
-        let agent = self.agents.iter_mut().find(|a| a.id == agent_id)?;
-        if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
-            return None;
-        }
-        if let Some(pid) = agent.pid {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            #[cfg(windows)]
-            {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .output();
-            }
-        }
-        agent.status = AgentStatus::Failed;
-        agent.elapsed_secs = agent.started_at.elapsed().as_secs();
-        let unit = agent.unit_number;
-        self.total_failed += 1;
-        self.log(
-            LogCategory::Timeout,
-            format!("AGENT-{:02} TIMEOUT  exceeded {}s limit", unit, timeout_secs),
-        );
-        self.alert_message = Some((
-            format!("TIMEOUT  AGENT-{:02} KILLED", unit),
-            self.frame_count + 50,
-        ));
-        Some(unit)
     }
 
     /// Kill all running agent processes (called on shutdown).
