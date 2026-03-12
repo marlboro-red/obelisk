@@ -88,8 +88,8 @@ async fn run_app(
                         break;
                     }
                 }
-                Err(_e) => {
-                    let _ = tx_poll.send(AppEvent::PollResult(Vec::new()));
+                Err(e) => {
+                    let _ = tx_poll.send(AppEvent::PollFailed(e.to_string()));
                 }
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
@@ -179,6 +179,9 @@ fn process_event(
         }
         AppEvent::PollResult(tasks) => {
             app.on_poll_result(tasks);
+        }
+        AppEvent::PollFailed(error) => {
+            app.on_poll_failed(error);
         }
         AppEvent::AgentOutput { agent_id, line } => {
             app.on_agent_output(agent_id, line);
@@ -331,8 +334,8 @@ fn handle_key(
                     Ok(tasks) => {
                         let _ = tx.send(AppEvent::PollResult(tasks));
                     }
-                    Err(_) => {
-                        let _ = tx.send(AppEvent::PollResult(Vec::new()));
+                    Err(e) => {
+                        let _ = tx.send(AppEvent::PollFailed(e.to_string()));
                     }
                 }
             });

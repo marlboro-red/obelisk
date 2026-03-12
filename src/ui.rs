@@ -78,6 +78,11 @@ pub fn render(f: &mut Frame, app: &App) {
     render_info_bar(f, chunks[4], app);
     render_keybindings(f, chunks[5], app);
 
+    // Persistent poll-error banner — rendered on top of main content
+    if !app.last_poll_ok {
+        render_poll_error_banner(f, chunks[2], app);
+    }
+
     if app.show_help {
         render_help_overlay(f, area);
     }
@@ -845,12 +850,26 @@ fn render_status_gauges(f: &mut Frame, area: Rect, app: &App) {
     }
     .clamp(0.0, 1.0);
 
-    let poll_color = if poll_ratio > 0.5 {
+    let poll_color = if !app.last_poll_ok {
+        DANGER
+    } else if poll_ratio > 0.5 {
         INFO
     } else if poll_ratio > 0.2 {
         WARN
     } else {
         DANGER
+    };
+
+    let poll_title = if !app.last_poll_ok {
+        format!(" POLL ERROR [{}x] ", app.consecutive_poll_failures)
+    } else {
+        " POLL CYCLE ".to_string()
+    };
+
+    let poll_label = if !app.last_poll_ok {
+        "FAIL".to_string()
+    } else {
+        format!("{:.0}s", app.poll_countdown)
     };
 
     let poll_gauge = Gauge::default()
@@ -860,7 +879,7 @@ fn render_status_gauges(f: &mut Frame, area: Rect, app: &App) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(poll_color))
                 .title(Span::styled(
-                    " POLL CYCLE ",
+                    poll_title,
                     Style::default()
                         .fg(poll_color)
                         .add_modifier(Modifier::BOLD),
@@ -870,7 +889,7 @@ fn render_status_gauges(f: &mut Frame, area: Rect, app: &App) {
         .gauge_style(Style::default().fg(poll_color).bg(Color::Rgb(20, 20, 30)))
         .ratio(poll_ratio)
         .label(Span::styled(
-            format!("{:.0}s", app.poll_countdown),
+            poll_label,
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -1185,6 +1204,83 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     let display: Vec<Line> = lines.into_iter().take(visible).collect();
 
     f.render_widget(Paragraph::new(display).style(Style::default().bg(PANEL_BG)), inner);
+}
+
+// ══════════════════════════════════════════════════════════
+//  POLL ERROR BANNER
+// ══════════════════════════════════════════════════════════
+
+fn render_poll_error_banner(f: &mut Frame, area: Rect, app: &App) {
+    let banner_height = if app.consecutive_poll_failures >= 3 { 2u16 } else { 1u16 };
+    let banner_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: banner_height.min(area.height),
+    };
+
+    f.render_widget(Clear, banner_area);
+
+    let error_text = app
+        .last_poll_error
+        .as_deref()
+        .unwrap_or("bd CLI unavailable");
+
+    let truncated_error = truncate_str(error_text, area.width.saturating_sub(28) as usize);
+
+    let first_line = Line::from(vec![
+        Span::styled(
+            " ✗ POLL ERROR ",
+            Style::default()
+                .fg(Color::White)
+                .bg(DANGER)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" #{} ", app.consecutive_poll_failures),
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::Rgb(180, 20, 20))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {} ", truncated_error),
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::Rgb(120, 10, 10)),
+        ),
+    ]);
+
+    let first_row = Rect {
+        x: banner_area.x,
+        y: banner_area.y,
+        width: banner_area.width,
+        height: 1,
+    };
+    f.render_widget(
+        Paragraph::new(first_line).style(Style::default().bg(Color::Rgb(120, 10, 10))),
+        first_row,
+    );
+
+    if app.consecutive_poll_failures >= 3 && banner_height >= 2 {
+        let second_row = Rect {
+            x: banner_area.x,
+            y: banner_area.y + 1,
+            width: banner_area.width,
+            height: 1,
+        };
+        let urgent_line = Line::from(Span::styled(
+            " ⚠  Multiple failures — verify dolt server is running and bd is in PATH",
+            Style::default()
+                .fg(WARN)
+                .bg(Color::Rgb(40, 15, 0))
+                .add_modifier(Modifier::BOLD),
+        ));
+        f.render_widget(
+            Paragraph::new(urgent_line).style(Style::default().bg(Color::Rgb(40, 15, 0))),
+            second_row,
+        );
+    }
 }
 
 // ══════════════════════════════════════════════════════════
