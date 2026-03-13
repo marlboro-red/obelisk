@@ -1329,6 +1329,9 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
 //  AGENT DETAIL VIEW
 // ══════════════════════════════════════════════════════════
 
+const DIAGNOSTICS_PANEL_WIDTH: u16 = 56;
+const DIAGNOSTICS_PANEL_THRESHOLD: u16 = 148;
+
 fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let t = &app.theme;
     let agent = app
@@ -1423,9 +1426,10 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
         chunks[0],
     );
 
-    // Split output area: output on left, stats/diff on right
-    // < 120 cols: collapse diagnostics sidebar to maximize terminal output
-    let narrow_cols = f.area().width < 120;
+    // Split output area: output on left, diagnostics/diff on right.
+    // Hide diagnostics until the terminal is wide enough to keep the output
+    // panel comfortable after widening diagnostics.
+    let narrow_cols = f.area().width < DIAGNOSTICS_PANEL_THRESHOLD;
     let output_chunks = if narrow_cols && !app.show_diff_panel {
         // No sidebar — full width for terminal output
         Layout::default()
@@ -1440,7 +1444,10 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(40), Constraint::Length(28)])
+            .constraints([
+                Constraint::Min(40),
+                Constraint::Length(DIAGNOSTICS_PANEL_WIDTH),
+            ])
             .split(chunks[1])
     };
 
@@ -1513,7 +1520,7 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // Right panel: diff or stats (hidden when < 120 cols and no diff panel)
+    // Right panel: diff or diagnostics (hidden when below the diagnostics breakpoint and no diff panel)
     if output_chunks.len() > 1 {
         if app.show_diff_panel {
             render_diff_panel(f, output_chunks[1], app);
@@ -3604,12 +3611,12 @@ pub fn compute_pty_area(term_cols: u16, term_rows: u16) -> (u16, u16) {
     let output_height = content_height.saturating_sub(3);
 
     // Output horizontal split:
-    //   < 120 cols: no stats panel, full width for output
-    //   >= 120 cols: Min(40) output + Length(28) stats panel
-    let output_width = if term_cols < 120 {
+    //   < 148 cols: no diagnostics panel, full width for output
+    //   >= 148 cols: Min(40) output + Length(56) diagnostics panel
+    let output_width = if term_cols < DIAGNOSTICS_PANEL_THRESHOLD {
         term_cols
     } else {
-        term_cols.saturating_sub(28)
+        term_cols.saturating_sub(DIAGNOSTICS_PANEL_WIDTH)
     };
 
     // The output block has Borders::ALL → subtract 2 from each dimension for inner area
@@ -3701,7 +3708,7 @@ mod tests {
     use super::compute_pty_area;
 
     /// 80x24 — the classic "small terminal" target.
-    /// Compact rows (<40) → chrome=7, no sidebar (<120 cols).
+    /// Compact rows (<40) → chrome=7, no diagnostics panel (<148 cols).
     #[test]
     fn pty_area_80x24() {
         let (rows, cols) = compute_pty_area(80, 24);
@@ -3710,17 +3717,16 @@ mod tests {
         assert_eq!(cols, 78);
     }
 
-    /// 120x40 — just above compact thresholds on both axes.
-    /// Normal chrome (12), sidebar present (>=120 cols, 28 cols wide).
+    /// 120x40 — normal chrome, but still below the diagnostics breakpoint.
     #[test]
     fn pty_area_120x40() {
         let (rows, cols) = compute_pty_area(120, 40);
-        // content=28, output=25, inner=23×(120-28-2)=90
+        // content=28, output=25, inner=23×118
         assert_eq!(rows, 23);
-        assert_eq!(cols, 90);
+        assert_eq!(cols, 118);
     }
 
-    /// 100x30 — compact rows, no sidebar.
+    /// 100x30 — compact rows, no diagnostics panel.
     #[test]
     fn pty_area_100x30() {
         let (rows, cols) = compute_pty_area(100, 30);
@@ -3729,13 +3735,13 @@ mod tests {
         assert_eq!(cols, 98);
     }
 
-    /// 200x50 — large terminal: normal chrome, sidebar present.
+    /// 200x50 — large terminal: normal chrome, wider diagnostics present.
     #[test]
     fn pty_area_large_terminal() {
         let (rows, cols) = compute_pty_area(200, 50);
-        // chrome=12, content=38, output=35, inner=33×(200-28-2)=170
+        // chrome=12, content=38, output=35, inner=33×(200-56-2)=142
         assert_eq!(rows, 33);
-        assert_eq!(cols, 170);
+        assert_eq!(cols, 142);
     }
 
     /// Very small terminal — saturating_sub prevents underflow.
@@ -3748,15 +3754,15 @@ mod tests {
         assert!(cols > 0, "cols should be positive at 20 cols wide, got {cols}");
     }
 
-    /// At exactly 119 cols, sidebar should be hidden (< 120 threshold).
+    /// The wider diagnostics panel stays hidden until 148 cols.
     #[test]
     fn pty_area_sidebar_threshold() {
-        let (_, cols_119) = compute_pty_area(119, 50);
-        let (_, cols_120) = compute_pty_area(120, 50);
-        // 119: no sidebar → inner = 119-2 = 117
-        // 120: sidebar → inner = 120-28-2 = 90
-        assert_eq!(cols_119, 117);
-        assert_eq!(cols_120, 90);
+        let (_, cols_147) = compute_pty_area(147, 50);
+        let (_, cols_148) = compute_pty_area(148, 50);
+        // 147: no diagnostics → inner = 147-2 = 145
+        // 148: diagnostics visible → inner = 148-56-2 = 90
+        assert_eq!(cols_147, 145);
+        assert_eq!(cols_148, 90);
     }
 
     /// At exactly 39 rows, compact mode; at 40, normal mode.
