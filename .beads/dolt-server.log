@@ -24145,3 +24145,40 @@ time="2026-03-13T17:55:54+11:00" level=info msg=NewConnection DisableClientMulti
 time="2026-03-13T17:55:54+11:00" level=info msg=ConnectionClosed connectionID=8773
 time="2026-03-13T17:55:54+11:00" level=warning msg="error running query" connectTime="2026-03-13 17:55:54.4632713 +1100 AEDT m=+24679.460025301" connectionDb=bdOrc connectionID=8774 error="nothing to commit" queryTime="2026-03-13 17:55:54.4782515 +1100 AEDT m=+24679.475005601"
 time="2026-03-13T17:55:54+11:00" level=info msg=ConnectionClosed connectionID=8774
+time="2026-03-13T17:56:03+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8775
+time="2026-03-13T17:56:03+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62025: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8775"
+time="2026-03-13T17:56:03+11:00" level=info msg=ConnectionClosed connectionID=8775
+time="2026-03-13T17:56:03+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8776
+time="2026-03-13T17:56:03+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8777
+time="2026-03-13T17:56:03+11:00" level=info msg=ConnectionClosed connectionID=8776
+time="2026-03-13T17:56:03+11:00" level=info msg=ConnectionClosed connectionID=8777
+time="2026-03-13T17:56:04+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8778
+time="2026-03-13T17:56:04+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62046: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8778"
+time="2026-03-13T17:56:04+11:00" level=info msg=ConnectionClosed connectionID=8778
+time="2026-03-13T17:56:04+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8779
+time="2026-03-13T17:56:04+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8780
+time="2026-03-13T17:56:04+11:00" level=info msg=ConnectionClosed connectionID=8779
+time="2026-03-13T17:56:04+11:00" level=info msg=ConnectionClosed connectionID=8780
+time="2026-03-13T17:56:06+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8781
+time="2026-03-13T17:56:06+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62053: wsasend: An existing connection was forcibly closed by the remote host.\nWrite(packet) failed\nconn 8781"
+time="2026-03-13T17:56:06+11:00" level=info msg=ConnectionClosed connectionID=8781
+time="2026-03-13T17:56:06+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8782
+time="2026-03-13T17:56:06+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8783
+time="2026-03-13T17:56:06+11:00" level=info msg=ConnectionClosed connectionID=8782
+time="2026-03-13T17:56:06+11:00" level=info msg=ConnectionClosed connectionID=8783
+time="2026-03-13T17:56:06+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8784
+time="2026-03-13T17:56:06+11:00" level=warning msg="Cannot read client handshake response from client 8784 (127.0.0.1:62056): read tcp 127.0.0.1:3307->127.0.0.1:62056: wsarecv: An existing connection was forcibly closed by the remote host.\nio.ReadFull(header size) failed, it may not be a valid MySQL client"
+time="2026-03-13T17:56:06+11:00" level=info msg=ConnectionClosed connectionID=8784
+time="2026-03-13T17:56:06+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8785
+time="2026-03-13T17:56:06+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8786
+time="2026-03-13T17:56:06+11:00" level=info msg=ConnectionClosed connectionID=8785
+time="2026-03-13T17:56:06+11:00" level=warning msg="error running query" connectTime="2026-03-13 17:56:06.7784515 +1100 AEDT m=+24691.775290501" connectionDb=bdOrc connectionID=8786 error="nothing to commit" queryTime="2026-03-13 17:56:06.783819 +1100 AEDT m=+24691.780658001"
+time="2026-03-13T17:56:06+11:00" level=info msg=ConnectionClosed connectionID=8786
+time="2026-03-13T17:56:09+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8787
+time="2026-03-13T17:56:09+11:00" level=warning msg="Cannot read client handshake response from client 8787 (127.0.0.1:62064): read tcp 127.0.0.1:3307->127.0.0.1:62064: wsarecv: An existing connection was forcibly closed by the remote host.\nio.ReadFull(header size) failed, it may not be a valid MySQL client"
+time="2026-03-13T17:56:09+11:00" level=info msg=ConnectionClosed connectionID=8787
+time="2026-03-13T17:56:09+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8788
+time="2026-03-13T17:56:09+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8789
+time="2026-03-13T17:56:09+11:00" level=info msg=ConnectionClosed connectionID=8788
+time="2026-03-13T17:56:09+11:00" level=warning msg="error running query" connectTime="2026-03-13 17:56:09.1900178 +1100 AEDT m=+24694.186873401" connectionDb=bdOrc connectionID=8789 error="nothing to commit" queryTime="2026-03-13 17:56:09.1962056 +1100 AEDT m=+24694.193061201"
+time="2026-03-13T17:56:09+11:00" level=info msg=ConnectionClosed connectionID=8789
