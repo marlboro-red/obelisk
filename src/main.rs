@@ -16,6 +16,8 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use types::{AppEvent, LogCategory, View, Focus};
@@ -168,10 +170,13 @@ async fn run_app(
         }
     });
 
+    // Shared poll interval — updated by config hot-reload, read by poller
+    let shared_poll_interval = Arc::new(AtomicU64::new(app.poll_interval_secs));
+
     // Poller
     let tx_poll = tx.clone();
     let tx_blocked_poll = tx.clone();
-    let poll_interval = app.poll_interval_secs;
+    let poller_interval = Arc::clone(&shared_poll_interval);
     tokio::spawn(async move {
         loop {
             match runtime::poll_ready().await {
@@ -188,7 +193,8 @@ async fn run_app(
             if let Ok(blocked) = runtime::poll_blocked().await {
                 let _ = tx_blocked_poll.send(AppEvent::BlockedPollResult(blocked));
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval)).await;
+            let secs = poller_interval.load(Ordering::Relaxed);
+            tokio::time::sleep(tokio::time::Duration::from_secs(secs)).await;
         }
     });
 
@@ -217,7 +223,7 @@ async fn run_app(
                 if matches!(event, AppEvent::Tick | AppEvent::Terminal(_)) {
                     needs_render = true;
                 }
-                process_event(&mut app, event, &tx);
+                process_event(&mut app, event, &tx, &shared_poll_interval);
             }
             None => break,
         }
@@ -227,7 +233,7 @@ async fn run_app(
             if matches!(event, AppEvent::Tick | AppEvent::Terminal(_)) {
                 needs_render = true;
             }
-            process_event(&mut app, event, &tx);
+            process_event(&mut app, event, &tx, &shared_poll_interval);
             if app.should_quit {
                 break;
             }
@@ -279,6 +285,7 @@ fn process_event(
     app: &mut App,
     event: AppEvent,
     tx: &mpsc::UnboundedSender<AppEvent>,
+    shared_poll_interval: &Arc<AtomicU64>,
 ) {
     match event {
         AppEvent::Terminal(Event::Key(key)) => {
@@ -286,6 +293,11 @@ fn process_event(
         }
         AppEvent::Tick => {
             app.on_tick();
+
+            // Config hot-reload check (~every 2s)
+            if app.check_config_reload() {
+                shared_poll_interval.store(app.poll_interval_secs, Ordering::Relaxed);
+            }
 
             if app.auto_spawn {
                 while let Some(req) = app.get_auto_spawn_info() {

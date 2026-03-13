@@ -491,6 +491,11 @@ pub struct App {
     pub dep_graph_collapsed: HashSet<String>,
     pub dep_graph_last_poll_frame: u64,
 
+    // Config hot-reload state
+    /// Last known modification time of obelisk.toml
+    pub config_mtime: Option<std::time::SystemTime>,
+    /// Frame count at which the last config mtime check was performed
+    pub config_check_frame: u64,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -705,7 +710,10 @@ impl App {
             dep_graph_list_state: ListState::default(),
             dep_graph_collapsed: HashSet::new(),
             dep_graph_last_poll_frame: 0,
-
+            config_mtime: std::fs::metadata(CONFIG_FILE)
+                .and_then(|m| m.modified())
+                .ok(),
+            config_check_frame: 0,
         };
 
         // Seed recent completions from history sessions (most recent agents last)
@@ -764,8 +772,160 @@ impl App {
         if let Ok(toml_str) = toml::to_string_pretty(&config) {
             if std::fs::write(CONFIG_FILE, toml_str).is_ok() {
                 self.log(LogCategory::System, format!("Config saved to {}", CONFIG_FILE));
+                // Update stored mtime so the watcher doesn't treat our own save as an
+                // external change.
+                self.config_mtime = std::fs::metadata(CONFIG_FILE)
+                    .and_then(|m| m.modified())
+                    .ok();
             }
         }
+    }
+
+    /// Check if `obelisk.toml` has been modified since we last loaded it, and
+    /// if so, re-read and apply the new values.  Called periodically from the
+    /// tick handler (~every 2 seconds).  Returns `true` if config was reloaded
+    /// (callers may need to propagate poll_interval changes).
+    pub fn check_config_reload(&mut self) -> bool {
+        // Only check every ~2s (20 ticks at 100ms)
+        if self.frame_count.saturating_sub(self.config_check_frame) < 20 {
+            return false;
+        }
+        self.config_check_frame = self.frame_count;
+
+        let current_mtime = match std::fs::metadata(CONFIG_FILE).and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(_) => return false, // file doesn't exist or unreadable
+        };
+
+        if self.config_mtime == Some(current_mtime) {
+            return false; // unchanged
+        }
+
+        // File was modified — reload
+        let raw = match std::fs::read_to_string(CONFIG_FILE) {
+            Ok(r) => r,
+            Err(e) => {
+                self.log(
+                    LogCategory::System,
+                    format!("[WARN] Config reload failed (read): {}", e),
+                );
+                return false;
+            }
+        };
+        let cfg: ObeliskConfig = match toml::from_str(&raw) {
+            Ok(c) => c,
+            Err(e) => {
+                self.log(
+                    LogCategory::System,
+                    format!("[WARN] Config reload failed (parse): {}", e),
+                );
+                return false;
+            }
+        };
+
+        // Validate — log warnings but still apply
+        let warnings = validate_config(&raw, &cfg);
+        for w in &warnings {
+            self.log(LogCategory::System, format!("[WARN] {}", w));
+        }
+
+        let mut changes: Vec<String> = Vec::new();
+
+        // ── Orchestrator settings ──
+        if let Some(orch) = &cfg.orchestrator {
+            if let Some(r) = &orch.runtime {
+                let new_rt = match r.as_str() {
+                    "claude" => Runtime::ClaudeCode,
+                    "codex" => Runtime::Codex,
+                    "copilot" => Runtime::Copilot,
+                    _ => self.selected_runtime,
+                };
+                if new_rt != self.selected_runtime {
+                    self.selected_runtime = new_rt;
+                    changes.push(format!("runtime → {}", new_rt.name()));
+                }
+            }
+            if let Some(mc) = orch.max_concurrent {
+                let mc = mc.clamp(1, 20);
+                if mc != self.max_concurrent {
+                    self.max_concurrent = mc;
+                    changes.push(format!("max_concurrent → {}", mc));
+                }
+            }
+            if let Some(asp) = orch.auto_spawn {
+                if asp != self.auto_spawn {
+                    self.auto_spawn = asp;
+                    changes.push(format!(
+                        "auto_spawn → {}",
+                        if asp { "on" } else { "off" }
+                    ));
+                }
+            }
+            if let Some(pi) = orch.poll_interval_secs {
+                let pi = pi.max(1);
+                if pi != self.poll_interval_secs {
+                    self.poll_interval_secs = pi;
+                    changes.push(format!("poll_interval → {}s", pi));
+                }
+            }
+            if let Some(vw) = orch.velocity_window {
+                let vw = vw.max(2);
+                if vw != self.velocity_window_size {
+                    self.velocity_window_size = vw;
+                    changes.push(format!("velocity_window → {}", vw));
+                }
+            }
+        }
+
+        // ── Model settings ──
+        if let Some(models) = &cfg.models {
+            let pairs: &[(Runtime, &Option<String>)] = &[
+                (Runtime::ClaudeCode, &models.claude),
+                (Runtime::Codex, &models.codex),
+                (Runtime::Copilot, &models.copilot),
+            ];
+            for (runtime, model_opt) in pairs {
+                if let Some(model_str) = model_opt {
+                    let idx = runtime
+                        .models()
+                        .iter()
+                        .position(|m| *m == model_str.as_str())
+                        .unwrap_or(0);
+                    let prev = self.model_indices.get(runtime).copied().unwrap_or(0);
+                    if idx != prev {
+                        self.model_indices.insert(*runtime, idx);
+                        changes.push(format!(
+                            "{} model → {}",
+                            runtime.name(),
+                            model_str
+                        ));
+                    }
+                }
+            }
+        }
+
+        // ── Theme settings ──
+        let new_theme_config = cfg.theme.unwrap_or_default();
+        if new_theme_config != self.theme_config {
+            self.theme = Theme::from_config(&new_theme_config);
+            self.theme_config = new_theme_config;
+            changes.push("theme updated".into());
+        }
+
+        self.config_mtime = Some(current_mtime);
+
+        if changes.is_empty() {
+            self.log(
+                LogCategory::System,
+                "Config file changed but no effective differences".into(),
+            );
+        } else {
+            self.log(
+                LogCategory::System,
+                format!("Config reloaded: {}", changes.join(", ")),
+            );
+        }
+        true
     }
 
     /// Build a SessionRecord from the current session and append it to the
@@ -3770,6 +3930,70 @@ mod tests {
 
         let models = restored.models.unwrap();
         assert_eq!(models.claude.as_deref(), Some("claude-opus-4-6"));
+    }
+
+    /// Config hot-reload tests are combined into a single test because they use
+    /// `set_current_dir` which is process-global and would race with parallel tests.
+    #[test]
+    fn config_hot_reload() {
+        let dir = std::env::temp_dir().join(format!("obelisk-test-reload-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+
+        // ── Part 1: detects orchestrator changes ──
+
+        let initial = "[orchestrator]\nmax_concurrent = 5\nauto_spawn = false\npoll_interval_secs = 30\n";
+        std::fs::write("obelisk.toml", initial).unwrap();
+
+        let mut app = App::new();
+        assert_eq!(app.max_concurrent, 5);
+        assert!(!app.auto_spawn);
+        assert_eq!(app.poll_interval_secs, 30);
+
+        // No change yet
+        app.frame_count = 100;
+        assert!(!app.check_config_reload());
+
+        // Write new config with different values (sleep to ensure mtime differs)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let updated = "[orchestrator]\nmax_concurrent = 12\nauto_spawn = true\npoll_interval_secs = 10\n";
+        std::fs::write("obelisk.toml", updated).unwrap();
+        app.frame_count = 200;
+
+        assert!(app.check_config_reload());
+        assert_eq!(app.max_concurrent, 12);
+        assert!(app.auto_spawn);
+        assert_eq!(app.poll_interval_secs, 10);
+
+        // Second check without changes should return false
+        app.frame_count = 300;
+        assert!(!app.check_config_reload());
+
+        // ── Part 2: theme change ──
+
+        let original_primary = app.theme.primary;
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write("obelisk.toml", "[theme]\npreset = \"nord\"\n").unwrap();
+        app.frame_count = 400;
+        assert!(app.check_config_reload());
+        assert_ne!(app.theme.primary, original_primary);
+
+        // ── Part 3: invalid TOML logs warning, preserves old values ──
+
+        let mc_before = app.max_concurrent;
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write("obelisk.toml", "[invalid toml!!!").unwrap();
+        app.frame_count = 500;
+
+        assert!(!app.check_config_reload());
+        assert_eq!(app.max_concurrent, mc_before);
+        let has_warning = app.event_log.iter().any(|e| e.message.contains("Config reload failed"));
+        assert!(has_warning);
+
+        // Cleanup
+        std::env::set_current_dir(&orig_dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── Config validation ───────────────────────────────────────

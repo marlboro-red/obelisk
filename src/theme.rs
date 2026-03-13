@@ -161,7 +161,7 @@ impl Theme {
 }
 
 /// TOML-serializable theme configuration.
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
 pub struct ThemeConfig {
     pub preset: Option<String>,
     pub primary: Option<String>,
