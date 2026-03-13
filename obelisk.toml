@@ -1,7 +1,7 @@
 [orchestrator]
 runtime = "claude"
 max_concurrent = 20
-auto_spawn = false
+auto_spawn = true
 poll_interval_secs = 15
 velocity_window = 24
 
