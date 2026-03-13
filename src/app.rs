@@ -2615,9 +2615,9 @@ impl App {
         if self.agents.is_empty() {
             return 0.0;
         }
-        let completed = self.total_completed as f64;
+        let completed = self.count_completed() as f64;
         let total = self.agents.len() as f64;
-        (completed / total * 100.0).min(100.0)
+        completed / total * 100.0
     }
 
     pub fn format_elapsed(secs: u64) -> String {
@@ -3640,10 +3640,25 @@ mod tests {
         let mut app = App::new();
         app.agents.push(test_agent(1, AgentStatus::Completed));
         app.agents.push(test_agent(2, AgentStatus::Failed));
-        app.total_completed = 1;
 
         let rate = app.completion_rate();
         assert!((rate - 50.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn completion_rate_unaffected_by_dismiss() {
+        let mut app = App::new();
+        // 4 agents: 2 completed, 1 failed, 1 running
+        app.agents.push(test_agent(1, AgentStatus::Completed));
+        app.agents.push(test_agent(2, AgentStatus::Completed));
+        app.agents.push(test_agent(3, AgentStatus::Failed));
+        app.agents.push(test_agent(4, AgentStatus::Running));
+        assert!((app.completion_rate() - 50.0).abs() < f64::EPSILON);
+
+        // Dismiss the 2 completed + 1 failed agents
+        app.agents.retain(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running));
+        // Only running agent remains → 0% completed, not inflated
+        assert!((app.completion_rate() - 0.0).abs() < f64::EPSILON);
     }
 
     // ── Worktree management ──────────────────────────────────────
