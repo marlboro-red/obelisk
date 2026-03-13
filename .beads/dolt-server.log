@@ -23201,3 +23201,155 @@ time="2026-03-13T17:43:25+11:00" level=info msg=NewConnection DisableClientMulti
 time="2026-03-13T17:43:25+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8378
 time="2026-03-13T17:43:25+11:00" level=info msg=ConnectionClosed connectionID=8377
 time="2026-03-13T17:43:25+11:00" level=info msg=ConnectionClosed connectionID=8378
+time="2026-03-13T17:43:41+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8379
+time="2026-03-13T17:43:41+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62812: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8379"
+time="2026-03-13T17:43:41+11:00" level=info msg=ConnectionClosed connectionID=8379
+time="2026-03-13T17:43:41+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8380
+time="2026-03-13T17:43:41+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8381
+time="2026-03-13T17:43:41+11:00" level=info msg=ConnectionClosed connectionID=8380
+time="2026-03-13T17:43:41+11:00" level=info msg=ConnectionClosed connectionID=8381
+time="2026-03-13T17:43:41+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8382
+time="2026-03-13T17:43:41+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62815: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8382"
+time="2026-03-13T17:43:41+11:00" level=info msg=ConnectionClosed connectionID=8382
+time="2026-03-13T17:43:41+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8383
+time="2026-03-13T17:43:41+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8384
+time="2026-03-13T17:43:41+11:00" level=info msg=ConnectionClosed connectionID=8383
+time="2026-03-13T17:43:41+11:00" level=info msg=ConnectionClosed connectionID=8384
+time="2026-03-13T17:43:56+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8385
+time="2026-03-13T17:43:56+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62820: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8385"
+time="2026-03-13T17:43:56+11:00" level=info msg=ConnectionClosed connectionID=8385
+time="2026-03-13T17:43:56+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8386
+time="2026-03-13T17:43:56+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8387
+time="2026-03-13T17:43:56+11:00" level=info msg=ConnectionClosed connectionID=8386
+time="2026-03-13T17:43:56+11:00" level=info msg=ConnectionClosed connectionID=8387
+time="2026-03-13T17:43:56+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8388
+time="2026-03-13T17:43:56+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62823: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8388"
+time="2026-03-13T17:43:56+11:00" level=info msg=ConnectionClosed connectionID=8388
+time="2026-03-13T17:43:56+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8389
+time="2026-03-13T17:43:56+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8390
+time="2026-03-13T17:43:56+11:00" level=info msg=ConnectionClosed connectionID=8389
+time="2026-03-13T17:43:57+11:00" level=info msg=ConnectionClosed connectionID=8390
+time="2026-03-13T17:44:12+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8391
+time="2026-03-13T17:44:12+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62854: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8391"
+time="2026-03-13T17:44:12+11:00" level=info msg=ConnectionClosed connectionID=8391
+time="2026-03-13T17:44:12+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8392
+time="2026-03-13T17:44:12+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8393
+time="2026-03-13T17:44:12+11:00" level=info msg=ConnectionClosed connectionID=8392
+time="2026-03-13T17:44:12+11:00" level=info msg=ConnectionClosed connectionID=8393
+time="2026-03-13T17:44:12+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8394
+time="2026-03-13T17:44:12+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62857: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8394"
+time="2026-03-13T17:44:12+11:00" level=info msg=ConnectionClosed connectionID=8394
+time="2026-03-13T17:44:12+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8395
+time="2026-03-13T17:44:12+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8396
+time="2026-03-13T17:44:12+11:00" level=info msg=ConnectionClosed connectionID=8395
+time="2026-03-13T17:44:12+11:00" level=info msg=ConnectionClosed connectionID=8396
+time="2026-03-13T17:44:20+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8397
+time="2026-03-13T17:44:20+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62866: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8397"
+time="2026-03-13T17:44:20+11:00" level=info msg=ConnectionClosed connectionID=8397
+time="2026-03-13T17:44:20+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8398
+time="2026-03-13T17:44:20+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8399
+time="2026-03-13T17:44:20+11:00" level=info msg=ConnectionClosed connectionID=8398
+time="2026-03-13T17:44:21+11:00" level=info msg=ConnectionClosed connectionID=8399
+time="2026-03-13T17:44:23+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8400
+time="2026-03-13T17:44:23+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62869: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8400"
+time="2026-03-13T17:44:23+11:00" level=info msg=ConnectionClosed connectionID=8400
+time="2026-03-13T17:44:23+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8401
+time="2026-03-13T17:44:23+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8402
+time="2026-03-13T17:44:23+11:00" level=info msg=ConnectionClosed connectionID=8401
+time="2026-03-13T17:44:23+11:00" level=info msg=ConnectionClosed connectionID=8402
+time="2026-03-13T17:44:28+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8403
+time="2026-03-13T17:44:28+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62875: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8403"
+time="2026-03-13T17:44:28+11:00" level=info msg=ConnectionClosed connectionID=8403
+time="2026-03-13T17:44:28+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8404
+time="2026-03-13T17:44:28+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8405
+time="2026-03-13T17:44:28+11:00" level=info msg=ConnectionClosed connectionID=8404
+time="2026-03-13T17:44:28+11:00" level=info msg=ConnectionClosed connectionID=8405
+time="2026-03-13T17:44:28+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8406
+time="2026-03-13T17:44:28+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:62878: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8406"
+time="2026-03-13T17:44:28+11:00" level=info msg=ConnectionClosed connectionID=8406
+time="2026-03-13T17:44:28+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8407
+time="2026-03-13T17:44:28+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8408
+time="2026-03-13T17:44:28+11:00" level=info msg=ConnectionClosed connectionID=8407
+time="2026-03-13T17:44:28+11:00" level=info msg=ConnectionClosed connectionID=8408
+time="2026-03-13T17:44:29+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8409
+time="2026-03-13T17:44:29+11:00" level=warning msg="Cannot read client handshake response from client 8409 (127.0.0.1:62882): read tcp 127.0.0.1:3307->127.0.0.1:62882: wsarecv: An existing connection was forcibly closed by the remote host.\nio.ReadFull(header size) failed, it may not be a valid MySQL client"
+time="2026-03-13T17:44:29+11:00" level=info msg=ConnectionClosed connectionID=8409
+time="2026-03-13T17:44:29+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8410
+time="2026-03-13T17:44:29+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8411
+time="2026-03-13T17:44:29+11:00" level=info msg=ConnectionClosed connectionID=8410
+time="2026-03-13T17:44:29+11:00" level=warning msg="error running query" connectTime="2026-03-13 17:44:29.1060233 +1100 AEDT m=+23994.097881901" connectionDb=bdOrc connectionID=8411 error="nothing to commit" queryTime="2026-03-13 17:44:29.11047 +1100 AEDT m=+23994.102328701"
+time="2026-03-13T17:44:29+11:00" level=info msg=ConnectionClosed connectionID=8411
+time="2026-03-13T17:44:37+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8412
+time="2026-03-13T17:44:37+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60565: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8412"
+time="2026-03-13T17:44:37+11:00" level=info msg=ConnectionClosed connectionID=8412
+time="2026-03-13T17:44:37+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8413
+time="2026-03-13T17:44:37+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8414
+time="2026-03-13T17:44:37+11:00" level=info msg=ConnectionClosed connectionID=8413
+time="2026-03-13T17:44:37+11:00" level=warning msg="error running query" connectTime="2026-03-13 17:44:37.1827335 +1100 AEDT m=+24002.174653501" connectionDb=bdOrc connectionID=8414 error="nothing to commit" queryTime="2026-03-13 17:44:37.1952014 +1100 AEDT m=+24002.187121501"
+time="2026-03-13T17:44:37+11:00" level=warning msg="error running query" connectTime="2026-03-13 17:44:37.1827335 +1100 AEDT m=+24002.174653501" connectionDb=bdOrc connectionID=8414 error="nothing to commit" queryTime="2026-03-13 17:44:37.4377425 +1100 AEDT m=+24002.429664401"
+time="2026-03-13T17:44:37+11:00" level=info msg=ConnectionClosed connectionID=8414
+time="2026-03-13T17:44:44+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8415
+time="2026-03-13T17:44:44+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60580: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8415"
+time="2026-03-13T17:44:44+11:00" level=info msg=ConnectionClosed connectionID=8415
+time="2026-03-13T17:44:44+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8416
+time="2026-03-13T17:44:44+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8417
+time="2026-03-13T17:44:44+11:00" level=info msg=ConnectionClosed connectionID=8416
+time="2026-03-13T17:44:44+11:00" level=info msg=ConnectionClosed connectionID=8417
+time="2026-03-13T17:44:44+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8418
+time="2026-03-13T17:44:44+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60583: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8418"
+time="2026-03-13T17:44:44+11:00" level=info msg=ConnectionClosed connectionID=8418
+time="2026-03-13T17:44:44+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8419
+time="2026-03-13T17:44:44+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8420
+time="2026-03-13T17:44:44+11:00" level=info msg=ConnectionClosed connectionID=8419
+time="2026-03-13T17:44:44+11:00" level=info msg=ConnectionClosed connectionID=8420
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8421
+time="2026-03-13T17:45:01+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60608: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8421"
+time="2026-03-13T17:45:01+11:00" level=info msg=ConnectionClosed connectionID=8421
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8422
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8423
+time="2026-03-13T17:45:01+11:00" level=info msg=ConnectionClosed connectionID=8422
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8424
+time="2026-03-13T17:45:01+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60611: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8424"
+time="2026-03-13T17:45:01+11:00" level=info msg=ConnectionClosed connectionID=8424
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8425
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8426
+time="2026-03-13T17:45:01+11:00" level=info msg=ConnectionClosed connectionID=8425
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8427
+time="2026-03-13T17:45:01+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60614: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8427"
+time="2026-03-13T17:45:01+11:00" level=info msg=ConnectionClosed connectionID=8427
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8428
+time="2026-03-13T17:45:01+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8429
+time="2026-03-13T17:45:01+11:00" level=info msg=ConnectionClosed connectionID=8428
+time="2026-03-13T17:45:01+11:00" level=warning msg="error running query" connectTime="2026-03-13 17:45:01.8816225 +1100 AEDT m=+24026.873730201" connectionDb=bdOrc connectionID=8429 error="nothing to commit" queryTime="2026-03-13 17:45:01.9114154 +1100 AEDT m=+24026.903523301"
+time="2026-03-13T17:45:02+11:00" level=info msg=ConnectionClosed connectionID=8423
+time="2026-03-13T17:45:02+11:00" level=info msg=ConnectionClosed connectionID=8426
+time="2026-03-13T17:45:02+11:00" level=info msg=ConnectionClosed connectionID=8429
+time="2026-03-13T17:45:02+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8430
+time="2026-03-13T17:45:02+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60618: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8430"
+time="2026-03-13T17:45:02+11:00" level=info msg=ConnectionClosed connectionID=8430
+time="2026-03-13T17:45:02+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8431
+time="2026-03-13T17:45:02+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8432
+time="2026-03-13T17:45:02+11:00" level=info msg=ConnectionClosed connectionID=8431
+time="2026-03-13T17:45:03+11:00" level=info msg=ConnectionClosed connectionID=8432
+time="2026-03-13T17:45:13+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8433
+time="2026-03-13T17:45:13+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60624: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8433"
+time="2026-03-13T17:45:13+11:00" level=info msg=ConnectionClosed connectionID=8433
+time="2026-03-13T17:45:13+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8434
+time="2026-03-13T17:45:13+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8435
+time="2026-03-13T17:45:13+11:00" level=info msg=ConnectionClosed connectionID=8434
+time="2026-03-13T17:45:13+11:00" level=warning msg="error running query" connectTime="2026-03-13 17:45:13.1220342 +1100 AEDT m=+24038.114227301" connectionDb=bdOrc connectionID=8435 error="nothing to commit" queryTime="2026-03-13 17:45:13.1285662 +1100 AEDT m=+24038.120759401"
+time="2026-03-13T17:45:13+11:00" level=info msg=ConnectionClosed connectionID=8435
+time="2026-03-13T17:45:18+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8436
+time="2026-03-13T17:45:18+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60628: wsasend: An existing connection was forcibly closed by the remote host.\nWrite(packet) failed\nconn 8436"
+time="2026-03-13T17:45:18+11:00" level=info msg=ConnectionClosed connectionID=8436
+time="2026-03-13T17:45:18+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8437
+time="2026-03-13T17:45:18+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8438
+time="2026-03-13T17:45:18+11:00" level=info msg=ConnectionClosed connectionID=8437
+time="2026-03-13T17:45:18+11:00" level=info msg=ConnectionClosed connectionID=8438
+time="2026-03-13T17:45:18+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8439
+time="2026-03-13T17:45:18+11:00" level=error msg="Cannot send HandshakeV10 packet: write tcp 127.0.0.1:3307->127.0.0.1:60631: wsasend: An established connection was aborted by the software in your host machine.\nWrite(packet) failed\nconn 8439"
+time="2026-03-13T17:45:18+11:00" level=info msg=ConnectionClosed connectionID=8439
+time="2026-03-13T17:45:18+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8440
+time="2026-03-13T17:45:18+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8441
+time="2026-03-13T17:45:18+11:00" level=info msg=ConnectionClosed connectionID=8440
+time="2026-03-13T17:45:19+11:00" level=info msg=ConnectionClosed connectionID=8441
