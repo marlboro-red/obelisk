@@ -28,11 +28,8 @@ fn pty_npm_command(name: &str) -> CommandBuilder {
 /// The process runs in a real terminal (PTY) so it gets ANSI colors,
 /// progress bars, and the user can attach and type if needed.
 ///
-/// Claude Code runs in interactive mode (no --print) so the session
-/// stays open for steering. Codex and Copilot use their one-shot
-/// execution modes (exec / -p) since they lack a documented bare
-/// interactive REPL — but the PTY still renders their full output
-/// and allows input if the process reads stdin.
+/// All runtimes are launched in interactive mode so the session stays
+/// open for steering and the user can attach via the TUI.
 pub fn build_pty_command(
     runtime: Runtime,
     model: &str,
@@ -53,13 +50,12 @@ pub fn build_pty_command(
             cmd
         }
         Runtime::Codex => {
-            // Same invocation as before, but in a PTY for full terminal rendering
+            // Interactive mode (no `exec`) so the session stays open
             let mut cmd = pty_npm_command("codex");
             let combined = format!(
                 "{}\n\nFollow the workflow below exactly.\n\n---\n\n{}",
                 user_prompt, system_prompt
             );
-            cmd.arg("exec");
             cmd.arg("--dangerously-bypass-approvals-and-sandbox");
             cmd.arg("-m");
             cmd.arg(model);
@@ -67,13 +63,13 @@ pub fn build_pty_command(
             cmd
         }
         Runtime::Copilot => {
-            // Same invocation as before, but in a PTY for full terminal rendering
+            // `-i` starts interactive mode and auto-executes the prompt
             let mut cmd = pty_npm_command("copilot");
             let combined = format!(
                 "{}\n\nFollow the workflow below exactly.\n\n---\n\n{}",
                 user_prompt, system_prompt
             );
-            cmd.arg("-p");
+            cmd.arg("-i");
             cmd.arg(&combined);
             cmd.arg("--model");
             cmd.arg(model);
