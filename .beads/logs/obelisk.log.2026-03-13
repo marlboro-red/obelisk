@@ -9,3 +9,15 @@
 [2m2026-03-13T00:08:12.244474Z[0m [32m INFO[0m obelisk starting
 [2m2026-03-13T00:46:06.387005Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m0 [3mtask_id[0m[2m=[0m"obelisk-2j4" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
 [2m2026-03-13T00:46:06.387074Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m1 [3mtask_id[0m[2m=[0m"obelisk-vm3" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-13T01:59:41.790561Z[0m [32m INFO[0m agent exited [3magent_id[0m[2m=[0m1 [3mexit_code[0m[2m=[0mSome(1)
+[2m2026-03-13T01:59:47.268517Z[0m [32m INFO[0m agent exited [3magent_id[0m[2m=[0m0 [3mexit_code[0m[2m=[0mSome(1)
+[2m2026-03-13T01:59:48.515058Z[0m [32m INFO[0m shutting down [3mcompleted[0m[2m=[0m2 [3mfailed[0m[2m=[0m0 [3magents[0m[2m=[0m2
+[2m2026-03-13T01:59:48.526279Z[0m [32m INFO[0m obelisk shutdown
+[2m2026-03-13T02:14:44.332815Z[0m [32m INFO[0m obelisk starting
+[2m2026-03-13T02:34:24.047332Z[0m [32m INFO[0m shutting down [3mcompleted[0m[2m=[0m0 [3mfailed[0m[2m=[0m0 [3magents[0m[2m=[0m0
+[2m2026-03-13T02:34:24.048605Z[0m [32m INFO[0m obelisk shutdown
+[2m2026-03-13T05:36:38.019479Z[0m [32m INFO[0m obelisk starting
+[2m2026-03-13T05:36:38.738112Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m0 [3mtask_id[0m[2m=[0m"obelisk-3t3" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-13T05:36:38.738183Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m1 [3mtask_id[0m[2m=[0m"obelisk-rc1" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-13T05:36:38.738247Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m2 [3mtask_id[0m[2m=[0m"obelisk-9bh" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-13T05:36:38.738367Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m3 [3mtask_id[0m[2m=[0m"obelisk-n2p" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
