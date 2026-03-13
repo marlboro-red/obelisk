@@ -77,7 +77,7 @@ const KNOWN_THEME_KEYS: &[&str] = &[
     "preset", "primary", "accent", "secondary", "danger", "info", "warn",
     "dark_bg", "panel_bg", "muted", "bright", "dim_accent",
 ];
-const KNOWN_THEME_PRESETS: &[&str] = &["solarized", "nord", "catppuccin", "gruvbox"];
+const KNOWN_THEME_PRESETS: &[&str] = &["solarized", "frost", "nord", "ember", "catppuccin", "ash", "gruvbox", "deep"];
 const KNOWN_RUNTIMES: &[&str] = &["claude", "codex", "copilot"];
 
 /// Validate parsed config and return a list of warnings.
@@ -4379,6 +4379,20 @@ mod tests {
         let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
         let warnings = validate_config(toml_str, &config);
         assert!(warnings.iter().any(|w| w.contains("dracula")));
+    }
+
+    #[test]
+    fn validate_accepts_theme_preset_aliases() {
+        for alias in &["frost", "ember", "ash", "deep"] {
+            let toml_str = format!("[theme]\npreset = \"{}\"", alias);
+            let config: ObeliskConfig = toml::from_str(&toml_str).unwrap();
+            let warnings = validate_config(&toml_str, &config);
+            let preset_warnings: Vec<_> = warnings.iter()
+                .filter(|w| w.contains("Unknown theme preset"))
+                .collect();
+            assert!(preset_warnings.is_empty(),
+                "Alias '{}' should be accepted but got: {:?}", alias, preset_warnings);
+        }
     }
 
     #[test]
