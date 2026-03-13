@@ -9,6 +9,8 @@ use crate::runtime;
 use crate::types::{AgentStatus, AppEvent};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -81,9 +83,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 
+    // Shared poll interval — updated by config hot-reload, read by poller
+    let shared_poll_interval = Arc::new(AtomicU64::new(app.poll_interval_secs));
+
     // Poller task
     let tx_poll = tx.clone();
-    let poll_interval = app.poll_interval_secs;
+    let poller_interval = Arc::clone(&shared_poll_interval);
     tokio::spawn(async move {
         loop {
             match runtime::poll_ready().await {
@@ -96,7 +101,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = tx_poll.send(AppEvent::PollFailed(e));
                 }
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval)).await;
+            let secs = poller_interval.load(Ordering::Relaxed);
+            tokio::time::sleep(tokio::time::Duration::from_secs(secs)).await;
         }
     });
 
@@ -164,7 +170,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             event = rx.recv() => {
                 match event {
-                    Some(ev) => process_daemon_event(&mut app, ev, &tx),
+                    Some(ev) => process_daemon_event(&mut app, ev, &tx, &shared_poll_interval),
                     None => break,
                 }
             }
@@ -201,10 +207,17 @@ fn process_daemon_event(
     app: &mut App,
     event: AppEvent,
     tx: &mpsc::UnboundedSender<AppEvent>,
+    shared_poll_interval: &Arc<AtomicU64>,
 ) {
     match event {
         AppEvent::Tick => {
             app.on_tick();
+
+            // Config hot-reload check (~every 2s)
+            if app.check_config_reload() {
+                shared_poll_interval.store(app.poll_interval_secs, Ordering::Relaxed);
+            }
+
             // Auto-spawn if enabled
             if app.auto_spawn {
                 while let Some(req) = app.get_auto_spawn_info() {
