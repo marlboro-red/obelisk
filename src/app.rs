@@ -368,7 +368,6 @@ pub struct App {
     pub template_dir: PathBuf,
 
     pub frame_count: u64,
-    pub wave_offset: f64,
 
     // Throughput tracking (lines per second over last 60 ticks)
     pub throughput_history: VecDeque<u16>,
@@ -654,7 +653,6 @@ impl App {
             agent_output_scroll: None,
             template_dir: templates::default_template_dir(),
             frame_count: 0,
-            wave_offset: 0.0,
             throughput_history: VecDeque::from(vec![0; 60]),
             lines_this_tick: 0,
             alert_message: None,
@@ -1026,7 +1024,6 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.frame_count += 1;
-        self.wave_offset = (self.wave_offset + 0.15) % (std::f64::consts::TAU * 100.0);
         if self.poll_countdown > 0.0 {
             self.poll_countdown -= 0.1;
             if self.poll_countdown < 0.0 {
