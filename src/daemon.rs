@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 const PORT_FILE: &str = ".beads/obelisk.port";
 
@@ -223,44 +223,93 @@ fn process_daemon_event(
                 while let Some(req) = app.get_auto_spawn_info() {
                     let unit = req.agent_id;
                     let task_id = req.task.id.clone();
-                    info!(unit, task_id, "auto-spawning agent");
+                    info!(agent_id = unit, task_id, event = "auto_spawn", "auto-spawning agent for ready task");
                     tokio::spawn(spawn_agent_process(tx.clone(), req));
                 }
             }
         }
         AppEvent::PollResult(tasks) => {
-            let count = tasks.len();
+            debug!(
+                ready_count = tasks.len(),
+                event = "poll_result",
+                "beads poll completed"
+            );
             app.on_poll_result(tasks);
-            if count > 0 {
-                info!(count, "poll: {} ready tasks", count);
-            }
         }
         AppEvent::PollFailed(error) => {
-            warn!(%error, "poll failed");
+            warn!(
+                %error,
+                consecutive_failures = app.consecutive_poll_failures + 1,
+                event = "poll_failed",
+                "beads poll failed"
+            );
             app.on_poll_failed(error);
         }
         AppEvent::AgentOutput { agent_id, line } => {
             app.on_agent_output(agent_id, line);
         }
         AppEvent::AgentExited { agent_id, exit_code } => {
-            let status = if exit_code == Some(0) { "completed" } else { "failed" };
-            info!(agent_id, ?exit_code, status, "agent exited");
+            let (task_id, runtime, elapsed) = app
+                .agents
+                .iter()
+                .find(|a| a.id == agent_id)
+                .map(|a| (
+                    a.task.id.clone(),
+                    a.runtime.name().to_string(),
+                    a.started_at.elapsed().as_secs(),
+                ))
+                .unwrap_or_default();
+            if exit_code == Some(0) {
+                info!(
+                    agent_id,
+                    task_id,
+                    runtime,
+                    elapsed_secs = elapsed,
+                    exit_code = 0,
+                    event = "agent_completed",
+                    "agent completed successfully"
+                );
+            } else {
+                warn!(
+                    agent_id,
+                    task_id,
+                    runtime,
+                    elapsed_secs = elapsed,
+                    ?exit_code,
+                    event = "agent_failed",
+                    "agent exited with failure"
+                );
+            }
             app.on_agent_exited(agent_id, exit_code);
         }
         AppEvent::AgentPid { agent_id, pid } => {
+            debug!(agent_id, pid, event = "agent_pid", "agent process started");
             app.on_agent_pid(agent_id, pid);
         }
         AppEvent::AgentPtyData { agent_id, data } => {
             app.on_agent_pty_data(agent_id, &data);
         }
         AppEvent::AgentPtyReady { agent_id, handle } => {
+            debug!(agent_id, event = "pty_ready", "agent PTY handle ready");
             app.on_agent_pty_ready(agent_id, *handle);
         }
         AppEvent::WorktreeOrphans(paths) => {
-            warn!(count = paths.len(), "orphaned worktrees");
+            warn!(
+                count = paths.len(),
+                event = "worktree_orphans",
+                "orphaned agent worktrees found from previous session"
+            );
             app.on_worktree_orphans(paths);
         }
         AppEvent::WorktreeCleaned { cleaned, failed } => {
+            if !cleaned.is_empty() || !failed.is_empty() {
+                info!(
+                    cleaned = cleaned.len(),
+                    failed = failed.len(),
+                    event = "worktree_cleaned",
+                    "worktree cleanup completed"
+                );
+            }
             app.on_worktree_cleaned(cleaned, failed);
         }
         AppEvent::DiffResult { agent_id, diff } => {
@@ -273,10 +322,15 @@ fn process_daemon_event(
             app.on_dep_graph_result(nodes);
         }
         AppEvent::DepGraphFailed(error) => {
-            warn!(%error, "dep graph poll failed");
+            warn!(%error, event = "dep_graph_failed", "dependency graph poll failed");
             app.on_dep_graph_failed(error);
         }
         AppEvent::BlockedPollResult(tasks) => {
+            debug!(
+                blocked_count = tasks.len(),
+                event = "blocked_poll_result",
+                "blocked issues poll completed"
+            );
             app.on_blocked_poll_result(tasks);
         }
         AppEvent::Terminal(_) => {} // no TUI in daemon mode
@@ -419,9 +473,20 @@ async fn spawn_agent_process(
     let pty_cols = req.pty_cols;
 
     let task_id = task.id.clone();
+    let task_title = task.title.clone();
     let runtime_name = runtime.to_string();
     let model_name = model.clone();
-    info!(agent_id, task_id, runtime = %runtime_name, model = %model_name, "spawning agent");
+    info!(
+        agent_id,
+        task_id,
+        task_title,
+        runtime = %runtime_name,
+        model = %model_name,
+        pty_rows,
+        pty_cols,
+        event = "agent_spawn",
+        "spawning agent process"
+    );
 
     let spawn_result = tokio::task::spawn_blocking(move || {
         runtime::spawn_agent_pty(runtime, &model, &task, &system_prompt, &user_prompt, pty_rows, pty_cols)
@@ -431,7 +496,14 @@ async fn spawn_agent_process(
     let (handle, reader, child) = match spawn_result {
         Ok(Ok(tuple)) => tuple,
         Ok(Err(e)) => {
-            error!(agent_id, %e, "PTY spawn failed");
+            error!(
+                agent_id,
+                task_id,
+                runtime = %runtime_name,
+                %e,
+                event = "pty_spawn_failed",
+                "PTY spawn failed"
+            );
             let _ = tx.send(AppEvent::AgentOutput {
                 agent_id,
                 line: format!("[ERROR] PTY spawn failed: {}", e),
@@ -440,7 +512,14 @@ async fn spawn_agent_process(
             return;
         }
         Err(e) => {
-            error!(agent_id, %e, "spawn_blocking panicked");
+            error!(
+                agent_id,
+                task_id,
+                runtime = %runtime_name,
+                %e,
+                event = "pty_spawn_panic",
+                "spawn_blocking panicked during PTY creation"
+            );
             let _ = tx.send(AppEvent::AgentOutput {
                 agent_id,
                 line: format!("[ERROR] spawn_blocking panicked: {}", e),
@@ -451,6 +530,7 @@ async fn spawn_agent_process(
     };
 
     if let Some(pid) = child.process_id() {
+        debug!(agent_id, pid, event = "agent_pid", "agent process started");
         let _ = tx.send(AppEvent::AgentPid { agent_id, pid });
     }
 
@@ -458,6 +538,7 @@ async fn spawn_agent_process(
 
     // Reader task
     let tx_reader = tx.clone();
+    let reader_task_id = task_id.clone();
     tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let mut reader = reader;
@@ -476,7 +557,16 @@ async fn spawn_agent_process(
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(e) => {
+                    warn!(
+                        agent_id,
+                        task_id = %reader_task_id,
+                        error = %e,
+                        event = "pty_read_error",
+                        "PTY reader encountered an error"
+                    );
+                    break;
+                }
             }
         }
     });
@@ -489,7 +579,16 @@ async fn spawn_agent_process(
             Ok(status) => {
                 if status.success() { Some(0) } else { Some(1) }
             }
-            Err(_) => None,
+            Err(e) => {
+                warn!(
+                    agent_id,
+                    task_id,
+                    error = %e,
+                    event = "agent_wait_error",
+                    "child.wait() failed — exit code unknown"
+                );
+                None
+            }
         };
         let _ = tx_exit.send(AppEvent::AgentExited { agent_id, exit_code });
     });

@@ -19,7 +19,7 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, warn};
 use types::{AppEvent, LogCategory, View, Focus};
 
 const TICK_RATE_MS: u64 = 100;
@@ -84,7 +84,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Initialise file-based tracing.
+/// Initialise file-based tracing with structured JSON output.
+///
+/// Log entries are written as one JSON object per line to
+/// `.beads/logs/obelisk.log` (daily rolling).  Each line includes an ISO-8601
+/// timestamp, level, structured fields, and message.  Callers should enter a
+/// root span with `session_id` after initialisation so that every subsequent
+/// log line is automatically tagged.
 fn init_logging() {
     let log_dir = std::path::Path::new(".beads").join("logs");
     std::fs::create_dir_all(&log_dir).ok();
@@ -95,12 +101,15 @@ fn init_logging() {
     std::mem::forget(_guard);
 
     tracing_subscriber::fmt()
+        .json()
         .with_writer(non_blocking)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
-        .with_target(false)
+        .with_target(true)
+        .with_current_span(true)
+        .with_span_list(false)
         .init();
 }
 
@@ -124,11 +133,11 @@ async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     terminal.show_cursor()?;
 
     if let Err(e) = result {
-        error!(%e, "fatal error");
+        error!(%e, "obelisk fatal error");
         eprintln!("Error: {}", e);
     }
 
-    info!("obelisk shutdown");
+    info!("obelisk shutdown complete");
 
     Ok(())
 }
@@ -137,6 +146,17 @@ async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
+
+    // Enter a root span carrying the session_id so every log line is tagged.
+    let _session_span = info_span!("session", session_id = %app.session_id).entered();
+    info!(
+        runtime = %app.selected_runtime.name(),
+        max_concurrent = app.max_concurrent,
+        auto_spawn = app.auto_spawn,
+        poll_interval_secs = app.poll_interval_secs,
+        "session started"
+    );
+
     // Set initial PTY size from actual terminal dimensions
     let init_size = terminal.size()?;
     let (init_rows, init_cols) = ui::compute_pty_area(init_size.width, init_size.height);
@@ -267,10 +287,12 @@ async fn run_app(
 
     // Save settings and kill all running agent processes before exiting
     info!(
-        completed = app.total_completed,
-        failed = app.total_failed,
-        agents = app.agents.len(),
-        "shutting down"
+        total_completed = app.total_completed,
+        total_failed = app.total_failed,
+        agents_active = app.active_agent_count(),
+        agents_total = app.agents.len(),
+        uptime_secs = (chrono::Local::now() - app.session_started_at).num_seconds(),
+        "session ending — shutting down"
     );
     app.save_config();
     app.kill_all_agents();
@@ -355,11 +377,20 @@ fn process_event(
             }
         }
         AppEvent::PollResult(tasks) => {
-            debug!(count = tasks.len(), "poll result");
+            debug!(
+                ready_count = tasks.len(),
+                event = "poll_result",
+                "beads poll completed"
+            );
             app.on_poll_result(tasks);
         }
         AppEvent::PollFailed(error) => {
-            warn!(%error, "poll failed");
+            warn!(
+                %error,
+                consecutive_failures = app.consecutive_poll_failures + 1,
+                event = "poll_failed",
+                "beads poll failed"
+            );
             app.on_poll_failed(error);
         }
         AppEvent::AgentOutput { agent_id, line } => {
@@ -369,23 +400,75 @@ fn process_event(
             agent_id,
             exit_code,
         } => {
-            info!(agent_id, ?exit_code, "agent exited");
+            // Look up agent metadata before processing the exit
+            let (task_id, runtime, model, elapsed, retry_count) = app
+                .agents
+                .iter()
+                .find(|a| a.id == agent_id)
+                .map(|a| (
+                    a.task.id.clone(),
+                    a.runtime.name().to_string(),
+                    a.model.clone(),
+                    a.started_at.elapsed().as_secs(),
+                    a.retry_count,
+                ))
+                .unwrap_or_default();
+            let success = exit_code == Some(0);
+            if success {
+                info!(
+                    agent_id,
+                    task_id,
+                    runtime,
+                    model,
+                    elapsed_secs = elapsed,
+                    retry_count,
+                    exit_code = 0,
+                    event = "agent_completed",
+                    "agent completed successfully"
+                );
+            } else {
+                warn!(
+                    agent_id,
+                    task_id,
+                    runtime,
+                    model,
+                    elapsed_secs = elapsed,
+                    retry_count,
+                    ?exit_code,
+                    event = "agent_failed",
+                    "agent exited with failure"
+                );
+            }
             app.on_agent_exited(agent_id, exit_code);
         }
         AppEvent::AgentPid { agent_id, pid } => {
+            debug!(agent_id, pid, event = "agent_pid", "agent process started");
             app.on_agent_pid(agent_id, pid);
         }
         AppEvent::AgentPtyData { agent_id, data } => {
             app.on_agent_pty_data(agent_id, &data);
         }
         AppEvent::AgentPtyReady { agent_id, handle } => {
+            debug!(agent_id, event = "pty_ready", "agent PTY handle ready");
             app.on_agent_pty_ready(agent_id, *handle);
         }
         AppEvent::WorktreeOrphans(paths) => {
-            warn!(count = paths.len(), "orphaned worktrees found");
+            warn!(
+                count = paths.len(),
+                event = "worktree_orphans",
+                "orphaned agent worktrees found from previous session"
+            );
             app.on_worktree_orphans(paths);
         }
         AppEvent::WorktreeCleaned { cleaned, failed } => {
+            if !cleaned.is_empty() || !failed.is_empty() {
+                info!(
+                    cleaned = cleaned.len(),
+                    failed = failed.len(),
+                    event = "worktree_cleaned",
+                    "worktree cleanup completed"
+                );
+            }
             app.on_worktree_cleaned(cleaned, failed);
         }
         AppEvent::DiffResult { agent_id, diff } => {
@@ -398,10 +481,15 @@ fn process_event(
             app.on_dep_graph_result(nodes);
         }
         AppEvent::DepGraphFailed(error) => {
-            warn!(%error, "dep graph poll failed");
+            warn!(%error, event = "dep_graph_failed", "dependency graph poll failed");
             app.on_dep_graph_failed(error);
         }
         AppEvent::BlockedPollResult(tasks) => {
+            debug!(
+                blocked_count = tasks.len(),
+                event = "blocked_poll_result",
+                "blocked issues poll completed"
+            );
             app.on_blocked_poll_result(tasks);
         }
         AppEvent::Terminal(Event::Resize(_, _)) => {
@@ -1071,9 +1159,20 @@ async fn spawn_agent_process(
     let pty_cols = req.pty_cols;
 
     let task_id = task.id.clone();
+    let task_title = task.title.clone();
     let runtime_name = runtime.to_string();
     let model_name = model.clone();
-    info!(agent_id, task_id, runtime = %runtime_name, model = %model_name, "spawning agent");
+    info!(
+        agent_id,
+        task_id,
+        task_title,
+        runtime = %runtime_name,
+        model = %model_name,
+        pty_rows,
+        pty_cols,
+        event = "agent_spawn",
+        "spawning agent process"
+    );
 
     // PTY creation is blocking — run in spawn_blocking
     let spawn_result = tokio::task::spawn_blocking(move || {
@@ -1084,7 +1183,14 @@ async fn spawn_agent_process(
     let (handle, reader, child) = match spawn_result {
         Ok(Ok(tuple)) => tuple,
         Ok(Err(e)) => {
-            error!(agent_id, %e, "PTY spawn failed");
+            error!(
+                agent_id,
+                task_id,
+                runtime = %runtime_name,
+                %e,
+                event = "pty_spawn_failed",
+                "PTY spawn failed"
+            );
             let _ = tx.send(AppEvent::AgentOutput {
                 agent_id,
                 line: format!("[ERROR] PTY spawn failed: {}", e),
@@ -1096,7 +1202,14 @@ async fn spawn_agent_process(
             return;
         }
         Err(e) => {
-            error!(agent_id, %e, "spawn_blocking panicked");
+            error!(
+                agent_id,
+                task_id,
+                runtime = %runtime_name,
+                %e,
+                event = "pty_spawn_panic",
+                "spawn_blocking panicked during PTY creation"
+            );
             let _ = tx.send(AppEvent::AgentOutput {
                 agent_id,
                 line: format!("[ERROR] spawn_blocking panicked: {}", e),
@@ -1122,6 +1235,7 @@ async fn spawn_agent_process(
 
     // Reader task: read raw bytes from PTY, send as events
     let tx_reader = tx.clone();
+    let reader_task_id = task_id.clone();
     tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let mut reader = reader;
@@ -1140,7 +1254,16 @@ async fn spawn_agent_process(
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(e) => {
+                    warn!(
+                        agent_id,
+                        task_id = %reader_task_id,
+                        error = %e,
+                        event = "pty_read_error",
+                        "PTY reader encountered an error"
+                    );
+                    break;
+                }
             }
         }
     });
@@ -1159,7 +1282,16 @@ async fn spawn_agent_process(
                     Some(1)
                 }
             }
-            Err(_) => None, // wait() itself failed — report as unknown
+            Err(e) => {
+                warn!(
+                    agent_id,
+                    task_id,
+                    error = %e,
+                    event = "agent_wait_error",
+                    "child.wait() failed — exit code unknown"
+                );
+                None
+            }
         };
         let _ = tx_exit.send(AppEvent::AgentExited {
             agent_id,
