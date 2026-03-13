@@ -167,6 +167,16 @@ fn render_title_bar(f: &mut Frame, area: Rect, app: &App) {
             "BEADS ORCHESTRATOR",
             Style::default().fg(t.muted),
         ),
+        Span::styled(
+            "  ◈ ",
+            Style::default().fg(t.muted),
+        ),
+        Span::styled(
+            app.repo_name.to_uppercase(),
+            Style::default()
+                .fg(t.info)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("  ", Style::default()),
         Span::styled(format!("{} ", dot), Style::default().fg(t.accent)),
         Span::styled(

@@ -496,6 +496,9 @@ pub struct App {
     pub config_mtime: Option<std::time::SystemTime>,
     /// Frame count at which the last config mtime check was performed
     pub config_check_frame: u64,
+
+    // Repository name for display in title bar
+    pub repo_name: String,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -536,6 +539,37 @@ impl Default for App {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Detect the repository name from the git remote URL or fall back to the
+/// working directory name.
+fn detect_repo_name() -> String {
+    // Try git remote URL first
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+    {
+        if output.status.success() {
+            let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Handle SSH: git@github.com:user/repo.git
+            // Handle HTTPS: https://github.com/user/repo.git
+            if let Some(name) = url
+                .rsplit('/')
+                .next()
+                .or_else(|| url.rsplit(':').next())
+            {
+                let name = name.trim_end_matches(".git");
+                if !name.is_empty() {
+                    return name.to_string();
+                }
+            }
+        }
+    }
+    // Fallback: current directory name
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 impl App {
@@ -714,6 +748,7 @@ impl App {
                 .and_then(|m| m.modified())
                 .ok(),
             config_check_frame: 0,
+            repo_name: detect_repo_name(),
         };
 
         // Seed recent completions from history sessions (most recent agents last)
