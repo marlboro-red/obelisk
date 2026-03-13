@@ -7,3 +7,5 @@
 [2m2026-03-13T00:07:26.726821Z[0m [32m INFO[0m shutting down [3mcompleted[0m[2m=[0m7 [3mfailed[0m[2m=[0m0 [3magents[0m[2m=[0m0
 [2m2026-03-13T00:07:26.728207Z[0m [32m INFO[0m obelisk shutdown
 [2m2026-03-13T00:08:12.244474Z[0m [32m INFO[0m obelisk starting
+[2m2026-03-13T00:46:06.387005Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m0 [3mtask_id[0m[2m=[0m"obelisk-2j4" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
+[2m2026-03-13T00:46:06.387074Z[0m [32m INFO[0m spawning agent [3magent_id[0m[2m=[0m1 [3mtask_id[0m[2m=[0m"obelisk-vm3" [3mruntime[0m[2m=[0mCLAUDE [3mmodel[0m[2m=[0mclaude-opus-4-6
