@@ -268,21 +268,22 @@ claude "<user_prompt>" \
 ```
 
 No `--print` flag — Claude stays interactive after its first response, allowing
-the agent to iterate within a single session. This is the only runtime that
-supports interactive mode meaningfully.
+the agent to iterate within a single session while still receiving separate
+user and system prompts.
 
 Available models: `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`
 
 ### Codex
 
 ```bash
-cmd /C codex exec \
+cmd /C codex \
   --dangerously-bypass-approvals-and-sandbox \
   -m <model> \
   "<combined_prompt>"
 ```
 
-One-shot execution. The user and system prompts are combined:
+Interactive launch. Obelisk intentionally omits `exec` so the PTY session stays
+open. The user and system prompts are combined:
 `user_prompt\n\nFollow the workflow below exactly.\n\n---\n\nsystem_prompt`
 
 `cmd /C` wrapping is required on Windows because npm-installed CLIs are `.cmd`
@@ -294,12 +295,13 @@ Available models: `gpt-5.4`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`
 
 ```bash
 cmd /C copilot \
-  -p "<combined_prompt>" \
+  -i "<combined_prompt>" \
   --model <model> \
   --yolo
 ```
 
-Same combined prompt structure as Codex. `--yolo` bypasses confirmation prompts.
+`-i` starts interactive mode and auto-executes the combined prompt. `--yolo`
+bypasses confirmation prompts.
 
 Available models: `claude-sonnet-4`, `gpt-5`
 

@@ -170,8 +170,8 @@ through claim → worktree → implement → verify → merge → close.
 | Runtime | Prompt Delivery |
 |---------|----------------|
 | Claude Code | `--append-system-prompt` flag (separate user + system) |
-| Codex | Combined into single prompt: `user\n\n---\n\nsystem` |
-| Copilot | Combined into single prompt: `user\n\n---\n\nsystem` |
+| Codex | Combined into single prompt: `user\n\nFollow the workflow below exactly.\n\n---\n\nsystem` |
+| Copilot | Combined into single prompt: `user\n\nFollow the workflow below exactly.\n\n---\n\nsystem` |
 
 ---
 
