@@ -731,7 +731,16 @@ impl App {
             app.log(LogCategory::System, "No config file found, using defaults".into());
         }
         for warning in &config_warnings {
-            app.log(LogCategory::System, format!("[WARN] {}", warning));
+            app.log(LogCategory::Alert, format!("Config: {}", warning));
+        }
+        if !config_warnings.is_empty() {
+            app.alert_message = Some((
+                format!(
+                    "{} CONFIG WARNING(S) — check event log (Tab 3)",
+                    config_warnings.len()
+                ),
+                100, // ~10 seconds at 10fps
+            ));
         }
         app.log(LogCategory::System, "System online".into());
         if let Some(summary) = last_session_summary {
