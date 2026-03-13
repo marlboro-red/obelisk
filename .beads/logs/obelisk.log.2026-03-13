@@ -1,0 +1,9 @@
+[2m2026-03-13T00:07:08.367278Z[0m [32m INFO[0m agent exited [3magent_id[0m[2m=[0m0 [3mexit_code[0m[2m=[0mSome(1)
+[2m2026-03-13T00:07:10.324214Z[0m [32m INFO[0m agent exited [3magent_id[0m[2m=[0m1 [3mexit_code[0m[2m=[0mSome(1)
+[2m2026-03-13T00:07:11.602453Z[0m [32m INFO[0m agent exited [3magent_id[0m[2m=[0m2 [3mexit_code[0m[2m=[0mSome(1)
+[2m2026-03-13T00:07:13.536883Z[0m [32m INFO[0m agent exited [3magent_id[0m[2m=[0m3 [3mexit_code[0m[2m=[0mSome(1)
+[2m2026-03-13T00:07:15.072496Z[0m [32m INFO[0m agent exited [3magent_id[0m[2m=[0m4 [3mexit_code[0m[2m=[0mSome(1)
+[2m2026-03-13T00:07:17.967387Z[0m [32m INFO[0m agent exited [3magent_id[0m[2m=[0m6 [3mexit_code[0m[2m=[0mSome(1)
+[2m2026-03-13T00:07:26.726821Z[0m [32m INFO[0m shutting down [3mcompleted[0m[2m=[0m7 [3mfailed[0m[2m=[0m0 [3magents[0m[2m=[0m0
+[2m2026-03-13T00:07:26.728207Z[0m [32m INFO[0m obelisk shutdown
+[2m2026-03-13T00:08:12.244474Z[0m [32m INFO[0m obelisk starting
