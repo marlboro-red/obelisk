@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use tracing::{debug, info, warn};
 
 // All valid issue types for cycling the type filter
 const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
@@ -847,6 +848,7 @@ impl App {
         let raw = match std::fs::read_to_string(CONFIG_FILE) {
             Ok(r) => r,
             Err(e) => {
+                warn!(error = %e, event = "config_reload_failed", "config reload failed: could not read file");
                 self.log(
                     LogCategory::System,
                     format!("[WARN] Config reload failed (read): {}", e),
@@ -857,6 +859,7 @@ impl App {
         let cfg: ObeliskConfig = match toml::from_str(&raw) {
             Ok(c) => c,
             Err(e) => {
+                warn!(error = %e, event = "config_parse_failed", "config reload failed: TOML parse error");
                 self.log(
                     LogCategory::System,
                     format!("[WARN] Config reload failed (parse): {}", e),
@@ -957,11 +960,18 @@ impl App {
         self.config_mtime = Some(current_mtime);
 
         if changes.is_empty() {
+            debug!(event = "config_reload_noop", "config file changed but no effective differences");
             self.log(
                 LogCategory::System,
                 "Config file changed but no effective differences".into(),
             );
         } else {
+            info!(
+                changes = %changes.join(", "),
+                change_count = changes.len(),
+                event = "config_reloaded",
+                "configuration hot-reloaded"
+            );
             self.log(
                 LogCategory::System,
                 format!("Config reloaded: {}", changes.join(", ")),
@@ -1013,6 +1023,14 @@ impl App {
                 .open(&path)
             {
                 let _ = writeln!(f, "{}", json);
+                info!(
+                    session_id = %self.session_id,
+                    total_completed = self.total_completed,
+                    total_failed = self.total_failed,
+                    agents_count = self.agents.len(),
+                    event = "session_saved",
+                    "session record persisted"
+                );
             }
         }
     }
@@ -1140,6 +1158,18 @@ impl App {
             .filter(|t| !self.ready_tasks.iter().any(|rt| rt.id == t.id))
             .count();
         if new_count > 0 {
+            let new_ids: Vec<&str> = new_tasks
+                .iter()
+                .filter(|t| !self.ready_tasks.iter().any(|rt| rt.id == t.id))
+                .map(|t| t.id.as_str())
+                .collect();
+            info!(
+                new_count,
+                new_task_ids = %new_ids.join(","),
+                total_ready = new_tasks.len(),
+                event = "new_tasks_detected",
+                "new beads tasks available"
+            );
             self.log(
                 LogCategory::Incoming,
                 format!("{} new ready task(s) detected", new_count),
@@ -1412,6 +1442,15 @@ impl App {
         if let Some((success, unit, task_id, rt, elapsed)) = log_info {
             if success {
                 self.total_completed += 1;
+                info!(
+                    agent_id = unit,
+                    task_id,
+                    runtime = rt,
+                    elapsed_secs = elapsed,
+                    total_completed = self.total_completed,
+                    event = "task_completed",
+                    "beads task completed successfully"
+                );
                 self.log(
                     LogCategory::Complete,
                     format!("AGENT-{:02} completed {} [{}]", unit, task_id, rt),
@@ -1425,6 +1464,16 @@ impl App {
                 }
             } else {
                 self.total_failed += 1;
+                warn!(
+                    agent_id = unit,
+                    task_id,
+                    runtime = rt,
+                    elapsed_secs = elapsed,
+                    ?exit_code,
+                    total_failed = self.total_failed,
+                    event = "task_failed",
+                    "beads task failed"
+                );
                 self.log(
                     LogCategory::Alert,
                     format!(
@@ -1504,6 +1553,16 @@ impl App {
 
         self.claimed_task_ids.insert(task.id.clone());
         self.agents.push(agent);
+        info!(
+            agent_id = unit,
+            task_id = %task.id,
+            task_title = %task.title,
+            runtime = %runtime.name(),
+            model,
+            template = %template_name,
+            event = "agent_deployed",
+            "agent deployed for task"
+        );
         self.log(
             LogCategory::Deploy,
             format!(
@@ -1828,8 +1887,16 @@ impl App {
         agent.status = AgentStatus::Failed;
         agent.elapsed_secs = agent.started_at.elapsed().as_secs();
         let unit = agent.unit_number;
+        let task_id = agent.task.id.clone();
         let worktree = agent.worktree_path.clone();
         self.total_failed += 1;
+        warn!(
+            agent_id = unit,
+            task_id,
+            elapsed_secs = agent.elapsed_secs,
+            event = "agent_killed",
+            "agent terminated by user"
+        );
         self.log(
             LogCategory::Alert,
             format!("AGENT-{:02} terminated (killed)", unit),
@@ -1862,8 +1929,16 @@ impl App {
         agent.status = AgentStatus::Completed;
         agent.elapsed_secs = agent.started_at.elapsed().as_secs();
         let unit = agent.unit_number;
+        let task_id = agent.task.id.clone();
         let worktree = agent.worktree_path.clone();
         self.total_completed += 1;
+        info!(
+            agent_id = unit,
+            task_id,
+            elapsed_secs = agent.elapsed_secs,
+            event = "agent_force_completed",
+            "agent manually marked as completed"
+        );
         self.log(
             LogCategory::Complete,
             format!("AGENT-{:02} marked complete (manual)", unit),
@@ -2032,6 +2107,16 @@ impl App {
         self.selected_agent_id = Some(unit);
         self.agent_output_scroll = None;
 
+        info!(
+            agent_id = unit,
+            task_id = %task.id,
+            runtime = %runtime.name(),
+            model,
+            retry_count = new_retry_count,
+            template = %template_name,
+            event = "agent_retry",
+            "retrying failed agent"
+        );
         self.log(
             LogCategory::Deploy,
             format!(
@@ -2563,7 +2648,16 @@ impl App {
             if let Ok(text) = std::str::from_utf8(data) {
                 if let Some(detected) = detect_phase(text) {
                     if detected > agent.phase {
+                        let prev_phase = agent.phase;
                         agent.phase = detected;
+                        debug!(
+                            agent_id,
+                            task_id = %agent.task.id,
+                            from_phase = ?prev_phase,
+                            to_phase = ?detected,
+                            event = "agent_phase_transition",
+                            "agent phase advanced"
+                        );
                     }
                 }
                 // Detect Done: when a Closing-phase agent's PTY output contains
