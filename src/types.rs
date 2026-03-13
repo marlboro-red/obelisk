@@ -466,6 +466,7 @@ pub struct DiffData {
 }
 
 /// Stores layout rectangles computed during rendering, used for mouse hit-testing.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct LayoutAreas {
     pub tab_bar: Option<ratatui::layout::Rect>,
