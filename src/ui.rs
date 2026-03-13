@@ -2576,9 +2576,8 @@ fn render_status_gauges(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(35),
-            Constraint::Percentage(35),
-            Constraint::Percentage(30),
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
         ])
         .split(area);
 
@@ -2673,56 +2672,6 @@ fn render_status_gauges(f: &mut Frame, area: Rect, app: &App) {
         ));
 
     f.render_widget(poll_gauge, chunks[1]);
-
-    // Wave pattern visualization
-    render_wave_monitor(f, chunks[2], app);
-}
-
-fn render_wave_monitor(f: &mut Frame, area: Rect, app: &App) {
-    let t = &app.theme;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.muted))
-        .title(Span::styled(
-            " WAVEFORM ",
-            Style::default()
-                .fg(t.bright)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().bg(t.panel_bg));
-
-    let inner = block.inner(area);
-    let width = inner.width as usize;
-
-    if width == 0 {
-        f.render_widget(block, area);
-        return;
-    }
-
-    let wave_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    let has_active = app.active_agent_count() > 0;
-
-    let wave: String = (0..width)
-        .map(|x| {
-            if has_active {
-                let val = ((x as f64 * 0.5 + app.wave_offset).sin() * 0.5 + 0.5) * 7.0;
-                wave_chars[val as usize % 8]
-            } else {
-                wave_chars[0]
-            }
-        })
-        .collect();
-
-    let wave_color = if has_active { t.accent } else { t.muted };
-
-    let paragraph = Paragraph::new(Line::from(Span::styled(
-        wave,
-        Style::default().fg(wave_color),
-    )))
-    .block(block);
-
-    f.render_widget(paragraph, area);
 }
 
 // ══════════════════════════════════════════════════════════
