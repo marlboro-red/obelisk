@@ -455,7 +455,7 @@ fn build_pty_command_claude_has_correct_args() {
 }
 
 #[test]
-fn build_pty_command_codex_has_exec_mode() {
+fn build_pty_command_codex_has_interactive_mode() {
     let cmd = obelisk::runtime::build_pty_command(
         Runtime::Codex,
         "gpt-5.4",
@@ -464,7 +464,8 @@ fn build_pty_command_codex_has_exec_mode() {
     );
     let argv = cmd.get_argv();
     let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
-    assert!(args_str.contains(&"exec".to_string()));
+    // Interactive mode: no "exec" subcommand, just direct args
+    assert!(!args_str.contains(&"exec".to_string()));
     assert!(args_str.contains(&"-m".to_string()));
 }
 
@@ -479,7 +480,7 @@ fn build_pty_command_copilot_has_yolo_flag() {
     let argv = cmd.get_argv();
     let args_str: Vec<String> = argv.iter().map(|a| a.to_string_lossy().to_string()).collect();
     assert!(args_str.contains(&"--yolo".to_string()));
-    assert!(args_str.contains(&"-p".to_string()));
+    assert!(args_str.contains(&"-i".to_string()));
 }
 
 // ═══════════════════════════════════════════════════════════════════
