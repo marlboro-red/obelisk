@@ -1,3 +1,4 @@
+use crate::notify::{NotificationsConfig, WebhookConfig, WebhookEventType, WebhookPayload};
 use crate::templates;
 use crate::theme::{Theme, ThemeConfig};
 use crate::types::*;
@@ -42,6 +43,7 @@ struct ObeliskConfig {
     orchestrator: Option<OrchestratorConfig>,
     models: Option<ModelsConfig>,
     theme: Option<ThemeConfig>,
+    notifications: Option<NotificationsConfig>,
 }
 
 pub struct SpawnRequest {
@@ -68,7 +70,9 @@ fn is_on_path(binary: &str) -> bool {
     result.map(|o| o.status.success()).unwrap_or(false)
 }
 
-const KNOWN_TOP_KEYS: &[&str] = &["orchestrator", "models", "theme"];
+const KNOWN_TOP_KEYS: &[&str] = &["orchestrator", "models", "theme", "notifications"];
+const KNOWN_NOTIFICATIONS_KEYS: &[&str] = &["webhook"];
+const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "headers", "events"];
 const KNOWN_ORCH_KEYS: &[&str] = &[
     "runtime", "max_concurrent", "auto_spawn", "poll_interval_secs", "velocity_window",
 ];
@@ -110,6 +114,19 @@ fn validate_config(toml_raw: &str, config: &ObeliskConfig) -> Vec<String> {
         check_sub_keys(&table, "orchestrator", KNOWN_ORCH_KEYS, &mut warnings);
         check_sub_keys(&table, "models", KNOWN_MODELS_KEYS, &mut warnings);
         check_sub_keys(&table, "theme", KNOWN_THEME_KEYS, &mut warnings);
+        check_sub_keys(&table, "notifications", KNOWN_NOTIFICATIONS_KEYS, &mut warnings);
+        // Check [notifications.webhook] sub-keys
+        if let Some(notif) = table.get("notifications").and_then(|v| v.as_table()) {
+            if let Some(wh) = notif.get("webhook").and_then(|v| v.as_table()) {
+                for key in wh.keys() {
+                    if !KNOWN_WEBHOOK_KEYS.contains(&key.as_str()) {
+                        warnings.push(format!(
+                            "Unknown config key: notifications.webhook.{}", key
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     // --- Orchestrator value ranges ---
@@ -177,6 +194,13 @@ fn validate_config(toml_raw: &str, config: &ObeliskConfig) -> Vec<String> {
                     KNOWN_THEME_PRESETS.join(", ")
                 ));
             }
+        }
+    }
+
+    // --- Webhook config ---
+    if let Some(notif) = &config.notifications {
+        if let Some(wh) = &notif.webhook {
+            warnings.extend(wh.validate());
         }
     }
 
@@ -434,6 +458,9 @@ pub struct App {
     // Desktop notifications
     pub notifications_enabled: bool,
 
+    // Webhook notifications config
+    pub webhook_config: WebhookConfig,
+
     // Split-pane view state
     /// Agent IDs pinned to each pane slot (up to 4)
     pub split_pane_agents: [Option<usize>; 4],
@@ -660,6 +687,11 @@ impl App {
 
         let theme_config = config.theme.clone().unwrap_or_default();
         let theme = Theme::from_config(&theme_config);
+        let webhook_config = config
+            .notifications
+            .as_ref()
+            .and_then(|n| n.webhook.clone())
+            .unwrap_or_default();
 
         let poll_countdown = poll_interval_secs as f64;
         let mut app = Self {
@@ -717,6 +749,7 @@ impl App {
             diff_scroll: 0,
             diff_last_poll_frame: 0,
             notifications_enabled: true,
+            webhook_config,
             split_pane_agents: [None; 4],
             split_pane_focus: 0,
             split_pane_scroll: [None; 4],
@@ -811,6 +844,13 @@ impl App {
                 copilot: Some(self.selected_model_for(Runtime::Copilot).to_string()),
             }),
             theme: Some(self.theme_config.clone()),
+            notifications: if self.webhook_config != WebhookConfig::default() {
+                Some(NotificationsConfig {
+                    webhook: Some(self.webhook_config.clone()),
+                })
+            } else {
+                None
+            },
         };
         if let Ok(toml_str) = toml::to_string_pretty(&config) {
             if std::fs::write(CONFIG_FILE, toml_str).is_ok() {
@@ -955,6 +995,17 @@ impl App {
             self.theme = Theme::from_config(&new_theme_config);
             self.theme_config = new_theme_config;
             changes.push("theme updated".into());
+        }
+
+        // ── Webhook settings ──
+        let new_webhook = cfg
+            .notifications
+            .as_ref()
+            .and_then(|n| n.webhook.clone())
+            .unwrap_or_default();
+        if new_webhook != self.webhook_config {
+            self.webhook_config = new_webhook;
+            changes.push("webhook config updated".into());
         }
 
         self.config_mtime = Some(current_mtime);
@@ -1180,20 +1231,38 @@ impl App {
             ));
             // Notify for new P0/P1 tasks
             if self.notifications_enabled {
-                let high_prio_ids: Vec<&str> = new_tasks
+                let high_prio_tasks: Vec<&BeadTask> = new_tasks
                     .iter()
                     .filter(|t| {
                         !self.ready_tasks.iter().any(|rt| rt.id == t.id)
                             && t.priority.unwrap_or(3) <= 1
                     })
-                    .map(|t| t.id.as_str())
                     .collect();
-                if !high_prio_ids.is_empty() {
+                if !high_prio_tasks.is_empty() {
+                    let ids: Vec<&str> = high_prio_tasks.iter().map(|t| t.id.as_str()).collect();
                     crate::notify::send_notification(
                         "High-Priority Task Available",
-                        &format!("P0/P1 ready: {}", high_prio_ids.join(", ")),
+                        &format!("P0/P1 ready: {}", ids.join(", ")),
                     );
                     crate::notify::send_bell();
+                    // Send webhook for each high-priority task
+                    for task in &high_prio_tasks {
+                        crate::notify::send_webhook(
+                            &self.webhook_config,
+                            WebhookEventType::HighPriorityReady,
+                            WebhookPayload {
+                                event: "high_priority_ready".into(),
+                                issue_id: task.id.clone(),
+                                title: task.title.clone(),
+                                status: task.status.clone(),
+                                runtime: None,
+                                elapsed_secs: None,
+                                exit_code: None,
+                                failure_details: None,
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -1400,6 +1469,7 @@ impl App {
             agent.elapsed_secs = agent.started_at.elapsed().as_secs();
             let unit = agent.unit_number;
             let task_id = agent.task.id.clone();
+            let title = agent.task.title.clone();
             let rt = agent.runtime.name().to_string();
             let elapsed = agent.elapsed_secs;
             // Don't overwrite a terminal status — force_complete or kill may
@@ -1408,17 +1478,17 @@ impl App {
                 None
             } else if exit_code == Some(0) {
                 agent.status = AgentStatus::Completed;
-                Some((true, unit, task_id, rt, elapsed))
+                Some((true, unit, task_id, title, rt, elapsed))
             } else {
                 agent.status = AgentStatus::Failed;
-                Some((false, unit, task_id, rt, elapsed))
+                Some((false, unit, task_id, title, rt, elapsed))
             }
         } else {
             None
         };
 
         // Record completion for the feed
-        if let Some((success, _unit, ref task_id, ref rt, elapsed)) = log_info {
+        if let Some((success, _unit, ref task_id, _, ref rt, elapsed)) = log_info {
             if let Some(agent) = self.agents.iter().find(|a| a.task.id == *task_id) {
                 let record = CompletionRecord {
                     task_id: task_id.clone(),
@@ -1439,7 +1509,7 @@ impl App {
         // agent was already marked Completed from issue closure (obelisk-3t3).
         self.persist_agent_pty_log(agent_id);
 
-        if let Some((success, unit, task_id, rt, elapsed)) = log_info {
+        if let Some((success, unit, task_id, title, rt, elapsed)) = log_info {
             if success {
                 self.total_completed += 1;
                 info!(
@@ -1461,6 +1531,21 @@ impl App {
                         &format!("AGENT-{:02} \u{00b7} {} \u{00b7} {}s elapsed", unit, task_id, elapsed),
                     );
                     crate::notify::send_bell();
+                    crate::notify::send_webhook(
+                        &self.webhook_config,
+                        WebhookEventType::AgentCompleted,
+                        WebhookPayload {
+                            event: "agent_completed".into(),
+                            issue_id: task_id.clone(),
+                            title,
+                            status: "completed".into(),
+                            runtime: Some(rt.clone()),
+                            elapsed_secs: Some(elapsed),
+                            exit_code: None,
+                            failure_details: None,
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                        },
+                    );
                 }
             } else {
                 self.total_failed += 1;
@@ -1482,11 +1567,40 @@ impl App {
                     ),
                 );
                 if self.notifications_enabled {
+                    // Collect failure context from the agent's last output lines
+                    let failure_details = self
+                        .agents
+                        .iter()
+                        .find(|a| a.task.id == task_id)
+                        .map(|a| {
+                            let lines: Vec<&str> = a.output.iter().map(|s| s.as_str()).collect();
+                            let errors = detect_error_patterns(&lines);
+                            if errors.is_empty() {
+                                format!("exit code: {:?}", exit_code)
+                            } else {
+                                errors.join("; ")
+                            }
+                        });
                     crate::notify::send_notification(
                         "Agent Failed",
                         &format!("AGENT-{:02} \u{00b7} {} failed [exit: {:?}]", unit, task_id, exit_code),
                     );
                     crate::notify::send_bell();
+                    crate::notify::send_webhook(
+                        &self.webhook_config,
+                        WebhookEventType::AgentFailed,
+                        WebhookPayload {
+                            event: "agent_failed".into(),
+                            issue_id: task_id.clone(),
+                            title,
+                            status: "failed".into(),
+                            runtime: Some(rt.clone()),
+                            elapsed_secs: Some(elapsed),
+                            exit_code,
+                            failure_details,
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                        },
+                    );
                 }
             }
         }
@@ -2695,7 +2809,7 @@ impl App {
             self.total_completed += 1;
             let record = CompletionRecord {
                 task_id: task_id.clone(),
-                title,
+                title: title.clone(),
                 runtime: rt.clone(),
                 model,
                 elapsed_secs: elapsed,
@@ -2718,6 +2832,21 @@ impl App {
                     ),
                 );
                 crate::notify::send_bell();
+                crate::notify::send_webhook(
+                    &self.webhook_config,
+                    WebhookEventType::AgentCompleted,
+                    WebhookPayload {
+                        event: "agent_completed".into(),
+                        issue_id: task_id.clone(),
+                        title,
+                        status: "completed".into(),
+                        runtime: Some(rt.clone()),
+                        elapsed_secs: Some(elapsed),
+                        exit_code: None,
+                        failure_details: None,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    },
+                );
             }
         }
         // Throughput tracking: count actual newlines only (no minimum-1 inflation)
@@ -4198,6 +4327,7 @@ mod tests {
                 copilot: Some("gpt-5".into()),
             }),
             theme: None,
+            notifications: None,
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
