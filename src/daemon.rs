@@ -227,6 +227,24 @@ fn process_daemon_event(
                     tokio::spawn(spawn_agent_process(tx.clone(), req));
                 }
             }
+
+            // Periodic issue status poll (~every 5s = 5 ticks at 1s daemon tick rate)
+            if app.frame_count.is_multiple_of(5) {
+                let running: Vec<(usize, String)> = app
+                    .agents
+                    .iter()
+                    .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+                    .map(|a| (a.id, a.task.id.clone()))
+                    .collect();
+                for (agent_id, task_id) in running {
+                    let tx_status = tx.clone();
+                    tokio::spawn(async move {
+                        if let Ok(true) = runtime::poll_issue_status(&task_id).await {
+                            let _ = tx_status.send(AppEvent::IssueStatusClosed { agent_id });
+                        }
+                    });
+                }
+            }
         }
         AppEvent::PollResult(tasks) => {
             debug!(
@@ -332,6 +350,9 @@ fn process_daemon_event(
                 "blocked issues poll completed"
             );
             app.on_blocked_poll_result(tasks);
+        }
+        AppEvent::IssueStatusClosed { agent_id } => {
+            app.on_issue_closed(agent_id);
         }
         AppEvent::Terminal(_) => {}  // no TUI in daemon mode
         AppEvent::IssueCreateResult(_) => {} // no TUI in daemon mode
