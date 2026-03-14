@@ -24821,3 +24821,23 @@ time="2026-03-14T11:04:14+11:00" level=info msg=NewConnection DisableClientMulti
 time="2026-03-14T11:04:14+11:00" level=info msg=ConnectionClosed connectionID=312
 time="2026-03-14T11:04:14+11:00" level=warning msg="error running query" connectTime="2026-03-14 11:04:14.990972 +1100 AEDT m=+700.600882709" connectionDb=bdOrc connectionID=313 error="nothing to commit" queryTime="2026-03-14 11:04:14.997094 +1100 AEDT m=+700.607004793"
 time="2026-03-14T11:04:15+11:00" level=info msg=ConnectionClosed connectionID=313
+time="2026-03-14T11:04:22+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=314
+time="2026-03-14T11:04:22+11:00" level=info msg=ConnectionClosed connectionID=314
+time="2026-03-14T11:04:22+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=315
+time="2026-03-14T11:04:22+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=316
+time="2026-03-14T11:04:22+11:00" level=info msg=ConnectionClosed connectionID=315
+time="2026-03-14T11:04:22+11:00" level=warning msg="error running query" connectTime="2026-03-14 11:04:22.329324 +1100 AEDT m=+707.939223043" connectionDb=bdOrc connectionID=316 error="nothing to commit" queryTime="2026-03-14 11:04:22.336197 +1100 AEDT m=+707.946095584"
+time="2026-03-14T11:04:22+11:00" level=info msg=ConnectionClosed connectionID=316
+time="2026-03-14T11:04:23+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=317
+time="2026-03-14T11:04:23+11:00" level=info msg=ConnectionClosed connectionID=317
+time="2026-03-14T11:04:23+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=318
+time="2026-03-14T11:04:23+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=319
+time="2026-03-14T11:04:23+11:00" level=info msg=ConnectionClosed connectionID=318
+time="2026-03-14T11:04:23+11:00" level=warning msg="error running query" connectTime="2026-03-14 11:04:23.462877 +1100 AEDT m=+709.072774001" connectionDb=bdOrc connectionID=319 error="nothing to commit" queryTime="2026-03-14 11:04:23.469827 +1100 AEDT m=+709.079724001"
+time="2026-03-14T11:04:23+11:00" level=info msg=ConnectionClosed connectionID=319
+time="2026-03-14T11:04:25+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=320
+time="2026-03-14T11:04:25+11:00" level=info msg=ConnectionClosed connectionID=320
+time="2026-03-14T11:04:25+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=321
+time="2026-03-14T11:04:25+11:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=322
+time="2026-03-14T11:04:25+11:00" level=info msg=ConnectionClosed connectionID=321
+time="2026-03-14T11:04:25+11:00" level=info msg=ConnectionClosed connectionID=322
