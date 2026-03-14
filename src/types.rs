@@ -132,6 +132,17 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    /// The CLI binary name used to spawn this runtime.
+    pub fn binary(&self) -> &'static str {
+        match self {
+            Runtime::ClaudeCode => "claude",
+            Runtime::Codex => "codex",
+            Runtime::Copilot => "copilot",
+        }
+    }
+}
+
 impl std::fmt::Display for Runtime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name())

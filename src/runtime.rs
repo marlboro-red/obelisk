@@ -209,6 +209,133 @@ pub async fn cleanup_worktree(path: &str, branch: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A single pre-flight check failure with an actionable message.
+#[derive(Debug)]
+pub struct PreflightFailure {
+    pub message: String,
+}
+
+impl std::fmt::Display for PreflightFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+/// Run all pre-flight checks before spawning an agent for `task_id`.
+///
+/// Returns an empty vec on success. Each failure is an actionable message
+/// suitable for display in the event log.
+///
+/// Synchronous because it runs from `get_spawn_info()` which is called in the
+/// main event-loop without `.await`. The git/which calls are fast and local.
+pub fn preflight_checks(
+    task_id: &str,
+    runtime: crate::types::Runtime,
+    claimed_ids: &std::collections::HashSet<String>,
+) -> Vec<PreflightFailure> {
+    let mut failures = Vec::new();
+
+    // 1. Worktree directory must not already exist
+    let worktree_dir = format!("../worktree-{}", task_id);
+    let abs_path = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| cwd.parent().map(|p| p.join(format!("worktree-{}", task_id))))
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| worktree_dir.clone());
+    if std::path::Path::new(&abs_path).exists() {
+        failures.push(PreflightFailure {
+            message: format!(
+                "Worktree directory already exists: {} — remove it or clean up the previous run",
+                worktree_dir,
+            ),
+        });
+    }
+
+    // 2. Git branch must not already exist
+    let branch_check = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", &format!("refs/heads/{}", task_id)])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if let Ok(status) = branch_check {
+        if status.success() {
+            failures.push(PreflightFailure {
+                message: format!(
+                    "Git branch '{}' already exists — delete it with `git branch -D {}` or clean up the previous run",
+                    task_id, task_id,
+                ),
+            });
+        }
+    }
+
+    // 3. Issue must not be claimed by another active agent in this session
+    if claimed_ids.contains(task_id) {
+        failures.push(PreflightFailure {
+            message: format!(
+                "Issue '{}' is already claimed by an active agent in this session",
+                task_id,
+            ),
+        });
+    }
+
+    // 4. Working tree should be clean enough (no uncommitted changes outside .beads/)
+    let status_output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output();
+    if let Ok(output) = status_output {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let dirty_files: Vec<&str> = stdout
+            .lines()
+            .filter(|line| {
+                // Ignore .beads/ changes — those are expected
+                let file_part = line.get(3..).unwrap_or("");
+                !file_part.starts_with(".beads/") && !file_part.starts_with(".beads\\")
+            })
+            .collect();
+        if !dirty_files.is_empty() {
+            failures.push(PreflightFailure {
+                message: format!(
+                    "Working tree has {} uncommitted change(s) outside .beads/ — commit or stash before spawning",
+                    dirty_files.len(),
+                ),
+            });
+        }
+    }
+
+    // 5. Runtime binary must be on PATH
+    let binary = runtime.binary();
+    #[cfg(windows)]
+    let which_cmd = "where.exe";
+    #[cfg(not(windows))]
+    let which_cmd = "which";
+    let which_result = std::process::Command::new(which_cmd)
+        .arg(binary)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match which_result {
+        Ok(status) if !status.success() => {
+            failures.push(PreflightFailure {
+                message: format!(
+                    "Runtime binary '{}' not found on PATH — install it or select a different runtime",
+                    binary,
+                ),
+            });
+        }
+        Err(_) => {
+            failures.push(PreflightFailure {
+                message: format!(
+                    "Failed to check if '{}' is on PATH",
+                    binary,
+                ),
+            });
+        }
+        _ => {}
+    }
+
+    failures
+}
+
 pub async fn poll_ready() -> Result<Vec<crate::types::BeadTask>, String> {
     let output = Command::new("bd")
         .args(["ready", "--json"])

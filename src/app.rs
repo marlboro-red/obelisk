@@ -1,3 +1,4 @@
+use crate::runtime;
 use crate::templates;
 use crate::theme::{Theme, ThemeConfig};
 use crate::types::*;
@@ -1513,6 +1514,17 @@ impl App {
 
         let task = self.selected_task()?.clone();
         let runtime = self.selected_runtime;
+
+        // --- Pre-flight checks ---
+        let failures = runtime::preflight_checks(&task.id, runtime, &self.claimed_task_ids);
+        if !failures.is_empty() {
+            for f in &failures {
+                self.log(LogCategory::Alert, format!("Pre-flight FAIL [{}]: {}", task.id, f));
+                warn!(task_id = %task.id, failure = %f, event = "preflight_failed", "pre-flight check failed");
+            }
+            return None;
+        }
+
         let model = self.selected_model_for(runtime).to_string();
         let unit = self.next_unit;
         self.next_unit += 1;
