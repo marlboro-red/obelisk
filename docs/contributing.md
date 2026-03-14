@@ -60,6 +60,9 @@ src/
 ├── runtime.rs     CLI command building, PTY creation, git/beads operations
 ├── types.rs       Shared types — enums, structs, AppEvent
 ├── templates.rs   Agent prompt template resolution and interpolation
+├── theme.rs       Color theming — presets, hex overrides, ThemeConfig
+├── daemon.rs      Headless daemon mode — TCP server, agent lifecycle without TUI
+├── client.rs      CLI client for daemon IPC
 └── notify.rs      Desktop notifications and terminal bell
 
 docs/              You are here
@@ -225,6 +228,13 @@ coverage focuses on:
 - **PTY area computation** (`ui.rs`) — tests edge cases at various terminal
   sizes: tiny (20×10), standard (80×24), wide (200×50), and boundary cases
   (119 vs 120 cols, 39 vs 40 rows)
+- **App state and config** (`app.rs`) — agent lifecycle transitions, config
+  validation (unknown keys, out-of-range values, theme preset aliases, model
+  validation), poll result processing, event logging
+- **Theme system** (`theme.rs`) — hex color parsing, preset selection, alias
+  resolution (frost→solarized, ember→nord, ash→catppuccin, deep→gruvbox),
+  config overrides, serde round-trip
+- **Notifications** (`notify.rs`) — bell output
 
 ### Adding Tests
 

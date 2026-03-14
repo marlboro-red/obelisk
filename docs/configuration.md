@@ -21,6 +21,10 @@ velocity_window = 24            # Data points for velocity sparkline
 claude = "claude-opus-4-6"      # Default model for Claude Code runtime
 codex = "gpt-5.4"               # Default model for Codex runtime
 copilot = "claude-sonnet-4"     # Default model for Copilot runtime
+
+[theme]
+preset = "frost"                # "solarized"/"frost", "nord"/"ember", "catppuccin"/"ash", "gruvbox"/"deep"
+# primary = "#6EA0D2"           # Individual hex color overrides (optional)
 ```
 
 ---
@@ -101,9 +105,7 @@ the binary:
 |---------|-------|-------------|
 | `max_retries` | `3` | Maximum retry attempts for a failed agent |
 | `retry_context_lines` | `80` | Lines of failed output included in retry prompt |
-| `cost_threshold` | `$5.00` | Alert when an agent's estimated cost exceeds this |
 | `notifications_enabled` | `true` | Desktop notifications (toggle with `n`) |
-| `mouse_enabled` | `true` | Mouse support (toggle with `M`) |
 | `TICK_RATE_MS` | `100` | UI refresh interval in milliseconds |
 | PTY read buffer | `4096` bytes | Chunk size for PTY reader task |
 | Event log capacity | `500` entries | Maximum event log entries before oldest are dropped |
@@ -119,13 +121,15 @@ The following settings are saved back to `obelisk.toml` on exit:
 - Runtime selection (`runtime`)
 - Model selections (`[models]` section)
 - Max concurrent (`max_concurrent`)
+- Auto-spawn (`auto_spawn`)
+- Poll interval (`poll_interval_secs`)
+- Velocity window (`velocity_window`)
+- Theme configuration (`[theme]` section)
 
 The following are session-only and reset on restart:
 
-- Auto-spawn toggle
 - Filter and sort preferences
 - Notification toggle
-- Mouse toggle
 
 ---
 
@@ -139,9 +143,8 @@ record contains:
   "session_id": "uuid",
   "started_at": "2026-03-12T10:00:00Z",
   "ended_at": "2026-03-12T12:30:00Z",
-  "completed": 5,
-  "failed": 1,
-  "total_cost_usd": 12.34,
+  "total_completed": 5,
+  "total_failed": 1,
   "agents": [...]
 }
 ```
@@ -170,19 +173,3 @@ Templates support variable interpolation:
 | `{priority}` | Priority level (integer) |
 | `{description}` | Full issue description |
 
----
-
-## Token Pricing
-
-Cost estimates use hardcoded per-model pricing:
-
-| Model | Input ($/1M tokens) | Output ($/1M tokens) |
-|-------|---------------------|----------------------|
-| `claude-sonnet-4-6` | $3.00 | $15.00 |
-| `claude-opus-4-6` | $15.00 | $75.00 |
-| `claude-haiku-4-5-20251001` | $0.80 | $4.00 |
-| `gpt-5.4` | $10.00 | $30.00 |
-| `gpt-5.3-codex` | $10.00 | $30.00 |
-| `gpt-5.3-codex-spark` | $10.00 | $30.00 |
-| `claude-sonnet-4` | $3.00 | $15.00 |
-| `gpt-5` | $10.00 | $30.00 |

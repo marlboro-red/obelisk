@@ -276,7 +276,7 @@ Available models: `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5-2025
 ### Codex
 
 ```bash
-cmd /C codex \
+codex \
   --dangerously-bypass-approvals-and-sandbox \
   -m <model> \
   "<combined_prompt>"
@@ -286,15 +286,15 @@ Interactive launch. Obelisk intentionally omits `exec` so the PTY session stays
 open. The user and system prompts are combined:
 `user_prompt\n\nFollow the workflow below exactly.\n\n---\n\nsystem_prompt`
 
-`cmd /C` wrapping is required on Windows because npm-installed CLIs are `.cmd`
-scripts that `CreateProcessW` cannot resolve directly.
+On Windows, the command is wrapped as `cmd /C codex ...` because npm-installed
+CLIs are `.cmd` scripts that `CreateProcessW` cannot resolve directly.
 
 Available models: `gpt-5.4`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`
 
 ### Copilot
 
 ```bash
-cmd /C copilot \
+copilot \
   -i "<combined_prompt>" \
   --model <model> \
   --yolo
@@ -303,25 +303,9 @@ cmd /C copilot \
 `-i` starts interactive mode and auto-executes the combined prompt. `--yolo`
 bypasses confirmation prompts.
 
+On Windows, the command is wrapped as `cmd /C copilot ...` (same reason as Codex).
+
 Available models: `claude-sonnet-4`, `gpt-5`
-
----
-
-## Token Parsing and Cost Tracking
-
-Obelisk parses token counts from CLI output using regex patterns (matched against
-each PTY data chunk). Token counts are used to estimate cost based on per-model
-pricing:
-
-| Model | Input (per 1M tokens) | Output (per 1M tokens) |
-|-------|----------------------|------------------------|
-| claude-sonnet-4-6 | $3.00 | $15.00 |
-| claude-opus-4-6 | $15.00 | $75.00 |
-| claude-haiku-4-5-20251001 | $0.80 | $4.00 |
-| gpt-5.4 | $10.00 | $30.00 |
-
-A cost threshold alert (default: $5.00) fires when an agent's estimated cost
-exceeds the limit.
 
 ---
 
