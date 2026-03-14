@@ -1633,6 +1633,98 @@ impl App {
         }
     }
 
+    /// Handle notification that an agent's beads issue has been polled and found closed.
+    /// Transitions the agent to Done phase and marks it Completed without killing the
+    /// process — the terminal stays open for inspection.
+    pub fn on_issue_closed(&mut self, agent_id: usize) {
+        let completion = if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
+            // Only act if the agent is still active
+            if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+                return;
+            }
+            agent.phase = AgentPhase::Done;
+            agent.status = AgentStatus::Completed;
+            agent.elapsed_secs = agent.started_at.elapsed().as_secs();
+            Some((
+                agent.unit_number,
+                agent.task.id.clone(),
+                agent.task.title.clone(),
+                agent.runtime.name().to_string(),
+                agent.model.clone(),
+                agent.elapsed_secs,
+            ))
+        } else {
+            return;
+        };
+
+        // Dequeue from merge queue if still present (e.g. fast close)
+        if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == agent_id) {
+            let entry = self.merge_queue.remove(pos).unwrap();
+            let elapsed = entry.enqueued_at.elapsed().as_secs();
+            self.log(
+                LogCategory::System,
+                format!(
+                    "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
+                    entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
+                ),
+            );
+        }
+
+        if let Some((unit, task_id, title, rt, model, elapsed)) = completion {
+            self.total_completed += 1;
+            let record = CompletionRecord {
+                task_id: task_id.clone(),
+                title: title.clone(),
+                runtime: rt.clone(),
+                model,
+                elapsed_secs: elapsed,
+                success: true,
+            };
+            self.recent_completions.push_back(record);
+            if self.recent_completions.len() > 10 {
+                self.recent_completions.pop_front();
+            }
+            info!(
+                agent_id = unit,
+                task_id,
+                runtime = rt,
+                elapsed_secs = elapsed,
+                total_completed = self.total_completed,
+                event = "issue_closed",
+                "beads issue closed — agent completed"
+            );
+            self.log(
+                LogCategory::Complete,
+                format!("AGENT-{:02} completed {} [{}] (issue closed)", unit, task_id, rt),
+            );
+            if self.notifications_enabled {
+                crate::notify::send_notification(
+                    "Agent Completed",
+                    &format!(
+                        "AGENT-{:02} \u{00b7} {} \u{00b7} {}s elapsed (issue closed)",
+                        unit, task_id, elapsed
+                    ),
+                );
+                crate::notify::send_bell();
+                crate::notify::send_webhook(
+                    &self.webhook_config,
+                    WebhookEventType::AgentCompleted,
+                    WebhookPayload {
+                        event: "agent_completed".into(),
+                        issue_id: task_id.clone(),
+                        title,
+                        status: "completed".into(),
+                        runtime: Some(rt.clone()),
+                        elapsed_secs: Some(elapsed),
+                        exit_code: None,
+                        failure_details: None,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    },
+                );
+            }
+        }
+    }
+
     pub fn selected_task(&self) -> Option<&BeadTask> {
         self.task_list_state
             .selected()
@@ -2790,15 +2882,14 @@ impl App {
             agent.raw_pty_log.extend_from_slice(data);
         }
         // Transition Starting → Running on first data received, and detect phase.
-        // Also detect Done phase (issue closed) and mark agent Completed while
-        // keeping the terminal alive — decouples task completion from process exit.
+        // Done phase detection is handled by polling `bd show` — see on_issue_closed().
         //
         // Merge queue events are collected here and processed outside the borrow scope.
         let mut merge_enqueue: Option<(usize, usize, String)> = None;
         let mut merge_dequeue_agent_id: Option<usize> = None;
         let mut merge_conflict_info: Option<(usize, String)> = None;
 
-        let done_completion = if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
+        if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
             if agent.status == AgentStatus::Starting {
                 agent.status = AgentStatus::Running;
             }
@@ -2835,42 +2926,8 @@ impl App {
                         merge_conflict_info = Some((agent.unit_number, agent.task.id.clone()));
                     }
                 }
-                // Detect Done: when a Closing-phase agent's PTY output contains
-                // "status": "closed", the beads issue has been closed successfully.
-                if agent.phase == AgentPhase::Closing
-                    && (text.contains("\"status\": \"closed\"")
-                        || text.contains("\"status\":\"closed\""))
-                {
-                    agent.phase = AgentPhase::Done;
-                }
             }
-            // When phase reaches Done and agent is still active, mark Completed
-            // without killing the process — the terminal stays open for inspection.
-            if agent.phase == AgentPhase::Done
-                && matches!(agent.status, AgentStatus::Starting | AgentStatus::Running)
-            {
-                agent.status = AgentStatus::Completed;
-                agent.elapsed_secs = agent.started_at.elapsed().as_secs();
-                // Also dequeue from merge queue if still present (e.g. fast close)
-                if merge_dequeue_agent_id.is_none()
-                    && self.merge_queue.iter().any(|e| e.agent_id == agent.id)
-                {
-                    merge_dequeue_agent_id = Some(agent.id);
-                }
-                Some((
-                    agent.unit_number,
-                    agent.task.id.clone(),
-                    agent.task.title.clone(),
-                    agent.runtime.name().to_string(),
-                    agent.model.clone(),
-                    agent.elapsed_secs,
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        }
 
         // Process merge queue events (outside borrow scope)
         if let Some((aid, unit, task_id)) = merge_enqueue {
@@ -2920,51 +2977,6 @@ impl App {
                     unit, task_id
                 ),
             );
-        }
-        // Record completion from issue closure (outside borrow scope)
-        if let Some((unit, task_id, title, rt, model, elapsed)) = done_completion {
-            self.total_completed += 1;
-            let record = CompletionRecord {
-                task_id: task_id.clone(),
-                title: title.clone(),
-                runtime: rt.clone(),
-                model,
-                elapsed_secs: elapsed,
-                success: true,
-            };
-            self.recent_completions.push_back(record);
-            if self.recent_completions.len() > 10 {
-                self.recent_completions.pop_front();
-            }
-            self.log(
-                LogCategory::Complete,
-                format!("AGENT-{:02} completed {} [{}] (issue closed)", unit, task_id, rt),
-            );
-            if self.notifications_enabled {
-                crate::notify::send_notification(
-                    "Agent Completed",
-                    &format!(
-                        "AGENT-{:02} \u{00b7} {} \u{00b7} {}s elapsed (issue closed)",
-                        unit, task_id, elapsed
-                    ),
-                );
-                crate::notify::send_bell();
-                crate::notify::send_webhook(
-                    &self.webhook_config,
-                    WebhookEventType::AgentCompleted,
-                    WebhookPayload {
-                        event: "agent_completed".into(),
-                        issue_id: task_id.clone(),
-                        title,
-                        status: "completed".into(),
-                        runtime: Some(rt.clone()),
-                        elapsed_secs: Some(elapsed),
-                        exit_code: None,
-                        failure_details: None,
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                    },
-                );
-            }
         }
         // Throughput tracking: count actual newlines only (no minimum-1 inflation)
         let newlines = data.iter().filter(|&&b| b == b'\n').count() as u16;
@@ -3658,18 +3670,15 @@ mod tests {
         assert_eq!(detect_phase("bd close --claim"), Some(AgentPhase::Closing));
     }
 
-    // ── Done phase / issue-closed completion (obelisk-3t3) ──────
+    // ── Issue-closed completion via polling (obelisk-ip4) ──────
 
     #[test]
-    fn pty_data_marks_completed_when_issue_closed_after_closing_phase() {
+    fn on_issue_closed_marks_running_agent_completed() {
         let mut app = App::new();
-        let mut agent = test_agent(50, AgentStatus::Running);
-        agent.phase = AgentPhase::Closing;
+        let agent = test_agent(50, AgentStatus::Running);
         app.agents.push(agent);
 
-        // Simulate PTY output containing bd show output with "status": "closed"
-        let data = b"\"status\": \"closed\"";
-        app.on_agent_pty_data(50, data);
+        app.on_issue_closed(50);
 
         let agent = app.agents.iter().find(|a| a.id == 50).unwrap();
         assert_eq!(agent.phase, AgentPhase::Done);
@@ -3678,47 +3687,34 @@ mod tests {
     }
 
     #[test]
-    fn pty_data_does_not_mark_done_before_closing_phase() {
+    fn on_issue_closed_ignores_already_completed_agent() {
         let mut app = App::new();
-        let mut agent = test_agent(51, AgentStatus::Running);
-        agent.phase = AgentPhase::Implementing;
+        let mut agent = test_agent(51, AgentStatus::Completed);
+        agent.phase = AgentPhase::Done;
         app.agents.push(agent);
 
-        // "status": "closed" appearing before Closing phase should not trigger Done
-        let data = b"\"status\": \"closed\"";
-        app.on_agent_pty_data(51, data);
+        app.on_issue_closed(51);
 
-        let agent = app.agents.iter().find(|a| a.id == 51).unwrap();
-        assert_eq!(agent.phase, AgentPhase::Implementing);
-        assert_eq!(agent.status, AgentStatus::Running);
+        // Should not increment completion count again
         assert_eq!(app.total_completed, 0);
     }
 
     #[test]
-    fn pty_data_handles_status_closed_without_space() {
+    fn on_issue_closed_ignores_unknown_agent() {
         let mut app = App::new();
-        let mut agent = test_agent(52, AgentStatus::Running);
-        agent.phase = AgentPhase::Closing;
-        app.agents.push(agent);
-
-        // JSON without space after colon
-        let data = b"\"status\":\"closed\"";
-        app.on_agent_pty_data(52, data);
-
-        let agent = app.agents.iter().find(|a| a.id == 52).unwrap();
-        assert_eq!(agent.phase, AgentPhase::Done);
-        assert_eq!(agent.status, AgentStatus::Completed);
+        // No agents registered — should not panic
+        app.on_issue_closed(999);
+        assert_eq!(app.total_completed, 0);
     }
 
     #[test]
-    fn exit_after_issue_closed_completion_does_not_double_count() {
+    fn exit_after_issue_closed_does_not_double_count() {
         let mut app = App::new();
-        let mut agent = test_agent(53, AgentStatus::Running);
-        agent.phase = AgentPhase::Closing;
+        let agent = test_agent(53, AgentStatus::Running);
         app.agents.push(agent);
 
-        // First: issue closure marks Completed
-        app.on_agent_pty_data(53, b"\"status\": \"closed\"");
+        // First: issue closure via polling marks Completed
+        app.on_issue_closed(53);
         assert_eq!(app.total_completed, 1);
 
         // Then: process exits naturally — should not increment again

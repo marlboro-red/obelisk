@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, info_span, warn};
-use types::{AppEvent, LogCategory, View, Focus};
+use types::{AgentStatus, AppEvent, LogCategory, View, Focus};
 
 const TICK_RATE_MS: u64 = 100;
 
@@ -375,6 +375,26 @@ fn process_event(
                     }
                 }
             }
+
+            // Periodic issue status poll (~every 5s = 50 ticks at 100ms)
+            // Polls `bd show <id> --json` for each running agent to detect completion
+            // from the source of truth (beads) instead of PTY scraping.
+            if app.frame_count.is_multiple_of(50) {
+                let running: Vec<(usize, String)> = app
+                    .agents
+                    .iter()
+                    .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+                    .map(|a| (a.id, a.task.id.clone()))
+                    .collect();
+                for (agent_id, task_id) in running {
+                    let tx_status = tx.clone();
+                    tokio::spawn(async move {
+                        if let Ok(true) = runtime::poll_issue_status(&task_id).await {
+                            let _ = tx_status.send(AppEvent::IssueStatusClosed { agent_id });
+                        }
+                    });
+                }
+            }
         }
         AppEvent::PollResult(tasks) => {
             debug!(
@@ -491,6 +511,9 @@ fn process_event(
                 "blocked issues poll completed"
             );
             app.on_blocked_poll_result(tasks);
+        }
+        AppEvent::IssueStatusClosed { agent_id } => {
+            app.on_issue_closed(agent_id);
         }
         AppEvent::IssueCreateResult(result) => {
             match result {

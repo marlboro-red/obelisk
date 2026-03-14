@@ -559,4 +559,6 @@ pub enum AppEvent {
     BlockedPollResult(Vec<BlockedTask>),
     /// Result of issue creation via `bd create`
     IssueCreateResult(Result<String, String>),
+    /// An agent's beads issue has been polled and found to be closed
+    IssueStatusClosed { agent_id: usize },
 }

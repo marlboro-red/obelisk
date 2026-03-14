@@ -528,6 +528,44 @@ pub async fn create_issue(
     Ok(trimmed.to_string())
 }
 
+/// Poll the status of a beads issue via `bd show <issue-id> --json`.
+/// Returns `true` if the issue status is "closed", `false` otherwise.
+pub async fn poll_issue_status(task_id: &str) -> Result<bool, String> {
+    let output = Command::new("bd")
+        .args(["show", task_id, "--json"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run bd show: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("bd show failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return Ok(false);
+    }
+
+    // bd show returns a JSON array with one element
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(arr) = parsed.as_array() {
+            if let Some(first) = arr.first() {
+                if let Some(status) = first.get("status").and_then(|v| v.as_str()) {
+                    return Ok(status == "closed");
+                }
+            }
+        }
+        // Handle single object response
+        if let Some(status) = parsed.get("status").and_then(|v| v.as_str()) {
+            return Ok(status == "closed");
+        }
+    }
+
+    Ok(false)
+}
+
 /// Run `git diff` + `git diff --cached` in an agent's worktree and parse the result
 /// into a structured `DiffData`. Returns an empty diff if the worktree doesn't exist.
 pub async fn poll_worktree_diff(worktree_path: &str) -> DiffData {
