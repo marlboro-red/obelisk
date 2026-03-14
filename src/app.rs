@@ -535,6 +535,9 @@ pub struct App {
     // Issue creation form overlay
     pub issue_creation_active: bool,
     pub issue_creation_form: IssueCreationForm,
+
+    // Merge queue — tracks agents in the Merging phase to serialize merges
+    pub merge_queue: VecDeque<MergeQueueEntry>,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -792,6 +795,7 @@ impl App {
             repo_name: detect_repo_name(),
             issue_creation_active: false,
             issue_creation_form: IssueCreationForm::new(),
+            merge_queue: VecDeque::new(),
         };
 
         // Seed recent completions from history sessions (most recent agents last)
@@ -1473,6 +1477,18 @@ impl App {
         // Auto-detach interactive mode if this agent was the one we were attached to
         if self.interactive_mode && self.selected_agent_id == Some(agent_id) {
             self.interactive_mode = false;
+        }
+
+        // Clean up merge queue if this agent was queued/merging
+        if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == agent_id) {
+            let entry = self.merge_queue.remove(pos).unwrap();
+            self.log(
+                LogCategory::Alert,
+                format!(
+                    "MERGE-QUEUE: AGENT-{:02} exited while merging {} (lock released, {} remaining)",
+                    entry.unit_number, entry.task_id, self.merge_queue.len()
+                ),
+            );
         }
 
         let log_info = if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
@@ -2776,6 +2792,12 @@ impl App {
         // Transition Starting → Running on first data received, and detect phase.
         // Also detect Done phase (issue closed) and mark agent Completed while
         // keeping the terminal alive — decouples task completion from process exit.
+        //
+        // Merge queue events are collected here and processed outside the borrow scope.
+        let mut merge_enqueue: Option<(usize, usize, String)> = None;
+        let mut merge_dequeue_agent_id: Option<usize> = None;
+        let mut merge_conflict_info: Option<(usize, String)> = None;
+
         let done_completion = if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
             if agent.status == AgentStatus::Starting {
                 agent.status = AgentStatus::Running;
@@ -2794,6 +2816,23 @@ impl App {
                             event = "agent_phase_transition",
                             "agent phase advanced"
                         );
+                        // Merge queue: track agents entering/leaving the Merging phase
+                        if detected == AgentPhase::Merging {
+                            merge_enqueue = Some((agent.id, agent.unit_number, agent.task.id.clone()));
+                        } else if prev_phase == AgentPhase::Merging {
+                            merge_dequeue_agent_id = Some(agent.id);
+                        }
+                    }
+                }
+                // Detect merge conflicts during the Merging phase
+                if agent.phase == AgentPhase::Merging {
+                    let lower = text.to_lowercase();
+                    if lower.contains("conflict")
+                        && (lower.contains("merge") || lower.contains("automatic merge failed"))
+                        || text.contains("CONFLICT (")
+                        || lower.contains("unmerged paths")
+                    {
+                        merge_conflict_info = Some((agent.unit_number, agent.task.id.clone()));
                     }
                 }
                 // Detect Done: when a Closing-phase agent's PTY output contains
@@ -2812,6 +2851,12 @@ impl App {
             {
                 agent.status = AgentStatus::Completed;
                 agent.elapsed_secs = agent.started_at.elapsed().as_secs();
+                // Also dequeue from merge queue if still present (e.g. fast close)
+                if merge_dequeue_agent_id.is_none()
+                    && self.merge_queue.iter().any(|e| e.agent_id == agent.id)
+                {
+                    merge_dequeue_agent_id = Some(agent.id);
+                }
                 Some((
                     agent.unit_number,
                     agent.task.id.clone(),
@@ -2826,6 +2871,56 @@ impl App {
         } else {
             None
         };
+
+        // Process merge queue events (outside borrow scope)
+        if let Some((aid, unit, task_id)) = merge_enqueue {
+            // Only enqueue if not already in the queue
+            if !self.merge_queue.iter().any(|e| e.agent_id == aid) {
+                let queue_pos = self.merge_queue.len();
+                self.merge_queue.push_back(MergeQueueEntry {
+                    agent_id: aid,
+                    unit_number: unit,
+                    task_id: task_id.clone(),
+                    enqueued_at: std::time::Instant::now(),
+                });
+                if queue_pos == 0 {
+                    self.log(
+                        LogCategory::System,
+                        format!("MERGE-QUEUE: AGENT-{:02} merging {} (queue empty, proceeding)", unit, task_id),
+                    );
+                } else {
+                    self.log(
+                        LogCategory::Alert,
+                        format!(
+                            "MERGE-QUEUE: AGENT-{:02} queued for merge ({}) — {} agent(s) ahead",
+                            unit, task_id, queue_pos
+                        ),
+                    );
+                }
+            }
+        }
+        if let Some(aid) = merge_dequeue_agent_id {
+            if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == aid) {
+                let entry = self.merge_queue.remove(pos).unwrap();
+                let elapsed = entry.enqueued_at.elapsed().as_secs();
+                self.log(
+                    LogCategory::System,
+                    format!(
+                        "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
+                        entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
+                    ),
+                );
+            }
+        }
+        if let Some((unit, task_id)) = merge_conflict_info {
+            self.log(
+                LogCategory::Alert,
+                format!(
+                    "MERGE-QUEUE: AGENT-{:02} merge CONFLICT on {} — agent should release lock and resolve",
+                    unit, task_id
+                ),
+            );
+        }
         // Record completion from issue closure (outside borrow scope)
         if let Some((unit, task_id, title, rt, model, elapsed)) = done_completion {
             self.total_completed += 1;
@@ -4871,5 +4966,148 @@ mod tests {
             }
         }
         assert_eq!(app.recent_completions.len(), 10);
+    }
+
+    // ── Merge queue ────────────────────────────────────────────
+
+    fn test_agent_with_task(id: usize, status: AgentStatus, task_id: &str) -> AgentInstance {
+        AgentInstance {
+            id,
+            unit_number: id,
+            task: BeadTask {
+                id: task_id.into(),
+                title: format!("task {}", task_id),
+                status: "in_progress".into(),
+                priority: None,
+                issue_type: None,
+                assignee: None,
+                labels: None,
+                description: None,
+                created_at: None,
+            },
+            runtime: Runtime::ClaudeCode,
+            model: "test-model".into(),
+            status,
+            phase: AgentPhase::Verifying,
+            output: VecDeque::new(),
+            started_at: std::time::Instant::now(),
+            elapsed_secs: 0,
+            exit_code: None,
+            pid: None,
+            retry_count: 0,
+            worktree_path: None,
+            worktree_cleaned: false,
+            template_name: String::new(),
+            pinned_to_split: None,
+            total_lines: 0,
+            raw_pty_log: Vec::new(),
+            pty_log_flushed_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn merge_queue_enqueues_on_merging_phase() {
+        let mut app = App::new();
+        app.agents.push(test_agent_with_task(10, AgentStatus::Running, "obelisk-abc"));
+
+        // Simulate PTY data with --no-ff (triggers Merging phase)
+        app.on_agent_pty_data(10, b"git merge abc --no-ff -m \"msg\"");
+
+        assert_eq!(app.merge_queue.len(), 1);
+        assert_eq!(app.merge_queue[0].agent_id, 10);
+        assert_eq!(app.merge_queue[0].task_id, "obelisk-abc");
+        // Should log the merge entry
+        assert!(app.event_log.iter().any(|e| e.message.contains("MERGE-QUEUE") && e.message.contains("obelisk-abc")));
+    }
+
+    #[test]
+    fn merge_queue_does_not_duplicate_enqueue() {
+        let mut app = App::new();
+        app.agents.push(test_agent_with_task(10, AgentStatus::Running, "obelisk-abc"));
+
+        // First trigger — should enqueue
+        app.on_agent_pty_data(10, b"git merge abc --no-ff -m \"msg\"");
+        assert_eq!(app.merge_queue.len(), 1);
+
+        // Second trigger with same phase — should not duplicate
+        app.on_agent_pty_data(10, b"some other --no-ff text");
+        assert_eq!(app.merge_queue.len(), 1);
+    }
+
+    #[test]
+    fn merge_queue_dequeues_on_closing_phase() {
+        let mut app = App::new();
+        let mut agent = test_agent_with_task(10, AgentStatus::Running, "obelisk-abc");
+        agent.phase = AgentPhase::Verifying;
+        app.agents.push(agent);
+
+        // Enter merging phase
+        app.on_agent_pty_data(10, b"git merge abc --no-ff -m \"msg\"");
+        assert_eq!(app.merge_queue.len(), 1);
+
+        // Advance to closing phase — should dequeue
+        app.on_agent_pty_data(10, b"bd close obelisk-abc --reason done");
+        assert_eq!(app.merge_queue.len(), 0);
+        assert!(app.event_log.iter().any(|e| e.message.contains("merge complete")));
+    }
+
+    #[test]
+    fn merge_queue_dequeues_on_agent_exit() {
+        let mut app = App::new();
+        let mut agent = test_agent_with_task(10, AgentStatus::Running, "obelisk-abc");
+        agent.phase = AgentPhase::Verifying;
+        app.agents.push(agent);
+
+        // Enter merging phase
+        app.on_agent_pty_data(10, b"git merge abc --no-ff -m \"msg\"");
+        assert_eq!(app.merge_queue.len(), 1);
+
+        // Agent exits (e.g. crash) — should dequeue
+        app.on_agent_exited(10, Some(1));
+        assert_eq!(app.merge_queue.len(), 0);
+        assert!(app.event_log.iter().any(|e| e.message.contains("exited while merging")));
+    }
+
+    #[test]
+    fn merge_queue_logs_conflict_detection() {
+        let mut app = App::new();
+        let mut agent = test_agent_with_task(10, AgentStatus::Running, "obelisk-abc");
+        agent.phase = AgentPhase::Verifying;
+        app.agents.push(agent);
+
+        // Enter merging phase
+        app.on_agent_pty_data(10, b"git merge abc --no-ff -m \"msg\"");
+
+        // Simulate conflict output during merge
+        app.on_agent_pty_data(10, b"CONFLICT (content): Merge conflict in src/main.rs");
+        assert!(app.event_log.iter().any(|e| e.message.contains("CONFLICT") && e.message.contains("obelisk-abc")));
+    }
+
+    #[test]
+    fn merge_queue_multiple_agents_tracks_position() {
+        let mut app = App::new();
+        let mut agent1 = test_agent_with_task(10, AgentStatus::Running, "obelisk-abc");
+        agent1.phase = AgentPhase::Verifying;
+        let mut agent2 = test_agent_with_task(11, AgentStatus::Running, "obelisk-def");
+        agent2.phase = AgentPhase::Verifying;
+        app.agents.push(agent1);
+        app.agents.push(agent2);
+
+        // Agent 1 enters merge phase
+        app.on_agent_pty_data(10, b"git merge abc --no-ff -m \"msg\"");
+        assert_eq!(app.merge_queue.len(), 1);
+        // Should log "proceeding" (queue was empty)
+        assert!(app.event_log.iter().any(|e| e.message.contains("proceeding")));
+
+        // Agent 2 enters merge phase while agent 1 is still merging
+        app.on_agent_pty_data(11, b"git merge def --no-ff -m \"msg\"");
+        assert_eq!(app.merge_queue.len(), 2);
+        // Should log "1 agent(s) ahead"
+        assert!(app.event_log.iter().any(|e| e.message.contains("1 agent(s) ahead")));
+
+        // Agent 1 finishes merge (advances to closing)
+        app.on_agent_pty_data(10, b"bd close obelisk-abc --reason done");
+        assert_eq!(app.merge_queue.len(), 1);
+        assert_eq!(app.merge_queue[0].agent_id, 11);
     }
 }

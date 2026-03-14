@@ -6,3 +6,6 @@
 
 # Agent PTY logs (runtime artifacts)
 .obelisk/logs/
+
+# Merge lock (runtime artifact, never committed)
+.obelisk/merge.lock/

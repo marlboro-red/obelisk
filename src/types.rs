@@ -335,6 +335,19 @@ pub struct SessionAgent {
     pub status: String,
 }
 
+/// Entry in the merge queue — tracks an agent that has entered the Merging phase.
+#[derive(Debug, Clone)]
+pub struct MergeQueueEntry {
+    /// Agent instance ID
+    pub agent_id: usize,
+    /// Agent unit number (for AGENT-NN display)
+    pub unit_number: usize,
+    /// Task/issue ID being merged
+    pub task_id: String,
+    /// When the agent entered the merge queue
+    pub enqueued_at: std::time::Instant,
+}
+
 /// A single session record appended to `.beads/obelisk_sessions.jsonl` on exit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
