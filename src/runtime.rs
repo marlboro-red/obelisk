@@ -448,6 +448,46 @@ pub async fn poll_worktree_diff(worktree_path: &str) -> DiffData {
     }
 }
 
+/// Path to the merge lock directory (used as an atomic lock via mkdir).
+#[allow(dead_code)]
+const MERGE_LOCK_DIR: &str = ".obelisk/merge.lock";
+
+/// Information about who currently holds the merge lock.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct MergeLockInfo {
+    /// The task/issue ID that holds the lock
+    pub owner: String,
+}
+
+/// Check if the merge lock is currently held.
+/// Returns Some(info) if held, None if available.
+#[allow(dead_code)]
+pub fn check_merge_lock() -> Option<MergeLockInfo> {
+    let lock_dir = std::path::Path::new(MERGE_LOCK_DIR);
+    if !lock_dir.is_dir() {
+        return None;
+    }
+    let owner_file = lock_dir.join("owner");
+    let owner = std::fs::read_to_string(owner_file)
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim()
+        .to_string();
+    Some(MergeLockInfo { owner })
+}
+
+/// Force-remove the merge lock (for breaking stale locks).
+/// Returns Ok if removed, Err if it didn't exist or couldn't be removed.
+#[allow(dead_code)]
+pub fn break_merge_lock() -> Result<(), String> {
+    let lock_dir = std::path::Path::new(MERGE_LOCK_DIR);
+    if !lock_dir.exists() {
+        return Err("No merge lock to break".to_string());
+    }
+    std::fs::remove_dir_all(lock_dir)
+        .map_err(|e| format!("Failed to break merge lock: {}", e))
+}
+
 fn extract_stat_number(line: &str, keyword: &str) -> Option<usize> {
     // Find "N insertion(s)" or "N deletion(s)" in a stat summary line
     let parts: Vec<&str> = line.split(',').collect();

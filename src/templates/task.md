@@ -117,8 +117,24 @@ Do NOT proceed to merge until the issue is fully addressed — not "mostly done.
 
 ## Phase 5: Merge
 
+**Merge Lock**: Acquire a file-based lock before merging to prevent conflicts with
+other agents merging simultaneously. The lock uses `mkdir` for atomic acquisition.
+
 ```bash
 cd -   # back to main repo
+mkdir -p .obelisk
+
+# Acquire merge lock (retries every 5s until lock is available)
+until mkdir .obelisk/merge.lock 2>/dev/null; do
+  echo "Merge queue: waiting for $(cat .obelisk/merge.lock/owner 2>/dev/null || echo unknown)..."
+  sleep 5
+done
+echo "{id}" > .obelisk/merge.lock/owner
+```
+
+Now pull and merge while holding the lock:
+
+```bash
 git checkout $DEFAULT_BRANCH
 git pull
 
@@ -130,6 +146,18 @@ git merge "{id}" --no-ff -m "Merge {id}: <short summary>"
 
 # Run the project's test and lint commands (discovered in Phase 0)
 ```
+
+**ALWAYS release the merge lock when done** (even if merge or tests failed):
+
+```bash
+rm -rf .obelisk/merge.lock
+```
+
+If the merge fails with a genuine conflict:
+1. Release the lock first: `rm -rf .obelisk/merge.lock`
+2. Abort the merge: `git merge --abort`
+3. Rebase your branch: `git checkout {id} && git rebase $DEFAULT_BRANCH`
+4. Resolve conflicts, then return to the start of Phase 5 to re-acquire the lock
 
 ---
 
@@ -163,3 +191,5 @@ git log --oneline $DEFAULT_BRANCH~3..$DEFAULT_BRANCH   # should show your merge 
 | `bd` can't find database in worktree | Set up `.beads/redirect` per Phase 2 |
 | Issue is blocked | STOP. Report back. Do not work on blocked issues |
 | Already claimed by another agent | Run `bd ready --json` and pick different work |
+| Merge lock held too long (>5 min) | May be stale — `rm -rf .obelisk/merge.lock` then re-acquire |
+| Merge conflict after lock acquired | Release lock first (`rm -rf .obelisk/merge.lock`), then abort merge, rebase, and retry |
