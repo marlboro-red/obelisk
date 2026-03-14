@@ -1,5 +1,6 @@
 mod app;
 mod client;
+mod cost;
 mod daemon;
 mod notify;
 mod runtime;

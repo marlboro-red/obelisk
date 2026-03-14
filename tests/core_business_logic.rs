@@ -331,12 +331,16 @@ fn session_record_round_trip() {
         ended_at: "2026-03-12T11:00:00Z".into(),
         total_completed: 3,
         total_failed: 1,
+        total_cost_usd: 1.50,
         agents: vec![SessionAgent {
             task_id: "t-1".into(),
             runtime: "CLAUDE".into(),
             model: "claude-sonnet-4-6".into(),
             elapsed_secs: 120,
             status: "Completed".into(),
+            input_tokens: 1000,
+            output_tokens: 500,
+            estimated_cost_usd: 1.50,
         }],
     };
 
@@ -763,6 +767,7 @@ fn session_record_with_multiple_agents() {
         ended_at: "2026-03-12T12:00:00Z".into(),
         total_completed: 5,
         total_failed: 2,
+        total_cost_usd: 3.50,
         agents: vec![
             SessionAgent {
                 task_id: "t-1".into(),
@@ -770,6 +775,7 @@ fn session_record_with_multiple_agents() {
                 model: "claude-sonnet-4-6".into(),
                 elapsed_secs: 120,
                 status: "Completed".into(),
+                input_tokens: 1000, output_tokens: 500, estimated_cost_usd: 1.50,
             },
             SessionAgent {
                 task_id: "t-2".into(),
@@ -777,6 +783,7 @@ fn session_record_with_multiple_agents() {
                 model: "gpt-5.4".into(),
                 elapsed_secs: 300,
                 status: "Failed".into(),
+                input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0.0,
             },
             SessionAgent {
                 task_id: "t-3".into(),
@@ -784,6 +791,7 @@ fn session_record_with_multiple_agents() {
                 model: "gpt-5".into(),
                 elapsed_secs: 45,
                 status: "Completed".into(),
+                input_tokens: 2000, output_tokens: 1000, estimated_cost_usd: 2.00,
             },
         ],
     };
