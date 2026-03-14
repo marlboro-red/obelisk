@@ -110,6 +110,108 @@ impl Theme {
         }
     }
 
+    /// "Dusk" — purple-violet accent on a deep plum-black base.
+    pub fn preset_dracula() -> Self {
+        Self {
+            primary: Color::Rgb(150, 120, 210),     // soft violet
+            accent: Color::Rgb(130, 190, 160),       // mint
+            secondary: Color::Rgb(125, 120, 145),    // lavender gray
+            danger: Color::Rgb(195, 80, 90),         // rose red
+            info: Color::Rgb(150, 120, 210),         // = primary
+            warn: Color::Rgb(195, 175, 105),         // muted gold
+            dark_bg: Color::Rgb(16, 12, 22),         // plum black
+            panel_bg: Color::Rgb(24, 18, 32),        // dark plum
+            muted: Color::Rgb(60, 55, 75),           // dusky gray
+            bright: Color::Rgb(190, 185, 205),       // lavender silver
+            dim_accent: Color::Rgb(70, 100, 85),     // dim mint
+        }
+    }
+
+    /// "Amber" — warm orange-gold accent on a charcoal base.
+    pub fn preset_monokai() -> Self {
+        Self {
+            primary: Color::Rgb(210, 155, 80),       // warm orange
+            accent: Color::Rgb(140, 190, 120),        // lime green
+            secondary: Color::Rgb(140, 135, 130),     // warm gray
+            danger: Color::Rgb(195, 75, 75),          // bright red
+            info: Color::Rgb(210, 155, 80),           // = primary
+            warn: Color::Rgb(210, 175, 90),           // gold
+            dark_bg: Color::Rgb(18, 18, 16),          // charcoal
+            panel_bg: Color::Rgb(28, 28, 24),         // dark charcoal
+            muted: Color::Rgb(72, 70, 65),            // charcoal gray
+            bright: Color::Rgb(198, 195, 185),        // warm white
+            dim_accent: Color::Rgb(80, 105, 68),      // dim lime
+        }
+    }
+
+    /// "Twilight" — cool blue-purple accent on a slate-blue base.
+    pub fn preset_tokyo_night() -> Self {
+        Self {
+            primary: Color::Rgb(120, 145, 220),      // periwinkle
+            accent: Color::Rgb(115, 185, 165),        // seafoam
+            secondary: Color::Rgb(115, 120, 150),     // slate gray
+            danger: Color::Rgb(185, 80, 85),          // muted rose
+            info: Color::Rgb(120, 145, 220),          // = primary
+            warn: Color::Rgb(190, 170, 100),          // muted amber
+            dark_bg: Color::Rgb(12, 14, 24),          // slate black
+            panel_bg: Color::Rgb(18, 20, 34),         // dark slate
+            muted: Color::Rgb(52, 56, 78),            // slate gray
+            bright: Color::Rgb(180, 185, 210),        // cool lilac
+            dim_accent: Color::Rgb(62, 100, 90),      // dim seafoam
+        }
+    }
+
+    /// "Carbon" — muted blue accent on a warm carbon-black base.
+    pub fn preset_one_dark() -> Self {
+        Self {
+            primary: Color::Rgb(105, 155, 210),      // soft blue
+            accent: Color::Rgb(125, 180, 140),        // soft green
+            secondary: Color::Rgb(130, 130, 140),     // neutral gray
+            danger: Color::Rgb(190, 80, 78),          // warm red
+            info: Color::Rgb(105, 155, 210),          // = primary
+            warn: Color::Rgb(195, 170, 95),           // amber
+            dark_bg: Color::Rgb(16, 18, 22),          // carbon black
+            panel_bg: Color::Rgb(24, 26, 32),         // dark carbon
+            muted: Color::Rgb(60, 64, 72),            // carbon gray
+            bright: Color::Rgb(188, 190, 198),        // silver
+            dim_accent: Color::Rgb(68, 98, 78),       // dim green
+        }
+    }
+
+    /// "Bloom" — dusky pink accent on a deep plum base.
+    pub fn preset_rose_pine() -> Self {
+        Self {
+            primary: Color::Rgb(180, 130, 175),      // dusky rose
+            accent: Color::Rgb(140, 175, 155),        // sage
+            secondary: Color::Rgb(130, 125, 140),     // mauve gray
+            danger: Color::Rgb(190, 80, 85),          // muted red
+            info: Color::Rgb(180, 130, 175),          // = primary
+            warn: Color::Rgb(195, 170, 110),          // muted gold
+            dark_bg: Color::Rgb(18, 14, 20),          // deep plum
+            panel_bg: Color::Rgb(26, 22, 30),         // plum panel
+            muted: Color::Rgb(68, 60, 72),            // plum gray
+            bright: Color::Rgb(195, 188, 200),        // rose white
+            dim_accent: Color::Rgb(78, 95, 84),       // dim sage
+        }
+    }
+
+    /// "Moss" — earthy green accent on a dark forest base.
+    pub fn preset_everforest() -> Self {
+        Self {
+            primary: Color::Rgb(130, 175, 130),      // forest green
+            accent: Color::Rgb(160, 180, 120),        // olive-lime
+            secondary: Color::Rgb(130, 135, 125),     // earthy gray
+            danger: Color::Rgb(185, 85, 75),          // earthy red
+            info: Color::Rgb(130, 175, 130),          // = primary
+            warn: Color::Rgb(190, 170, 100),          // warm amber
+            dark_bg: Color::Rgb(14, 18, 14),          // forest black
+            panel_bg: Color::Rgb(22, 26, 22),         // dark forest
+            muted: Color::Rgb(58, 65, 58),            // forest gray
+            bright: Color::Rgb(188, 192, 185),        // sage white
+            dim_accent: Color::Rgb(88, 100, 68),      // dim olive
+        }
+    }
+
     /// Build a theme from the config, using a preset as the base and applying
     /// any individual color overrides.
     pub fn from_config(config: &ThemeConfig) -> Self {
@@ -118,6 +220,12 @@ impl Theme {
             Some("nord") | Some("ember") => Self::preset_nord(),
             Some("catppuccin") | Some("ash") => Self::preset_catppuccin(),
             Some("gruvbox") | Some("deep") => Self::preset_gruvbox(),
+            Some("dracula") | Some("dusk") => Self::preset_dracula(),
+            Some("monokai") | Some("amber") => Self::preset_monokai(),
+            Some("tokyo-night") | Some("twilight") => Self::preset_tokyo_night(),
+            Some("one-dark") | Some("carbon") => Self::preset_one_dark(),
+            Some("rose-pine") | Some("bloom") => Self::preset_rose_pine(),
+            Some("everforest") | Some("moss") => Self::preset_everforest(),
             _ => Self::preset_default(),
         };
 
@@ -251,6 +359,12 @@ mod tests {
             Theme::preset_nord(),
             Theme::preset_catppuccin(),
             Theme::preset_gruvbox(),
+            Theme::preset_dracula(),
+            Theme::preset_monokai(),
+            Theme::preset_tokyo_night(),
+            Theme::preset_one_dark(),
+            Theme::preset_rose_pine(),
+            Theme::preset_everforest(),
         ];
         for theme in &presets {
             assert!(matches!(theme.primary, Color::Rgb(_, _, _)));
@@ -367,6 +481,138 @@ mod tests {
     }
 
     #[test]
+    fn from_config_dracula_preset() {
+        let config = ThemeConfig {
+            preset: Some("dracula".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_dracula();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_dusk_alias_maps_to_dracula() {
+        let config = ThemeConfig {
+            preset: Some("dusk".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_dracula();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_monokai_preset() {
+        let config = ThemeConfig {
+            preset: Some("monokai".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_monokai();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_amber_alias_maps_to_monokai() {
+        let config = ThemeConfig {
+            preset: Some("amber".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_monokai();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_tokyo_night_preset() {
+        let config = ThemeConfig {
+            preset: Some("tokyo-night".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_tokyo_night();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_twilight_alias_maps_to_tokyo_night() {
+        let config = ThemeConfig {
+            preset: Some("twilight".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_tokyo_night();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_one_dark_preset() {
+        let config = ThemeConfig {
+            preset: Some("one-dark".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_one_dark();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_carbon_alias_maps_to_one_dark() {
+        let config = ThemeConfig {
+            preset: Some("carbon".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_one_dark();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_rose_pine_preset() {
+        let config = ThemeConfig {
+            preset: Some("rose-pine".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_rose_pine();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_bloom_alias_maps_to_rose_pine() {
+        let config = ThemeConfig {
+            preset: Some("bloom".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_rose_pine();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_everforest_preset() {
+        let config = ThemeConfig {
+            preset: Some("everforest".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_everforest();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
+    fn from_config_moss_alias_maps_to_everforest() {
+        let config = ThemeConfig {
+            preset: Some("moss".into()),
+            ..Default::default()
+        };
+        let theme = Theme::from_config(&config);
+        let expected = Theme::preset_everforest();
+        assert_eq!(theme.primary, expected.primary);
+    }
+
+    #[test]
     fn from_config_unknown_preset_falls_back_to_default() {
         let config = ThemeConfig {
             preset: Some("nonexistent".into()),
@@ -456,6 +702,12 @@ mod tests {
             Theme::preset_nord(),
             Theme::preset_catppuccin(),
             Theme::preset_gruvbox(),
+            Theme::preset_dracula(),
+            Theme::preset_monokai(),
+            Theme::preset_tokyo_night(),
+            Theme::preset_one_dark(),
+            Theme::preset_rose_pine(),
+            Theme::preset_everforest(),
         ];
         // Every pair of presets should have different primary colors
         for i in 0..presets.len() {

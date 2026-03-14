@@ -77,7 +77,11 @@ const KNOWN_THEME_KEYS: &[&str] = &[
     "preset", "primary", "accent", "secondary", "danger", "info", "warn",
     "dark_bg", "panel_bg", "muted", "bright", "dim_accent",
 ];
-const KNOWN_THEME_PRESETS: &[&str] = &["solarized", "frost", "nord", "ember", "catppuccin", "ash", "gruvbox", "deep"];
+const KNOWN_THEME_PRESETS: &[&str] = &[
+    "solarized", "frost", "nord", "ember", "catppuccin", "ash", "gruvbox", "deep",
+    "dracula", "dusk", "monokai", "amber", "tokyo-night", "twilight",
+    "one-dark", "carbon", "rose-pine", "bloom", "everforest", "moss",
+];
 const KNOWN_RUNTIMES: &[&str] = &["claude", "codex", "copilot"];
 
 /// Validate parsed config and return a list of warnings.
@@ -4374,16 +4378,16 @@ mod tests {
     fn validate_warns_on_unknown_theme_preset() {
         let toml_str = r#"
             [theme]
-            preset = "dracula"
+            preset = "nonexistent"
         "#;
         let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
         let warnings = validate_config(toml_str, &config);
-        assert!(warnings.iter().any(|w| w.contains("dracula")));
+        assert!(warnings.iter().any(|w| w.contains("nonexistent")));
     }
 
     #[test]
     fn validate_accepts_theme_preset_aliases() {
-        for alias in &["frost", "ember", "ash", "deep"] {
+        for alias in &["frost", "ember", "ash", "deep", "dusk", "amber", "twilight", "carbon", "bloom", "moss"] {
             let toml_str = format!("[theme]\npreset = \"{}\"", alias);
             let config: ObeliskConfig = toml::from_str(&toml_str).unwrap();
             let warnings = validate_config(&toml_str, &config);
