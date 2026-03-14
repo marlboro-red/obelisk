@@ -477,6 +477,35 @@ pub struct LayoutAreas {
     pub split_panes: [Option<ratatui::layout::Rect>; 4],
 }
 
+/// State for the issue creation form overlay.
+#[derive(Debug, Clone)]
+pub struct IssueCreationForm {
+    pub title: String,
+    pub description: String,
+    pub issue_type_idx: usize,
+    pub priority: i32,
+    pub focused_field: usize, // 0=title, 1=description, 2=type, 3=priority
+}
+
+/// Available issue types for the creation form.
+pub const ISSUE_TYPES: &[&str] = &["feature", "bug", "task", "chore", "epic"];
+
+impl IssueCreationForm {
+    pub fn new() -> Self {
+        Self {
+            title: String::new(),
+            description: String::new(),
+            issue_type_idx: 0,
+            priority: 2,
+            focused_field: 0,
+        }
+    }
+
+    pub fn issue_type(&self) -> &'static str {
+        ISSUE_TYPES[self.issue_type_idx]
+    }
+}
+
 pub enum AppEvent {
     Terminal(crossterm::event::Event),
     Tick,
@@ -504,4 +533,6 @@ pub enum AppEvent {
     DepGraphFailed(String),
     /// Result of a blocked-issues poll
     BlockedPollResult(Vec<BlockedTask>),
+    /// Result of issue creation via `bd create`
+    IssueCreateResult(Result<String, String>),
 }

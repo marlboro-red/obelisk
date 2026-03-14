@@ -345,6 +345,62 @@ pub async fn poll_dep_graph() -> Result<Vec<DepNode>, String> {
     Ok(all_nodes)
 }
 
+/// Create a new beads issue via `bd create`.
+/// Returns the created issue ID on success.
+pub async fn create_issue(
+    title: &str,
+    description: &str,
+    issue_type: &str,
+    priority: i32,
+) -> Result<String, String> {
+    let mut args = vec![
+        "create".to_string(),
+        title.to_string(),
+        "-t".to_string(),
+        issue_type.to_string(),
+        "-p".to_string(),
+        priority.to_string(),
+        "--json".to_string(),
+    ];
+
+    if !description.is_empty() {
+        args.push("-d".to_string());
+        args.push(description.to_string());
+    }
+
+    let output = Command::new("bd")
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run bd create: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("bd create failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+
+    // Try to parse the JSON to extract the issue ID
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(id) = parsed.get("id").and_then(|v| v.as_str()) {
+            return Ok(id.to_string());
+        }
+        // Some versions return an array
+        if let Some(arr) = parsed.as_array() {
+            if let Some(first) = arr.first() {
+                if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+                    return Ok(id.to_string());
+                }
+            }
+        }
+    }
+
+    // Fallback: return the raw output as the ID
+    Ok(trimmed.to_string())
+}
+
 /// Run `git diff` + `git diff --cached` in an agent's worktree and parse the result
 /// into a structured `DiffData`. Returns an empty diff if the worktree doesn't exist.
 pub async fn poll_worktree_diff(worktree_path: &str) -> DiffData {

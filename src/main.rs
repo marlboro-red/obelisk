@@ -492,6 +492,47 @@ fn process_event(
             );
             app.on_blocked_poll_result(tasks);
         }
+        AppEvent::IssueCreateResult(result) => {
+            match result {
+                Ok(issue_id) => {
+                    app.log(
+                        LogCategory::System,
+                        format!("Issue created: {}", issue_id),
+                    );
+                    app.alert_message = Some((
+                        format!("Issue created: {}", issue_id),
+                        app.frame_count + 120,
+                    ));
+                    // Trigger a poll to pick up the new issue
+                    app.poll_countdown = 0.0;
+                    let tx_poll = tx.clone();
+                    let tx_blocked = tx.clone();
+                    tokio::spawn(async move {
+                        match runtime::poll_ready().await {
+                            Ok(tasks) => {
+                                let _ = tx_poll.send(AppEvent::PollResult(tasks));
+                            }
+                            Err(e) => {
+                                let _ = tx_poll.send(AppEvent::PollFailed(e.to_string()));
+                            }
+                        }
+                        if let Ok(blocked) = runtime::poll_blocked().await {
+                            let _ = tx_blocked.send(AppEvent::BlockedPollResult(blocked));
+                        }
+                    });
+                }
+                Err(e) => {
+                    app.log(
+                        LogCategory::Alert,
+                        format!("Issue creation failed: {}", e),
+                    );
+                    app.alert_message = Some((
+                        format!("Create failed: {}", e),
+                        app.frame_count + 180,
+                    ));
+                }
+            }
+        }
         AppEvent::Terminal(Event::Resize(_, _)) => {
             // PTY resize is handled in the render loop via sync_pty_sizes,
             // which runs before every draw and avoids double-resize here.
@@ -670,6 +711,95 @@ fn handle_key(
             }
             KeyCode::Char('n') | KeyCode::Esc => {
                 app.confirm_kill_agent_id = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // ── Issue creation form: intercept keys when form is active ──
+    if app.issue_creation_active {
+        match key.code {
+            KeyCode::Esc => {
+                app.issue_creation_active = false;
+                app.issue_creation_form = types::IssueCreationForm::new();
+            }
+            KeyCode::Tab => {
+                app.issue_creation_form.focused_field =
+                    (app.issue_creation_form.focused_field + 1) % 4;
+            }
+            KeyCode::BackTab => {
+                app.issue_creation_form.focused_field =
+                    (app.issue_creation_form.focused_field + 3) % 4;
+            }
+            KeyCode::Enter => {
+                let form = &app.issue_creation_form;
+                if form.title.trim().is_empty() {
+                    app.alert_message = Some((
+                        "Title is required".to_string(),
+                        app.frame_count + 60,
+                    ));
+                } else {
+                    let title = form.title.clone();
+                    let description = form.description.clone();
+                    let issue_type = form.issue_type().to_string();
+                    let priority = form.priority;
+                    let tx_create = tx.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            runtime::create_issue(&title, &description, &issue_type, priority)
+                                .await;
+                        let _ = tx_create.send(AppEvent::IssueCreateResult(result));
+                    });
+                    app.issue_creation_active = false;
+                    app.issue_creation_form = types::IssueCreationForm::new();
+                    app.log(LogCategory::System, "Creating issue...".into());
+                }
+            }
+            KeyCode::Up => {
+                match app.issue_creation_form.focused_field {
+                    2 => {
+                        // Cycle issue type backward
+                        let len = types::ISSUE_TYPES.len();
+                        app.issue_creation_form.issue_type_idx =
+                            (app.issue_creation_form.issue_type_idx + len - 1) % len;
+                    }
+                    3 => {
+                        // Increase priority (lower number = higher priority)
+                        app.issue_creation_form.priority =
+                            (app.issue_creation_form.priority - 1).max(1);
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Down => {
+                match app.issue_creation_form.focused_field {
+                    2 => {
+                        // Cycle issue type forward
+                        app.issue_creation_form.issue_type_idx =
+                            (app.issue_creation_form.issue_type_idx + 1) % types::ISSUE_TYPES.len();
+                    }
+                    3 => {
+                        // Decrease priority (higher number = lower priority)
+                        app.issue_creation_form.priority =
+                            (app.issue_creation_form.priority + 1).min(4);
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Backspace => {
+                match app.issue_creation_form.focused_field {
+                    0 => { app.issue_creation_form.title.pop(); }
+                    1 => { app.issue_creation_form.description.pop(); }
+                    _ => {}
+                }
+            }
+            KeyCode::Char(c) => {
+                match app.issue_creation_form.focused_field {
+                    0 => app.issue_creation_form.title.push(c),
+                    1 => app.issue_creation_form.description.push(c),
+                    _ => {}
+                }
             }
             _ => {}
         }
@@ -978,6 +1108,11 @@ fn handle_key(
                 }
                 let _ = tx_clean.send(AppEvent::WorktreeCleaned { cleaned, failed });
             });
+        }
+        // 'C' opens the issue creation form from Dashboard
+        KeyCode::Char('C') if app.active_view == View::Dashboard => {
+            app.issue_creation_active = true;
+            app.issue_creation_form = types::IssueCreationForm::new();
         }
         // 'd' toggles diff panel in Agent Detail view
         KeyCode::Char('d') if app.active_view == View::AgentDetail => {

@@ -499,6 +499,10 @@ pub struct App {
 
     // Repository name for display in title bar
     pub repo_name: String,
+
+    // Issue creation form overlay
+    pub issue_creation_active: bool,
+    pub issue_creation_form: IssueCreationForm,
 }
 
 fn compute_search_matches(screen: &vt100::Screen, query: &str) -> Vec<(usize, usize)> {
@@ -748,6 +752,8 @@ impl App {
                 .ok(),
             config_check_frame: 0,
             repo_name: detect_repo_name(),
+            issue_creation_active: false,
+            issue_creation_form: IssueCreationForm::new(),
         };
 
         // Seed recent completions from history sessions (most recent agents last)
