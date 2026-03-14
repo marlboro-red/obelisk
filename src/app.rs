@@ -1845,15 +1845,68 @@ impl App {
         if !self.auto_spawn || self.active_agent_count() >= self.max_concurrent {
             return None;
         }
+
+        // Build set of task IDs that are explicitly blocked
+        let blocked_ids: HashSet<String> = self
+            .blocked_tasks
+            .iter()
+            .map(|bt| bt.task.id.clone())
+            .collect();
+
+        // Build set of task IDs whose dep-graph parents are not yet closed.
+        // In the dep tree, parent_id represents a dependency — if a task's parent
+        // isn't closed, the task should not be spawned.
+        let status_map: HashMap<&str, &str> = self
+            .dep_graph_nodes
+            .iter()
+            .map(|n| (n.id.as_str(), n.status.as_str()))
+            .collect();
+        let dep_blocked: HashSet<String> = self
+            .dep_graph_nodes
+            .iter()
+            .filter(|node| {
+                node.parent_id.as_ref().is_some_and(|pid| {
+                    status_map
+                        .get(pid.as_str())
+                        .is_some_and(|s| *s != "closed")
+                })
+            })
+            .map(|n| n.id.clone())
+            .collect();
+
         // Respect filters — only auto-spawn from the visible filtered set.
         // Always pick the highest-priority task (lowest priority number)
-        // regardless of the current UI sort mode.
+        // that has all dependencies closed.
         let filtered = self.filtered_tasks();
         let best_idx = filtered
             .iter()
             .enumerate()
+            .filter(|(_, t)| !blocked_ids.contains(&t.id) && !dep_blocked.contains(&t.id))
             .min_by_key(|(_, t)| t.priority.unwrap_or(3))
-            .map(|(i, _)| i)?;
+            .map(|(i, _)| i);
+
+        let best_idx = match best_idx {
+            Some(idx) => idx,
+            None => {
+                // All tasks have unclosed deps — log and skip
+                if !filtered.is_empty() {
+                    let skipped: Vec<&str> = filtered
+                        .iter()
+                        .filter(|t| blocked_ids.contains(&t.id) || dep_blocked.contains(&t.id))
+                        .map(|t| t.id.as_str())
+                        .collect();
+                    if !skipped.is_empty() {
+                        info!(
+                            skipped_ids = %skipped.join(","),
+                            event = "auto_spawn_deps_blocked",
+                            "skipping tasks with unclosed dependencies"
+                        );
+                    }
+                }
+                return None;
+            }
+        };
+
         self.task_list_state.select(Some(best_idx));
         self.get_spawn_info()
     }
@@ -4785,6 +4838,108 @@ mod tests {
 
         assert_eq!(app.dep_graph_rows.len(), 1, "child should be hidden when root is collapsed");
         assert!(app.dep_graph_rows[0].collapsed);
+    }
+
+    // ── Dependency-aware auto-spawn ─────────────────────────────
+
+    #[test]
+    fn auto_spawn_skips_tasks_with_unclosed_dep_graph_parent() {
+        let mut app = App::new();
+        app.auto_spawn = true;
+        app.max_concurrent = 5;
+
+        // Task B depends on task A (parent_id points to A). A is still open.
+        app.ready_tasks = vec![
+            BeadTask { id: "B".into(), title: "Child".into(), status: "open".into(),
+                       priority: Some(1), issue_type: None, assignee: None,
+                       labels: None, description: None, created_at: None },
+        ];
+        app.dep_graph_nodes = vec![
+            DepNode { id: "A".into(), title: "Parent".into(), status: "open".into(),
+                      priority: Some(1), issue_type: None, depth: 0, parent_id: None, truncated: false },
+            DepNode { id: "B".into(), title: "Child".into(), status: "open".into(),
+                      priority: Some(1), issue_type: None, depth: 1, parent_id: Some("A".into()), truncated: false },
+        ];
+
+        // B has an unclosed parent A — should be skipped
+        let result = app.get_auto_spawn_info();
+        assert!(result.is_none(), "should not spawn B when parent A is not closed");
+    }
+
+    #[test]
+    fn auto_spawn_allows_task_when_dep_graph_parent_is_closed() {
+        let mut app = App::new();
+        app.auto_spawn = true;
+        app.max_concurrent = 5;
+
+        app.ready_tasks = vec![
+            BeadTask { id: "B".into(), title: "Child".into(), status: "open".into(),
+                       priority: Some(1), issue_type: None, assignee: None,
+                       labels: None, description: None, created_at: None },
+        ];
+        app.dep_graph_nodes = vec![
+            DepNode { id: "A".into(), title: "Parent".into(), status: "closed".into(),
+                      priority: Some(1), issue_type: None, depth: 0, parent_id: None, truncated: false },
+            DepNode { id: "B".into(), title: "Child".into(), status: "open".into(),
+                      priority: Some(1), issue_type: None, depth: 1, parent_id: Some("A".into()), truncated: false },
+        ];
+
+        // A is closed — B should be eligible
+        let result = app.get_auto_spawn_info();
+        assert!(result.is_some(), "should spawn B when parent A is closed");
+    }
+
+    #[test]
+    fn auto_spawn_skips_blocked_tasks() {
+        let mut app = App::new();
+        app.auto_spawn = true;
+        app.max_concurrent = 5;
+
+        app.ready_tasks = vec![
+            BeadTask { id: "X".into(), title: "Blocked".into(), status: "open".into(),
+                       priority: Some(1), issue_type: None, assignee: None,
+                       labels: None, description: None, created_at: None },
+        ];
+        app.blocked_tasks = vec![
+            BlockedTask {
+                task: BeadTask { id: "X".into(), title: "Blocked".into(), status: "blocked".into(),
+                                 priority: Some(1), issue_type: None, assignee: None,
+                                 labels: None, description: None, created_at: None },
+                remaining_deps: 1,
+            },
+        ];
+
+        let result = app.get_auto_spawn_info();
+        assert!(result.is_none(), "should not spawn a blocked task");
+    }
+
+    #[test]
+    fn auto_spawn_picks_eligible_task_over_blocked_one() {
+        let mut app = App::new();
+        app.auto_spawn = true;
+        app.max_concurrent = 5;
+
+        // Two tasks: X is blocked (P1), Y is free (P2)
+        app.ready_tasks = vec![
+            BeadTask { id: "X".into(), title: "Blocked".into(), status: "open".into(),
+                       priority: Some(1), issue_type: None, assignee: None,
+                       labels: None, description: None, created_at: None },
+            BeadTask { id: "Y".into(), title: "Free".into(), status: "open".into(),
+                       priority: Some(2), issue_type: None, assignee: None,
+                       labels: None, description: None, created_at: None },
+        ];
+        app.dep_graph_nodes = vec![
+            DepNode { id: "dep".into(), title: "Dep".into(), status: "open".into(),
+                      priority: Some(1), issue_type: None, depth: 0, parent_id: None, truncated: false },
+            DepNode { id: "X".into(), title: "Blocked".into(), status: "open".into(),
+                      priority: Some(1), issue_type: None, depth: 1, parent_id: Some("dep".into()), truncated: false },
+        ];
+
+        // X has unclosed dep, Y is free — should pick Y even though X has higher priority
+        let result = app.get_auto_spawn_info();
+        assert!(result.is_some(), "should spawn the eligible task Y");
+        let spawned = result.unwrap();
+        assert_eq!(spawned.task.id, "Y", "should have spawned Y, not blocked X");
     }
 
     // ── Search helpers ───────────────────────────────────────────

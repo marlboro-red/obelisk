@@ -90,6 +90,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let tx_poll = tx.clone();
     let poller_interval = Arc::clone(&shared_poll_interval);
     tokio::spawn(async move {
+        let mut cycle = 0u64;
         loop {
             match runtime::poll_ready().await {
                 Ok(tasks) => {
@@ -101,6 +102,22 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = tx_poll.send(AppEvent::PollFailed(e));
                 }
             }
+            // Poll blocked issues on every cycle (needed for dep-aware auto-spawn)
+            if let Ok(blocked) = runtime::poll_blocked().await {
+                let _ = tx_poll.send(AppEvent::BlockedPollResult(blocked));
+            }
+            // Poll dep graph every 3rd cycle for dependency-aware auto-spawn
+            if cycle % 3 == 0 {
+                match runtime::poll_dep_graph().await {
+                    Ok(nodes) => {
+                        let _ = tx_poll.send(AppEvent::DepGraphResult(nodes));
+                    }
+                    Err(e) => {
+                        let _ = tx_poll.send(AppEvent::DepGraphFailed(e));
+                    }
+                }
+            }
+            cycle += 1;
             let secs = poller_interval.load(Ordering::Relaxed);
             tokio::time::sleep(tokio::time::Duration::from_secs(secs)).await;
         }
