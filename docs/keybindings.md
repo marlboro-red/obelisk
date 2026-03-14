@@ -17,13 +17,12 @@ changes based on focus or state.
 | `1`–`7` | Switch to view (Dashboard, Agent Detail, Event Log, History, Split Pane, Worktree Overview, Dep Graph) |
 | `Esc` | Return to Dashboard (from any non-Dashboard view) |
 | `q` | Quit application (from Dashboard) or return to Dashboard (from other views) |
-| `Tab` | Toggle focus between panels (all views except Agent Detail) |
+| `Tab` | Cycle focus between panels (Dashboard: Ready Queue → Blocked Queue → Agent List) |
 | `n` | Toggle desktop notifications on/off |
 | `p` | Trigger manual poll / scan |
 | `+` or `=` | Increase max concurrent agent slots |
 | `-` | Decrease max concurrent agent slots |
 | `y` | Copy selected item info to clipboard |
-| `M` | Toggle mouse support on/off |
 
 ---
 
@@ -33,8 +32,8 @@ changes based on focus or state.
 
 | Key | Action |
 |-----|--------|
-| `↑` / `j` | Navigate up |
-| `↓` / `k` | Navigate down |
+| `↑` / `k` | Navigate up |
+| `↓` / `j` | Navigate down |
 | `s` | Spawn agent on selected task |
 | `Enter` | Spawn agent on selected task |
 | `/` | Open jump-to-issue bar |
@@ -46,12 +45,20 @@ changes based on focus or state.
 | `c` | Scan and clean orphaned worktrees |
 | `w` | Open Worktree Overview |
 
+### Blocked Queue Panel (focus: Blocked Queue)
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | Navigate up |
+| `↓` / `j` | Navigate down |
+| `y` | Copy blocked issue ID to clipboard |
+
 ### Agent List Panel (focus: Agent List)
 
 | Key | Action |
 |-----|--------|
-| `↑` / `j` | Navigate up |
-| `↓` / `k` | Navigate down |
+| `↑` / `k` | Navigate up |
+| `↓` / `j` | Navigate down |
 | `Enter` | Open Agent Detail for selected agent |
 | `f` | Cycle agent status filter (All → Running → Failed → Done → Init) |
 | `x` | Dismiss selected finished agent |
@@ -79,6 +86,7 @@ changes based on focus or state.
 | `K` | Scroll diff panel up (when visible) |
 | `e` | Export agent log to file |
 | `r` | Retry failed agent |
+| `D` | Mark agent as completed + SIGTERM + clean up worktree |
 | `k` | Kill agent (shows confirmation) |
 
 ### Search Mode (within Agent Detail)
@@ -159,8 +167,8 @@ PTY key mappings:
 
 | Key | Action |
 |-----|--------|
-| `↑` / `j` | Navigate up |
-| `↓` / `k` | Navigate down |
+| `↑` / `k` | Navigate up |
+| `↓` / `j` | Navigate down |
 | `f` | Cycle sort mode (Age ↔ Status) |
 
 ---
@@ -169,8 +177,8 @@ PTY key mappings:
 
 | Key | Action |
 |-----|--------|
-| `↑` / `j` | Navigate up |
-| `↓` / `k` | Navigate down |
+| `↑` / `k` | Navigate up |
+| `↓` / `j` | Navigate down |
 | `Enter` | Expand/collapse subtree at current node |
 
 ---
@@ -201,7 +209,7 @@ Shown after pressing `/` on the Dashboard ready queue.
 
 ## Mouse Events
 
-Mouse support is enabled by default (toggle with `M`).
+Mouse support is enabled by default.
 
 | Event | Area | Action |
 |-------|------|--------|

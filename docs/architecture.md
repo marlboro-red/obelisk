@@ -19,6 +19,9 @@ src/
 ├── runtime.rs     External command construction, PTY creation, polling, worktree ops
 ├── types.rs       Enums, structs, AppEvent variants, data models
 ├── templates.rs   Agent prompt templates with variable interpolation
+├── theme.rs       Color theming — presets (obsidian, frost, ember, ash, deep), hex overrides
+├── daemon.rs      Headless daemon mode — TCP command server, agent lifecycle without TUI
+├── client.rs      CLI client for sending commands to a running daemon
 └── notify.rs      Desktop notifications and terminal bell
 ```
 
@@ -41,9 +44,9 @@ All mutations flow through event handler methods on `App`.
 Key responsibilities:
 - Agent lifecycle management (spawn, track, retry, kill, dismiss)
 - Poll result processing and ready-queue filtering
-- Configuration loading/saving (`obelisk.toml`)
+- Configuration loading/saving (`obelisk.toml`) with hot-reload
 - Session persistence (`.beads/obelisk_sessions.jsonl`)
-- Phase detection and token/cost parsing from PTY output
+- Phase detection from PTY output
 
 ### ui.rs
 
@@ -54,7 +57,7 @@ Key responsibilities:
 - 7 view renderers (Dashboard, AgentDetail, EventLog, History, SplitPane, WorktreeOverview, DepGraph)
 - Tab bar with badge counts, title bar with animated indicator
 - PTY screen rendering (cell-by-cell from vt100 parser)
-- Overlays: help, kill confirmation dialog, search bar, alerts
+- Overlays: help, kill confirmation, mark-complete confirmation, search bar, alerts
 - Compact layout detection (height < 40 or width < 100)
 
 ### runtime.rs
@@ -65,7 +68,7 @@ and runs git/beads operations.
 Key responsibilities:
 - Build `CommandBuilder` for each runtime (Claude, Codex, Copilot)
 - Spawn PTY via `portable_pty` and return (master, reader, child)
-- Poll `bd ready --json` and `bd list --json`
+- Poll `bd ready --json`, `bd list -s blocked --json`, and `bd list --json`
 - Scan, enrich, and clean up git worktrees
 - Compute diffs for the live diff panel
 
@@ -75,6 +78,7 @@ All shared type definitions:
 - `AppEvent` — the event enum for cross-task communication
 - `AgentInstance`, `BeadTask`, `PtyHandle` — core data models
 - `View`, `Runtime`, `AgentStatus`, `AgentPhase` — state enums
+- `Focus` — `ReadyQueue`, `BlockedQueue`, `AgentList`
 - `DiffData`, `WorktreeEntry`, `DepNode` — view-specific models
 
 ### templates.rs
@@ -83,6 +87,32 @@ Resolves and interpolates agent prompt templates. Checks `.obelisk/templates/{ty
 first, then falls back to built-in templates embedded in the binary.
 
 Variables: `{id}`, `{title}`, `{priority}`, `{description}`.
+
+### theme.rs
+
+Color theming system with preset palettes and per-color hex overrides.
+
+Key responsibilities:
+- Default theme ("Obsidian") plus 4 presets (solarized/frost, nord/ember, catppuccin/ash, gruvbox/deep)
+- `ThemeConfig` TOML struct for serialization
+- `Theme::from_config()` applies preset base + individual color overrides
+- Hex color parsing (#RRGGBB or RRGGBB)
+
+### daemon.rs
+
+Headless daemon mode. Runs the orchestrator without the TUI, listening on a TCP
+socket (`127.0.0.1`, random port stored in `.beads/obelisk.port`) for JSON
+commands from CLI clients.
+
+Key responsibilities:
+- Accept JSON commands: `status`, `agents`, `spawn`, `kill`, `stop`
+- Manage agent spawning, polling, and lifecycle identically to TUI mode
+- Log to stdout/file instead of rendering
+
+### client.rs
+
+CLI client that sends commands to a running daemon. Reads the daemon port from
+`.beads/obelisk.port` and communicates via TCP JSON.
 
 ### notify.rs
 
@@ -162,7 +192,7 @@ App
 │
 ├── View & Navigation
 │   ├── active_view: View                  Current screen (1-7)
-│   ├── focus: Focus                       ReadyQueue or AgentList
+│   ├── focus: Focus                       ReadyQueue, BlockedQueue, or AgentList
 │   ├── task_list_state / agent_list_state  Cursor positions
 │   └── layout_areas: LayoutAreas          For mouse hit-testing
 │
@@ -238,7 +268,7 @@ render(f, app)
   │   └── Keybindings footer  (1 row)
   │
   ├── View-specific renderer:
-  │   ├── Dashboard:  ready queue | agent list (horizontal split)
+  │   ├── Dashboard:  ready queue + blocked queue | agent list (horizontal split)
   │   ├── AgentDetail: header + PTY screen + optional diff panel
   │   ├── EventLog:   filtered log entries
   │   ├── History:    session records table
@@ -281,15 +311,22 @@ On resize:
 
 ## Color Palette
 
+The default theme is "Obsidian" — a subdued, monochromatic palette with restrained
+accents. See `theme.rs` for all presets (frost, ember, ash, deep) and per-color
+hex overrides via `obelisk.toml`.
+
 ```
-PRIMARY:   rgb(255, 103, 0)   Orange     Highlights, selected items
-ACCENT:    rgb(0, 255, 65)    Green      Success, completed
-SECONDARY: rgb(148, 0, 211)   Purple     Secondary actions
-DANGER:    rgb(255, 40, 40)   Red        Failed, errors
-INFO:      rgb(0, 160, 255)   Blue       Informational
-WARN:      rgb(255, 191, 0)   Amber      Warnings
-DARK_BG:   rgb(5, 5, 10)      Near-black Application background
-PANEL_BG:  rgb(10, 10, 18)    Dark gray  Panel backgrounds
+PRIMARY:    rgb(110, 160, 210)  Steel blue   Borders, focus, titles
+ACCENT:     rgb(110, 175, 140)  Sage         Success, completion
+SECONDARY:  rgb(130, 130, 150)  Blue-gray    Subdued IDs, metadata
+DANGER:     rgb(190, 80, 75)    Muted rust   Errors, failures
+INFO:       rgb(110, 160, 210)  = primary    Informational
+WARN:       rgb(195, 165, 90)   Muted gold   Caution, cost
+DARK_BG:    rgb(14, 14, 20)     Near-black   Application background
+PANEL_BG:   rgb(20, 20, 28)     Dark gray    Panel backgrounds
+MUTED:      rgb(60, 60, 75)     Dim gray     Labels, chrome
+BRIGHT:     rgb(185, 185, 200)  Silver       Primary text
+DIM_ACCENT: rgb(60, 95, 75)     Dimmed sage  Subtle accents
 ```
 
 ---

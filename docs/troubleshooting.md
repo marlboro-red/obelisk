@@ -237,23 +237,6 @@ environmental issues before spawning again.
 
 ---
 
-## Cost Tracking
-
-### Cost seems inaccurate
-
-Token parsing relies on regex patterns matched against CLI output. If the CLI
-changes its output format, token counts may not be captured.
-
-Cost estimates are based on hardcoded per-model pricing that may not reflect
-current API pricing. They should be treated as approximations.
-
-### Cost threshold alert
-
-When an agent's estimated cost exceeds `$5.00` (hardcoded), an alert appears.
-The agent continues running — the alert is informational only.
-
----
-
 ## Log Export
 
 ### Exported log is binary / has escape codes

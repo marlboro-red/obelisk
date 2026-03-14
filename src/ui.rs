@@ -3022,7 +3022,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
     lines.push(key_line("f", "Cycle sort mode (priority/type/age/name)"));
     lines.push(key_line("F", "Cycle type filter (bug/feature/task/chore/epic)"));
     lines.push(key_line("/", "Jump to issue by ID"));
-    lines.push(key_line("Tab", "Toggle focus: Ready Queue ↔ Agents"));
+    lines.push(key_line("Tab", "Cycle focus: Ready → Blocked → Agents"));
     lines.push(key_line("↑↓ / j/k", "Navigate list  (detail panel updates)"));
     lines.push(key_line("Enter", "Open Agent Detail for selected"));
     lines.push(key_line("f", "Cycle agent status filter: All→Running→Failed→Done→Init (focus: Agents)"));
@@ -3047,6 +3047,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
     lines.push(key_line("/", "Open search bar (searches visible PTY output)"));
     lines.push(key_line("n / N", "Next / previous search match"));
     lines.push(key_line("Esc (search)", "Close search bar"));
+    lines.push(key_line("e", "Export agent log to file"));
     lines.push(key_line("y", "Copy worktree path to clipboard"));
     lines.push(key_line("D", "Mark agent as completed + SIGTERM + clean up worktree"));
     lines.push(key_line("k", "Kill (SIGTERM) current agent + clean up worktree"));
