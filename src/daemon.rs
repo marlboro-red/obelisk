@@ -333,7 +333,8 @@ fn process_daemon_event(
             );
             app.on_blocked_poll_result(tasks);
         }
-        AppEvent::Terminal(_) => {} // no TUI in daemon mode
+        AppEvent::Terminal(_) => {}  // no TUI in daemon mode
+        AppEvent::IssueCreateResult(_) => {} // no TUI in daemon mode
     }
 }
 
