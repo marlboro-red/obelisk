@@ -282,6 +282,10 @@ pub struct AgentInstance {
     pub raw_pty_log: Vec<u8>,
     /// Number of raw_pty_log bytes already flushed to disk
     pub pty_log_flushed_bytes: usize,
+    /// Wall-clock time when the agent was spawned (for matching Claude Code sessions)
+    pub started_at_utc: chrono::DateTime<chrono::Utc>,
+    /// Token usage read from Claude Code session logs after completion
+    pub usage: Option<AgentUsage>,
 }
 
 #[derive(Debug, Clone)]
@@ -325,6 +329,16 @@ pub struct CompletionRecord {
     pub success: bool,
 }
 
+/// Token and cost usage data extracted from Claude Code session logs.
+#[derive(Debug, Clone, Default)]
+pub struct AgentUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cost_usd: f64,
+}
+
 /// One agent's outcome within a persisted session record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionAgent {
@@ -333,6 +347,12 @@ pub struct SessionAgent {
     pub model: String,
     pub elapsed_secs: u64,
     pub status: String,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub estimated_cost_usd: f64,
 }
 
 /// Entry in the merge queue — tracks an agent that has entered the Merging phase.
@@ -356,6 +376,8 @@ pub struct SessionRecord {
     pub ended_at: String,
     pub total_completed: u32,
     pub total_failed: u32,
+    #[serde(default)]
+    pub total_cost_usd: f64,
     pub agents: Vec<SessionAgent>,
 }
 

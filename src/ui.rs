@@ -1845,6 +1845,34 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             Span::styled(format!(" {:.1}/s", lines_per_sec), Style::default().fg(t.accent)),
         ]),
     ]);
+    // Token and cost data (only shown when available)
+    if let Some(ref usage) = agent.usage {
+        let total_input = usage.input_tokens + usage.cache_creation_tokens + usage.cache_read_tokens;
+        lines.extend([
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" IN TOK  ", Style::default().fg(t.muted)),
+                Span::styled(
+                    format!(" {}", crate::cost::format_tokens(total_input)),
+                    Style::default().fg(t.bright),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" OUT TOK ", Style::default().fg(t.muted)),
+                Span::styled(
+                    format!(" {}", crate::cost::format_tokens(usage.output_tokens)),
+                    Style::default().fg(t.bright),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" COST    ", Style::default().fg(t.muted)),
+                Span::styled(
+                    format!(" {}", crate::cost::format_cost(usage.cost_usd)),
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+        ]);
+    }
 
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -2034,7 +2062,7 @@ fn render_event_log(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_history(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let (total_sessions, all_completed, all_failed, avg_duration) = app.aggregate_stats();
+    let (total_sessions, all_completed, all_failed, avg_duration, total_cost) = app.aggregate_stats();
     let all_time_total = all_completed + all_failed;
     let success_rate = if all_time_total > 0 {
         all_completed as f64 / all_time_total as f64 * 100.0
@@ -2045,7 +2073,7 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
     let v_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8), // Aggregate stats panel
+            Constraint::Length(9), // Aggregate stats panel
             Constraint::Min(5),    // Session list
         ])
         .split(area);
@@ -2101,6 +2129,17 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(t.bright).add_modifier(Modifier::BOLD),
             ),
         ]),
+        Line::from(vec![
+            Span::styled("  TOTAL COST      ", Style::default().fg(t.muted)),
+            Span::styled(
+                crate::cost::format_cost(total_cost),
+                if total_cost > 0.0 {
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(t.muted)
+                },
+            ),
+        ]),
     ];
 
     f.render_widget(Paragraph::new(stats_lines).block(stats_block), v_chunks[0]);
@@ -2149,12 +2188,18 @@ fn render_history(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 &session.session_id
             };
+            let cost_str = if session.total_cost_usd > 0.0 {
+                crate::cost::format_cost(session.total_cost_usd)
+            } else {
+                "--".to_string()
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("  {:16} ", short_id), Style::default().fg(t.muted)),
                 Span::styled(format!("started: {:<22} ", &session.started_at[..session.started_at.len().min(19)]), Style::default().fg(t.muted)),
                 Span::styled(format!("done:{:>4} ", session.total_completed), Style::default().fg(t.accent)),
                 Span::styled(format!("fail:{:>3} ", session.total_failed), Style::default().fg(if session.total_failed > 0 { t.danger } else { t.muted })),
                 Span::styled(format!("{:>5.1}%", rate), Style::default().fg(rate_color).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("  {:>8}", cost_str), Style::default().fg(if session.total_cost_usd > 0.0 { t.accent } else { t.muted })),
                 Span::styled(format!("  {:>3} agents", session.agents.len()), Style::default().fg(t.muted)),
             ]))
         })

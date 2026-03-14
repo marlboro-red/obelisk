@@ -1,5 +1,6 @@
 pub mod app;
 pub mod client;
+pub mod cost;
 pub mod daemon;
 pub mod notify;
 pub mod runtime;

@@ -1053,19 +1053,31 @@ impl App {
         let agents: Vec<SessionAgent> = self
             .agents
             .iter()
-            .map(|a| SessionAgent {
-                task_id: a.task.id.clone(),
-                runtime: a.runtime.name().to_string(),
-                model: a.model.clone(),
-                elapsed_secs: a.elapsed_secs,
-                status: match a.status {
-                    AgentStatus::Starting => "Starting".to_string(),
-                    AgentStatus::Running => "Running".to_string(),
-                    AgentStatus::Completed => "Completed".to_string(),
-                    AgentStatus::Failed => "Failed".to_string(),
-                },
+            .map(|a| {
+                let (input_tokens, output_tokens, estimated_cost_usd) = a
+                    .usage
+                    .as_ref()
+                    .map(|u| (u.input_tokens + u.cache_creation_tokens + u.cache_read_tokens, u.output_tokens, u.cost_usd))
+                    .unwrap_or((0, 0, 0.0));
+                SessionAgent {
+                    task_id: a.task.id.clone(),
+                    runtime: a.runtime.name().to_string(),
+                    model: a.model.clone(),
+                    elapsed_secs: a.elapsed_secs,
+                    status: match a.status {
+                        AgentStatus::Starting => "Starting".to_string(),
+                        AgentStatus::Running => "Running".to_string(),
+                        AgentStatus::Completed => "Completed".to_string(),
+                        AgentStatus::Failed => "Failed".to_string(),
+                    },
+                    input_tokens,
+                    output_tokens,
+                    estimated_cost_usd,
+                }
             })
             .collect();
+
+        let total_cost_usd: f64 = agents.iter().map(|a| a.estimated_cost_usd).sum();
 
         let record = SessionRecord {
             session_id: self.session_id.clone(),
@@ -1073,6 +1085,7 @@ impl App {
             ended_at: ended_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             total_completed: self.total_completed,
             total_failed: self.total_failed,
+            total_cost_usd,
             agents,
         };
 
@@ -1502,12 +1515,28 @@ impl App {
             // Don't overwrite a terminal status — force_complete or kill may
             // have already set Completed/Failed before the exit watcher fires.
             if matches!(agent.status, AgentStatus::Completed | AgentStatus::Failed) {
+                // If already completed via issue polling but usage wasn't read yet,
+                // try reading it now (the process has fully exited so logs are flushed)
+                if agent.usage.is_none() && agent.runtime == Runtime::ClaudeCode {
+                    let ended_at = chrono::Utc::now();
+                    agent.usage = crate::cost::read_agent_usage(agent.started_at_utc, ended_at);
+                }
                 None
             } else if exit_code == Some(0) {
                 agent.status = AgentStatus::Completed;
+                // Read Claude Code usage logs on successful exit
+                if agent.runtime == Runtime::ClaudeCode {
+                    let ended_at = chrono::Utc::now();
+                    agent.usage = crate::cost::read_agent_usage(agent.started_at_utc, ended_at);
+                }
                 Some((true, unit, task_id, title, rt, elapsed))
             } else {
                 agent.status = AgentStatus::Failed;
+                // Read usage even on failure — the data is still valuable
+                if agent.runtime == Runtime::ClaudeCode {
+                    let ended_at = chrono::Utc::now();
+                    agent.usage = crate::cost::read_agent_usage(agent.started_at_utc, ended_at);
+                }
                 Some((false, unit, task_id, title, rt, elapsed))
             }
         } else {
@@ -1645,6 +1674,11 @@ impl App {
             agent.phase = AgentPhase::Done;
             agent.status = AgentStatus::Completed;
             agent.elapsed_secs = agent.started_at.elapsed().as_secs();
+            // Read Claude Code usage logs for this agent (only for ClaudeCode runtime)
+            if agent.runtime == Runtime::ClaudeCode {
+                let ended_at = chrono::Utc::now();
+                agent.usage = crate::cost::read_agent_usage(agent.started_at_utc, ended_at);
+            }
             Some((
                 agent.unit_number,
                 agent.task.id.clone(),
@@ -1793,6 +1827,8 @@ impl App {
             total_lines: 0,
             raw_pty_log: Vec::new(),
             pty_log_flushed_bytes: 0,
+            started_at_utc: chrono::Utc::now(),
+            usage: None,
         };
 
         self.claimed_task_ids.insert(task.id.clone());
@@ -2397,6 +2433,8 @@ impl App {
             total_lines: 0,
             raw_pty_log: Vec::new(),
             pty_log_flushed_bytes: 0,
+            started_at_utc: chrono::Utc::now(),
+            usage: None,
         };
 
         // task ID remains in claimed_task_ids (the new agent owns it)
@@ -3123,8 +3161,8 @@ impl App {
     }
 
     /// Compute aggregate stats across all loaded history sessions.
-    /// Returns (total_sessions, all_time_completed, all_time_failed, avg_duration_secs).
-    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64) {
+    /// Returns (total_sessions, all_time_completed, all_time_failed, avg_duration_secs, total_cost_usd).
+    pub fn aggregate_stats(&self) -> (usize, u64, u64, f64, f64) {
         let total_sessions = self.history_sessions.len();
         let all_time_completed: u64 = self.history_sessions
             .iter()
@@ -3147,7 +3185,12 @@ impl App {
             0.0
         };
 
-        (total_sessions, all_time_completed, all_time_failed, avg_duration)
+        let total_cost: f64 = self.history_sessions
+            .iter()
+            .map(|s| s.total_cost_usd)
+            .sum();
+
+        (total_sessions, all_time_completed, all_time_failed, avg_duration, total_cost)
     }
 
     // ── Split-pane view methods ──
@@ -3549,6 +3592,8 @@ mod tests {
             total_lines: 0,
             raw_pty_log: Vec::new(),
             pty_log_flushed_bytes: 0,
+            started_at_utc: chrono::Utc::now(),
+            usage: None,
         }
     }
 
@@ -4747,11 +4792,12 @@ mod tests {
         let mut app = App::new();
         app.history_sessions.clear();
 
-        let (sessions, completed, failed, avg_dur) = app.aggregate_stats();
+        let (sessions, completed, failed, avg_dur, total_cost) = app.aggregate_stats();
         assert_eq!(sessions, 0);
         assert_eq!(completed, 0);
         assert_eq!(failed, 0);
         assert_eq!(avg_dur, 0.0);
+        assert_eq!(total_cost, 0.0);
     }
 
     #[test]
@@ -4764,9 +4810,11 @@ mod tests {
                 ended_at: "2026-03-12T11:00:00Z".into(),
                 total_completed: 3,
                 total_failed: 1,
+                total_cost_usd: 1.50,
                 agents: vec![SessionAgent {
                     task_id: "t".into(), runtime: "CLAUDE".into(), model: "m".into(),
                     elapsed_secs: 100, status: "Completed".into(),
+                    input_tokens: 1000, output_tokens: 500, estimated_cost_usd: 1.50,
                 }],
             },
             SessionRecord {
@@ -4775,18 +4823,21 @@ mod tests {
                 ended_at: "2026-03-12T13:00:00Z".into(),
                 total_completed: 2,
                 total_failed: 0,
+                total_cost_usd: 2.00,
                 agents: vec![SessionAgent {
                     task_id: "t".into(), runtime: "CLAUDE".into(), model: "m".into(),
                     elapsed_secs: 200, status: "Completed".into(),
+                    input_tokens: 2000, output_tokens: 1000, estimated_cost_usd: 2.00,
                 }],
             },
         ];
 
-        let (sessions, completed, failed, avg_dur) = app.aggregate_stats();
+        let (sessions, completed, failed, avg_dur, total_cost) = app.aggregate_stats();
         assert_eq!(sessions, 2);
         assert_eq!(completed, 5);
         assert_eq!(failed, 1);
         assert!((avg_dur - 150.0).abs() < f64::EPSILON); // (100+200)/2
+        assert!((total_cost - 3.50).abs() < f64::EPSILON);
     }
 
     // ── Dep graph ────────────────────────────────────────────────
@@ -5153,6 +5204,8 @@ mod tests {
             total_lines: 0,
             raw_pty_log: Vec::new(),
             pty_log_flushed_bytes: 0,
+            started_at_utc: chrono::Utc::now(),
+            usage: None,
         }
     }
 
