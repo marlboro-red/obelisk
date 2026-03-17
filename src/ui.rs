@@ -1793,6 +1793,13 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             ),
         ]),
         Line::from(vec![
+            Span::styled(" MODEL   ", Style::default().fg(t.muted)),
+            Span::styled(
+                format!(" {}", agent.model),
+                Style::default().fg(t.bright),
+            ),
+        ]),
+        Line::from(vec![
             Span::styled(" TASK    ", Style::default().fg(t.muted)),
             Span::styled(&agent.task.id, Style::default().fg(t.bright)),
         ]),
