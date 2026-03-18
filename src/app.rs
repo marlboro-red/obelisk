@@ -3548,10 +3548,12 @@ pub fn load_history_sessions() -> Vec<SessionRecord> {
         .collect()
 }
 
-/// Generate a simple session ID using the current timestamp (no external UUID crate needed).
+/// Generate a unique session ID using timestamp plus random hex suffix to avoid collisions.
 fn generate_session_id() -> String {
+    use rand::Rng;
     let now = chrono::Local::now();
-    format!("sess-{}", now.format("%Y%m%d-%H%M%S"))
+    let random_suffix: u32 = rand::thread_rng().gen();
+    format!("sess-{}-{:08x}", now.format("%Y%m%d-%H%M%S"), random_suffix)
 }
 
 #[cfg(test)]
@@ -5375,5 +5377,24 @@ mod tests {
         app.on_agent_pty_data(10, b"bd close obelisk-abc --reason done");
         assert_eq!(app.merge_queue.len(), 1);
         assert_eq!(app.merge_queue[0].agent_id, 11);
+    }
+
+    #[test]
+    fn test_session_ids_are_unique() {
+        let ids: Vec<String> = (0..100).map(|_| generate_session_id()).collect();
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(
+            ids.len(),
+            unique.len(),
+            "Session IDs generated in rapid succession must be unique"
+        );
+    }
+
+    #[test]
+    fn test_session_id_format() {
+        let id = generate_session_id();
+        assert!(id.starts_with("sess-"), "Session ID must start with 'sess-'");
+        // Format: sess-YYYYMMDD-HHMMSS-XXXXXXXX (8 hex chars at the end)
+        assert!(id.len() > 20, "Session ID must include random suffix");
     }
 }
