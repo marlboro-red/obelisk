@@ -32,6 +32,7 @@ struct OrchestratorConfig {
     velocity_window: Option<usize>,
     daemon_pty_rows: Option<u16>,
     daemon_pty_cols: Option<u16>,
+    output_buffer_lines: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -79,6 +80,7 @@ const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "headers", "events"];
 const KNOWN_ORCH_KEYS: &[&str] = &[
     "runtime", "max_concurrent", "auto_spawn", "poll_interval_secs", "velocity_window",
     "daemon_pty_rows", "daemon_pty_cols",
+    "output_buffer_lines",
 ];
 const KNOWN_MODELS_KEYS: &[&str] = &["claude", "codex", "copilot"];
 const KNOWN_THEME_KEYS: &[&str] = &[
@@ -234,6 +236,17 @@ fn validate_config(toml_raw: &str, config: &ObeliskConfig) -> Vec<String> {
             } else if cols > 500 {
                 warnings.push(format!(
                     "daemon_pty_cols={} too large, clamping to 500", cols
+                ));
+            }
+        }
+        if let Some(obl) = orch.output_buffer_lines {
+            if obl < 100 {
+                warnings.push(format!(
+                    "output_buffer_lines={} too small, minimum is 100", obl
+                ));
+            } else if obl > 1_000_000 {
+                warnings.push(format!(
+                    "output_buffer_lines={} exceeds maximum, clamping to 1000000", obl
                 ));
             }
         }
@@ -558,6 +571,9 @@ pub struct App {
     // Velocity chart — configurable window (number of data points)
     pub velocity_window_size: usize,
 
+    // Maximum number of output lines retained per agent
+    pub output_buffer_lines: usize,
+
     // Kill confirmation dialog — Some(agent_id) means dialog is visible
     pub confirm_kill_agent_id: Option<usize>,
 
@@ -717,6 +733,7 @@ impl App {
         let mut velocity_window_size = 24usize;
         let mut daemon_pty_rows = 40u16;
         let mut daemon_pty_cols = 120u16;
+        let mut output_buffer_lines = 10_000usize;
         let mut model_indices: HashMap<Runtime, usize> = HashMap::from([
             (Runtime::ClaudeCode, 0),
             (Runtime::Codex, 0),
@@ -749,6 +766,9 @@ impl App {
             }
             if let Some(cols) = orch.daemon_pty_cols {
                 daemon_pty_cols = cols.clamp(40, 500);
+            }
+            if let Some(obl) = orch.output_buffer_lines {
+                output_buffer_lines = obl.clamp(100, 1_000_000);
             }
         }
 
@@ -863,6 +883,7 @@ impl App {
             jump_active: false,
             jump_query: String::new(),
             velocity_window_size,
+            output_buffer_lines,
             confirm_kill_agent_id: None,
             confirm_complete_agent_id: None,
             confirm_quit: false,
@@ -948,6 +969,7 @@ impl App {
                 velocity_window: Some(self.velocity_window_size),
                 daemon_pty_rows: Some(self.daemon_pty_rows),
                 daemon_pty_cols: Some(self.daemon_pty_cols),
+                output_buffer_lines: Some(self.output_buffer_lines),
             }),
             models: Some(ModelsConfig {
                 claude: Some(self.selected_model_for(Runtime::ClaudeCode).to_string()),
@@ -1083,6 +1105,13 @@ impl App {
                 if cols != self.daemon_pty_cols {
                     self.daemon_pty_cols = cols;
                     changes.push(format!("daemon_pty_cols → {}", cols));
+                }
+            }
+            if let Some(obl) = orch.output_buffer_lines {
+                let obl = obl.clamp(100, 1_000_000);
+                if obl != self.output_buffer_lines {
+                    self.output_buffer_lines = obl;
+                    changes.push(format!("output_buffer_lines → {}", obl));
                 }
             }
         }
@@ -1602,7 +1631,7 @@ impl App {
                 agent.status = AgentStatus::Running;
             }
             agent.output.push_back(line);
-            if agent.output.len() > 10000 {
+            if agent.output.len() > self.output_buffer_lines {
                 agent.output.pop_front();
             }
         }
@@ -4129,7 +4158,7 @@ mod tests {
     }
 
     #[test]
-    fn on_agent_output_caps_at_10000_lines() {
+    fn on_agent_output_caps_at_default_buffer_size() {
         let mut app = App::new();
         app.agents.push(test_agent(11, AgentStatus::Running));
 
@@ -4141,6 +4170,21 @@ mod tests {
         assert_eq!(agent.output.len(), 10000);
         // Oldest lines should have been discarded
         assert!(agent.output.front().unwrap().contains("line 5"));
+    }
+
+    #[test]
+    fn on_agent_output_respects_custom_buffer_size() {
+        let mut app = App::new();
+        app.output_buffer_lines = 500;
+        app.agents.push(test_agent(12, AgentStatus::Running));
+
+        for i in 0..600 {
+            app.on_agent_output(12, format!("line {}", i));
+        }
+
+        let agent = app.agents.iter().find(|a| a.id == 12).unwrap();
+        assert_eq!(agent.output.len(), 500);
+        assert!(agent.output.front().unwrap().contains("line 100"));
     }
 
     #[test]
@@ -4855,6 +4899,7 @@ mod tests {
                 velocity_window: Some(12),
                 daemon_pty_rows: Some(50),
                 daemon_pty_cols: Some(200),
+                output_buffer_lines: Some(50_000),
             }),
             models: Some(ModelsConfig {
                 claude: Some("claude-opus-4-6".into()),
@@ -4875,6 +4920,7 @@ mod tests {
         assert_eq!(orch.poll_interval_secs, Some(60));
         assert_eq!(orch.daemon_pty_rows, Some(50));
         assert_eq!(orch.daemon_pty_cols, Some(200));
+        assert_eq!(orch.output_buffer_lines, Some(50_000));
 
         let models = restored.models.unwrap();
         assert_eq!(models.claude.as_deref(), Some("claude-opus-4-6"));
