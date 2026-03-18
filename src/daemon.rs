@@ -107,7 +107,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = tx_poll.send(AppEvent::BlockedPollResult(blocked));
             }
             // Poll dep graph every 3rd cycle for dependency-aware auto-spawn
-            if cycle % 3 == 0 {
+            if cycle.is_multiple_of(3) {
                 match runtime::poll_dep_graph().await {
                     Ok(nodes) => {
                         let _ = tx_poll.send(AppEvent::DepGraphResult(nodes));

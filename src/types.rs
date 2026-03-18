@@ -533,6 +533,18 @@ pub struct IssueCreationForm {
 /// Available issue types for the creation form.
 pub const ISSUE_TYPES: &[&str] = &["feature", "bug", "task", "chore", "epic"];
 
+impl Default for IssueCreationForm {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            description: String::new(),
+            issue_type_idx: 0,
+            priority: 2,
+            focused_field: 0,
+        }
+    }
+}
+
 impl IssueCreationForm {
     pub fn new() -> Self {
         Self {

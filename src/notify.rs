@@ -51,7 +51,7 @@ impl WebhookEventType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "agent_completed" => Some(Self::AgentCompleted),
             "agent_failed" => Some(Self::AgentFailed),
@@ -90,7 +90,7 @@ impl WebhookConfig {
         }
         self.events
             .iter()
-            .any(|s| WebhookEventType::from_str(s) == Some(event))
+            .any(|s| WebhookEventType::parse_str(s) == Some(event))
     }
 
     /// Validate the webhook config and return warnings.
@@ -105,7 +105,7 @@ impl WebhookConfig {
             }
         }
         for event_str in &self.events {
-            if WebhookEventType::from_str(event_str).is_none() {
+            if WebhookEventType::parse_str(event_str).is_none() {
                 warnings.push(format!(
                     "Unknown webhook event type '{}' (valid: {})",
                     event_str,
@@ -260,14 +260,14 @@ mod tests {
     fn event_type_round_trip() {
         for event in WebhookEventType::ALL {
             let s = event.as_str();
-            let parsed = WebhookEventType::from_str(s);
+            let parsed = WebhookEventType::parse_str(s);
             assert_eq!(parsed, Some(*event));
         }
     }
 
     #[test]
     fn unknown_event_type_returns_none() {
-        assert_eq!(WebhookEventType::from_str("bogus"), None);
+        assert_eq!(WebhookEventType::parse_str("bogus"), None);
     }
 
     #[test]
