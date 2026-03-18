@@ -158,9 +158,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     message: Some(format!("invalid command: {}", e)),
                                     data: None,
                                 };
-                                let _ = stream
-                                    .write_all(serde_json::to_string(&resp).unwrap().as_bytes())
-                                    .await;
+                                if let Ok(json) = serde_json::to_string(&resp) {
+                                    let _ = stream.write_all(json.as_bytes()).await;
+                                }
                                 return;
                             }
                         };
@@ -169,9 +169,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             return;
                         }
                         if let Ok(resp) = resp_rx.await {
-                            let _ = stream
-                                .write_all(serde_json::to_string(&resp).unwrap().as_bytes())
-                                .await;
+                            if let Ok(json) = serde_json::to_string(&resp) {
+                                let _ = stream.write_all(json.as_bytes()).await;
+                            }
                         }
                     });
                 }

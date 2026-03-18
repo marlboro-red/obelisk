@@ -15,7 +15,7 @@ const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
 // ── CPR stripping regex (byte-level) ──
 // Matches cursor-position-report sequences like ESC[1;1R that may leak into PTY output.
 static RE_CPR: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
-    regex::bytes::Regex::new(r"\x1b\[\d+;\d+R").unwrap()
+    regex::bytes::Regex::new(r"\x1b\[\d+;\d+R").expect("valid CPR regex")
 });
 
 
@@ -1496,14 +1496,15 @@ impl App {
 
         // Clean up merge queue if this agent was queued/merging
         if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == agent_id) {
-            let entry = self.merge_queue.remove(pos).unwrap();
-            self.log(
-                LogCategory::Alert,
-                format!(
-                    "MERGE-QUEUE: AGENT-{:02} exited while merging {} (lock released, {} remaining)",
-                    entry.unit_number, entry.task_id, self.merge_queue.len()
-                ),
-            );
+            if let Some(entry) = self.merge_queue.remove(pos) {
+                self.log(
+                    LogCategory::Alert,
+                    format!(
+                        "MERGE-QUEUE: AGENT-{:02} exited while merging {} (lock released, {} remaining)",
+                        entry.unit_number, entry.task_id, self.merge_queue.len()
+                    ),
+                );
+            }
         }
 
         let log_info = if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
@@ -1695,15 +1696,16 @@ impl App {
 
         // Dequeue from merge queue if still present (e.g. fast close)
         if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == agent_id) {
-            let entry = self.merge_queue.remove(pos).unwrap();
-            let elapsed = entry.enqueued_at.elapsed().as_secs();
-            self.log(
-                LogCategory::System,
-                format!(
-                    "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
-                    entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
-                ),
-            );
+            if let Some(entry) = self.merge_queue.remove(pos) {
+                let elapsed = entry.enqueued_at.elapsed().as_secs();
+                self.log(
+                    LogCategory::System,
+                    format!(
+                        "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
+                        entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
+                    ),
+                );
+            }
         }
 
         if let Some((unit, task_id, title, rt, model, elapsed)) = completion {
@@ -3049,15 +3051,16 @@ impl App {
         }
         if let Some(aid) = merge_dequeue_agent_id {
             if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == aid) {
-                let entry = self.merge_queue.remove(pos).unwrap();
-                let elapsed = entry.enqueued_at.elapsed().as_secs();
-                self.log(
-                    LogCategory::System,
-                    format!(
-                        "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
-                        entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
-                    ),
-                );
+                if let Some(entry) = self.merge_queue.remove(pos) {
+                    let elapsed = entry.enqueued_at.elapsed().as_secs();
+                    self.log(
+                        LogCategory::System,
+                        format!(
+                            "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
+                            entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
+                        ),
+                    );
+                }
             }
         }
         if let Some((unit, task_id)) = merge_conflict_info {

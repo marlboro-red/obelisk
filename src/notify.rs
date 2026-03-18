@@ -149,7 +149,10 @@ pub fn send_webhook(config: &WebhookConfig, event: WebhookEventType, payload: We
         return;
     }
 
-    let url = config.url.clone().unwrap();
+    let url = match config.url.clone() {
+        Some(u) => u,
+        None => return,
+    };
     let headers = config.headers.clone();
     let event_str = event.as_str().to_string();
 
