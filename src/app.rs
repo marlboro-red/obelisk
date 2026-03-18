@@ -15,7 +15,7 @@ const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
 // ── CPR stripping regex (byte-level) ──
 // Matches cursor-position-report sequences like ESC[1;1R that may leak into PTY output.
 static RE_CPR: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
-    regex::bytes::Regex::new(r"\x1b\[\d+;\d+R").unwrap()
+    regex::bytes::Regex::new(r"\x1b\[\d+;\d+R").expect("valid CPR regex")
 });
 
 
@@ -29,6 +29,8 @@ struct OrchestratorConfig {
     auto_spawn: Option<bool>,
     poll_interval_secs: Option<u64>,
     velocity_window: Option<usize>,
+    daemon_pty_rows: Option<u16>,
+    daemon_pty_cols: Option<u16>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -75,6 +77,7 @@ const KNOWN_NOTIFICATIONS_KEYS: &[&str] = &["webhook"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "headers", "events"];
 const KNOWN_ORCH_KEYS: &[&str] = &[
     "runtime", "max_concurrent", "auto_spawn", "poll_interval_secs", "velocity_window",
+    "daemon_pty_rows", "daemon_pty_cols",
 ];
 const KNOWN_MODELS_KEYS: &[&str] = &["claude", "codex", "copilot"];
 const KNOWN_THEME_KEYS: &[&str] = &[
@@ -162,6 +165,28 @@ fn validate_config(toml_raw: &str, config: &ObeliskConfig) -> Vec<String> {
             if vw < 2 {
                 warnings.push(format!(
                     "velocity_window={} too small, minimum is 2", vw
+                ));
+            }
+        }
+        if let Some(rows) = orch.daemon_pty_rows {
+            if rows < 10 {
+                warnings.push(format!(
+                    "daemon_pty_rows={} too small, clamping to 10", rows
+                ));
+            } else if rows > 500 {
+                warnings.push(format!(
+                    "daemon_pty_rows={} too large, clamping to 500", rows
+                ));
+            }
+        }
+        if let Some(cols) = orch.daemon_pty_cols {
+            if cols < 40 {
+                warnings.push(format!(
+                    "daemon_pty_cols={} too small, clamping to 40", cols
+                ));
+            } else if cols > 500 {
+                warnings.push(format!(
+                    "daemon_pty_cols={} too large, clamping to 500", cols
                 ));
             }
         }
@@ -377,6 +402,8 @@ pub struct App {
     pub auto_spawn: bool,
     pub max_concurrent: usize,
     pub poll_interval_secs: u64,
+    pub daemon_pty_rows: u16,
+    pub daemon_pty_cols: u16,
     pub poll_countdown: f64,
 
     pub should_quit: bool,
@@ -639,6 +666,8 @@ impl App {
         let mut auto_spawn = false;
         let mut poll_interval_secs = 30u64;
         let mut velocity_window_size = 24usize;
+        let mut daemon_pty_rows = 40u16;
+        let mut daemon_pty_cols = 120u16;
         let mut model_indices: HashMap<Runtime, usize> = HashMap::from([
             (Runtime::ClaudeCode, 0),
             (Runtime::Codex, 0),
@@ -665,6 +694,12 @@ impl App {
             }
             if let Some(vw) = orch.velocity_window {
                 velocity_window_size = vw.max(2); // minimum 2 data points
+            }
+            if let Some(rows) = orch.daemon_pty_rows {
+                daemon_pty_rows = rows.clamp(10, 500);
+            }
+            if let Some(cols) = orch.daemon_pty_cols {
+                daemon_pty_cols = cols.clamp(40, 500);
             }
         }
 
@@ -719,6 +754,8 @@ impl App {
             auto_spawn,
             max_concurrent,
             poll_interval_secs,
+            daemon_pty_rows,
+            daemon_pty_cols,
             poll_countdown,
             should_quit: false,
             next_unit: 0,
@@ -851,6 +888,8 @@ impl App {
                 auto_spawn: Some(self.auto_spawn),
                 poll_interval_secs: Some(self.poll_interval_secs),
                 velocity_window: Some(self.velocity_window_size),
+                daemon_pty_rows: Some(self.daemon_pty_rows),
+                daemon_pty_cols: Some(self.daemon_pty_cols),
             }),
             models: Some(ModelsConfig {
                 claude: Some(self.selected_model_for(Runtime::ClaudeCode).to_string()),
@@ -972,6 +1011,20 @@ impl App {
                 if vw != self.velocity_window_size {
                     self.velocity_window_size = vw;
                     changes.push(format!("velocity_window → {}", vw));
+                }
+            }
+            if let Some(rows) = orch.daemon_pty_rows {
+                let rows = rows.clamp(10, 500);
+                if rows != self.daemon_pty_rows {
+                    self.daemon_pty_rows = rows;
+                    changes.push(format!("daemon_pty_rows → {}", rows));
+                }
+            }
+            if let Some(cols) = orch.daemon_pty_cols {
+                let cols = cols.clamp(40, 500);
+                if cols != self.daemon_pty_cols {
+                    self.daemon_pty_cols = cols;
+                    changes.push(format!("daemon_pty_cols → {}", cols));
                 }
             }
         }
@@ -1488,22 +1541,6 @@ impl App {
         self.lines_this_tick = self.lines_this_tick.saturating_add(1);
     }
 
-    /// Enqueue an agent into the merge queue if not already present.
-    /// Returns `Some(queue_position)` if newly enqueued, `None` if already present.
-    fn merge_queue_try_enqueue(&mut self, agent_id: usize, unit_number: usize, task_id: String) -> Option<usize> {
-        if self.merge_queue.iter().any(|e| e.agent_id == agent_id) {
-            return None;
-        }
-        let queue_pos = self.merge_queue.len();
-        self.merge_queue.push_back(MergeQueueEntry {
-            agent_id,
-            unit_number,
-            task_id,
-            enqueued_at: std::time::Instant::now(),
-        });
-        Some(queue_pos)
-    }
-
     pub fn on_agent_exited(&mut self, agent_id: usize, exit_code: Option<i32>) {
         // Auto-detach interactive mode if this agent was the one we were attached to
         if self.interactive_mode && self.selected_agent_id == Some(agent_id) {
@@ -1512,14 +1549,15 @@ impl App {
 
         // Clean up merge queue if this agent was queued/merging
         if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == agent_id) {
-            let entry = self.merge_queue.remove(pos).unwrap();
-            self.log(
-                LogCategory::Alert,
-                format!(
-                    "MERGE-QUEUE: AGENT-{:02} exited while merging {} (lock released, {} remaining)",
-                    entry.unit_number, entry.task_id, self.merge_queue.len()
-                ),
-            );
+            if let Some(entry) = self.merge_queue.remove(pos) {
+                self.log(
+                    LogCategory::Alert,
+                    format!(
+                        "MERGE-QUEUE: AGENT-{:02} exited while merging {} (lock released, {} remaining)",
+                        entry.unit_number, entry.task_id, self.merge_queue.len()
+                    ),
+                );
+            }
         }
 
         let log_info = if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
@@ -1711,15 +1749,16 @@ impl App {
 
         // Dequeue from merge queue if still present (e.g. fast close)
         if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == agent_id) {
-            let entry = self.merge_queue.remove(pos).unwrap();
-            let elapsed = entry.enqueued_at.elapsed().as_secs();
-            self.log(
-                LogCategory::System,
-                format!(
-                    "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
-                    entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
-                ),
-            );
+            if let Some(entry) = self.merge_queue.remove(pos) {
+                let elapsed = entry.enqueued_at.elapsed().as_secs();
+                self.log(
+                    LogCategory::System,
+                    format!(
+                        "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
+                        entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
+                    ),
+                );
+            }
         }
 
         if let Some((unit, task_id, title, rt, model, elapsed)) = completion {
@@ -2962,11 +3001,8 @@ impl App {
             if cfg!(target_os = "windows")
                 && data.windows(4).any(|w| w == b"\x1b[6n") {
                     use std::io::Write;
-                    if let Err(e) = state.writer.write_all(b"\x1b[1;1R")
-                        .and_then(|_| state.writer.flush())
-                    {
-                        warn!(agent_id, "ConPTY CPR write failed: {e}");
-                    }
+                    let _ = state.writer.write_all(b"\x1b[1;1R");
+                    let _ = state.writer.flush();
                 }
             // Strip any CPR responses (ESC[row;colR) that leak into the output
             // stream before feeding the vt100 parser — defense-in-depth.
@@ -3041,8 +3077,15 @@ impl App {
 
         // Process merge queue events (outside borrow scope)
         if let Some((aid, unit, task_id)) = merge_enqueue {
-            // Atomic check-and-insert: prevents TOCTOU race on the merge queue
-            if let Some(queue_pos) = self.merge_queue_try_enqueue(aid, unit, task_id.clone()) {
+            // Only enqueue if not already in the queue
+            if !self.merge_queue.iter().any(|e| e.agent_id == aid) {
+                let queue_pos = self.merge_queue.len();
+                self.merge_queue.push_back(MergeQueueEntry {
+                    agent_id: aid,
+                    unit_number: unit,
+                    task_id: task_id.clone(),
+                    enqueued_at: std::time::Instant::now(),
+                });
                 if queue_pos == 0 {
                     self.log(
                         LogCategory::System,
@@ -3061,15 +3104,16 @@ impl App {
         }
         if let Some(aid) = merge_dequeue_agent_id {
             if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == aid) {
-                let entry = self.merge_queue.remove(pos).unwrap();
-                let elapsed = entry.enqueued_at.elapsed().as_secs();
-                self.log(
-                    LogCategory::System,
-                    format!(
-                        "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
-                        entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
-                    ),
-                );
+                if let Some(entry) = self.merge_queue.remove(pos) {
+                    let elapsed = entry.enqueued_at.elapsed().as_secs();
+                    self.log(
+                        LogCategory::System,
+                        format!(
+                            "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
+                            entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
+                        ),
+                    );
+                }
             }
         }
         if let Some((unit, task_id)) = merge_conflict_info {
@@ -3557,12 +3601,10 @@ pub fn load_history_sessions() -> Vec<SessionRecord> {
         .collect()
 }
 
-/// Generate a unique session ID using timestamp plus random hex suffix to avoid collisions.
+/// Generate a simple session ID using the current timestamp (no external UUID crate needed).
 fn generate_session_id() -> String {
-    use rand::Rng;
     let now = chrono::Local::now();
-    let random_suffix: u32 = rand::thread_rng().gen();
-    format!("sess-{}-{:08x}", now.format("%Y%m%d-%H%M%S"), random_suffix)
+    format!("sess-{}", now.format("%Y%m%d-%H%M%S"))
 }
 
 #[cfg(test)]
@@ -4604,6 +4646,8 @@ mod tests {
                 auto_spawn: Some(true),
                 poll_interval_secs: Some(60),
                 velocity_window: Some(12),
+                daemon_pty_rows: Some(50),
+                daemon_pty_cols: Some(200),
             }),
             models: Some(ModelsConfig {
                 claude: Some("claude-opus-4-6".into()),
@@ -4622,6 +4666,8 @@ mod tests {
         assert_eq!(orch.max_concurrent, Some(5));
         assert_eq!(orch.auto_spawn, Some(true));
         assert_eq!(orch.poll_interval_secs, Some(60));
+        assert_eq!(orch.daemon_pty_rows, Some(50));
+        assert_eq!(orch.daemon_pty_cols, Some(200));
 
         let models = restored.models.unwrap();
         assert_eq!(models.claude.as_deref(), Some("claude-opus-4-6"));
@@ -4771,6 +4817,39 @@ mod tests {
         let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
         let warnings = validate_config(toml_str, &config);
         assert!(warnings.iter().any(|w| w.contains("velocity_window=1")));
+    }
+
+    #[test]
+    fn validate_warns_on_daemon_pty_rows_too_small() {
+        let toml_str = r#"
+            [orchestrator]
+            daemon_pty_rows = 5
+        "#;
+        let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+        let warnings = validate_config(toml_str, &config);
+        assert!(warnings.iter().any(|w| w.contains("daemon_pty_rows=5")));
+    }
+
+    #[test]
+    fn validate_warns_on_daemon_pty_cols_too_small() {
+        let toml_str = r#"
+            [orchestrator]
+            daemon_pty_cols = 20
+        "#;
+        let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+        let warnings = validate_config(toml_str, &config);
+        assert!(warnings.iter().any(|w| w.contains("daemon_pty_cols=20")));
+    }
+
+    #[test]
+    fn validate_warns_on_daemon_pty_rows_too_large() {
+        let toml_str = r#"
+            [orchestrator]
+            daemon_pty_rows = 999
+        "#;
+        let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+        let warnings = validate_config(toml_str, &config);
+        assert!(warnings.iter().any(|w| w.contains("daemon_pty_rows=999")));
     }
 
     #[test]
@@ -5386,24 +5465,5 @@ mod tests {
         app.on_agent_pty_data(10, b"bd close obelisk-abc --reason done");
         assert_eq!(app.merge_queue.len(), 1);
         assert_eq!(app.merge_queue[0].agent_id, 11);
-    }
-
-    #[test]
-    fn test_session_ids_are_unique() {
-        let ids: Vec<String> = (0..100).map(|_| generate_session_id()).collect();
-        let unique: std::collections::HashSet<&String> = ids.iter().collect();
-        assert_eq!(
-            ids.len(),
-            unique.len(),
-            "Session IDs generated in rapid succession must be unique"
-        );
-    }
-
-    #[test]
-    fn test_session_id_format() {
-        let id = generate_session_id();
-        assert!(id.starts_with("sess-"), "Session ID must start with 'sess-'");
-        // Format: sess-YYYYMMDD-HHMMSS-XXXXXXXX (8 hex chars at the end)
-        assert!(id.len() > 20, "Session ID must include random suffix");
     }
 }

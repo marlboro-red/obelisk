@@ -78,8 +78,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("obelisk daemon listening on 127.0.0.1:{}", port);
 
     let mut app = App::new();
-    // Daemon uses a fixed PTY size (no terminal to measure)
-    app.last_pty_size = (40, 120);
+    // Daemon uses configured PTY size (no terminal to measure)
+    app.last_pty_size = (app.daemon_pty_rows, app.daemon_pty_cols);
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 
@@ -107,7 +107,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = tx_poll.send(AppEvent::BlockedPollResult(blocked));
             }
             // Poll dep graph every 3rd cycle for dependency-aware auto-spawn
-            if cycle.is_multiple_of(3) {
+            if cycle % 3 == 0 {
                 match runtime::poll_dep_graph().await {
                     Ok(nodes) => {
                         let _ = tx_poll.send(AppEvent::DepGraphResult(nodes));
@@ -158,9 +158,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     message: Some(format!("invalid command: {}", e)),
                                     data: None,
                                 };
-                                match serde_json::to_string(&resp) {
-                                    Ok(json) => { let _ = stream.write_all(json.as_bytes()).await; }
-                                    Err(e) => error!("failed to serialize error response: {}", e),
+                                if let Ok(json) = serde_json::to_string(&resp) {
+                                    let _ = stream.write_all(json.as_bytes()).await;
                                 }
                                 return;
                             }
@@ -170,13 +169,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             return;
                         }
                         if let Ok(resp) = resp_rx.await {
-                            match serde_json::to_string(&resp) {
-                                Ok(json) => { let _ = stream.write_all(json.as_bytes()).await; }
-                                Err(e) => {
-                                    error!("failed to serialize daemon response: {}", e);
-                                    let fallback = r#"{"ok":false,"message":"internal serialization error"}"#;
-                                    let _ = stream.write_all(fallback.as_bytes()).await;
-                                }
+                            if let Ok(json) = serde_json::to_string(&resp) {
+                                let _ = stream.write_all(json.as_bytes()).await;
                             }
                         }
                     });

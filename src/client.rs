@@ -61,7 +61,8 @@ pub async fn run(cmd: ClientCommand) -> Result<(), Box<dyn std::error::Error>> {
                     ClientCommand::Status => print_status(data),
                     ClientCommand::Agents => print_agents(data),
                     _ => {
-                        println!("{}", serde_json::to_string_pretty(data).unwrap());
+                        println!("{}", serde_json::to_string_pretty(data)
+                            .unwrap_or_else(|_| format!("{:?}", data)));
                     }
                 }
             }
