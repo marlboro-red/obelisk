@@ -74,6 +74,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     std::fs::write(&port_file, port.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&port_file, std::fs::Permissions::from_mode(0o600))?;
+    }
     info!("daemon listening on 127.0.0.1:{}", port);
     eprintln!("obelisk daemon listening on 127.0.0.1:{}", port);
 
