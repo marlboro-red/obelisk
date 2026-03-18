@@ -1488,6 +1488,22 @@ impl App {
         self.lines_this_tick = self.lines_this_tick.saturating_add(1);
     }
 
+    /// Enqueue an agent into the merge queue if not already present.
+    /// Returns `Some(queue_position)` if newly enqueued, `None` if already present.
+    fn merge_queue_try_enqueue(&mut self, agent_id: usize, unit_number: usize, task_id: String) -> Option<usize> {
+        if self.merge_queue.iter().any(|e| e.agent_id == agent_id) {
+            return None;
+        }
+        let queue_pos = self.merge_queue.len();
+        self.merge_queue.push_back(MergeQueueEntry {
+            agent_id,
+            unit_number,
+            task_id,
+            enqueued_at: std::time::Instant::now(),
+        });
+        Some(queue_pos)
+    }
+
     pub fn on_agent_exited(&mut self, agent_id: usize, exit_code: Option<i32>) {
         // Auto-detach interactive mode if this agent was the one we were attached to
         if self.interactive_mode && self.selected_agent_id == Some(agent_id) {
@@ -3022,15 +3038,8 @@ impl App {
 
         // Process merge queue events (outside borrow scope)
         if let Some((aid, unit, task_id)) = merge_enqueue {
-            // Only enqueue if not already in the queue
-            if !self.merge_queue.iter().any(|e| e.agent_id == aid) {
-                let queue_pos = self.merge_queue.len();
-                self.merge_queue.push_back(MergeQueueEntry {
-                    agent_id: aid,
-                    unit_number: unit,
-                    task_id: task_id.clone(),
-                    enqueued_at: std::time::Instant::now(),
-                });
+            // Atomic check-and-insert: prevents TOCTOU race on the merge queue
+            if let Some(queue_pos) = self.merge_queue_try_enqueue(aid, unit, task_id.clone()) {
                 if queue_pos == 0 {
                     self.log(
                         LogCategory::System,
