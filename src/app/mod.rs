@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::LazyLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 // All valid issue types for cycling the type filter
 const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
@@ -15,7 +15,7 @@ const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
 // ── CPR stripping regex (byte-level) ──
 // Matches cursor-position-report sequences like ESC[1;1R that may leak into PTY output.
 static RE_CPR: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
-    regex::bytes::Regex::new(r"\x1b\[\d+;\d+R").unwrap()
+    regex::bytes::Regex::new(r"\x1b\[\d+;\d+R").expect("valid CPR regex")
 });
 
 
@@ -29,6 +29,8 @@ struct OrchestratorConfig {
     auto_spawn: Option<bool>,
     poll_interval_secs: Option<u64>,
     velocity_window: Option<usize>,
+    daemon_pty_rows: Option<u16>,
+    daemon_pty_cols: Option<u16>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -75,6 +77,7 @@ const KNOWN_NOTIFICATIONS_KEYS: &[&str] = &["webhook"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "headers", "events"];
 const KNOWN_ORCH_KEYS: &[&str] = &[
     "runtime", "max_concurrent", "auto_spawn", "poll_interval_secs", "velocity_window",
+    "daemon_pty_rows", "daemon_pty_cols",
 ];
 const KNOWN_MODELS_KEYS: &[&str] = &["claude", "codex", "copilot"];
 const KNOWN_THEME_KEYS: &[&str] = &[
@@ -87,6 +90,52 @@ const KNOWN_THEME_PRESETS: &[&str] = &[
     "one-dark", "carbon", "rose-pine", "bloom", "everforest", "moss",
 ];
 const KNOWN_RUNTIMES: &[&str] = &["claude", "codex", "copilot"];
+
+/// Environment variable names for model overrides.
+const ENV_MODEL_CLAUDE: &str = "OBELISK_MODEL_CLAUDE";
+const ENV_MODEL_CODEX: &str = "OBELISK_MODEL_CODEX";
+const ENV_MODEL_COPILOT: &str = "OBELISK_MODEL_COPILOT";
+
+/// Apply environment variable overrides for model selections.
+/// Env vars take precedence over obelisk.toml values.
+/// Returns a list of change descriptions (empty if no env vars were set).
+fn apply_env_model_overrides(model_indices: &mut HashMap<Runtime, usize>) -> Vec<String> {
+    let mut changes = Vec::new();
+    let env_pairs: &[(Runtime, &str)] = &[
+        (Runtime::ClaudeCode, ENV_MODEL_CLAUDE),
+        (Runtime::Codex, ENV_MODEL_CODEX),
+        (Runtime::Copilot, ENV_MODEL_COPILOT),
+    ];
+    for &(runtime, env_var) in env_pairs {
+        if let Ok(model_str) = std::env::var(env_var) {
+            if model_str.is_empty() {
+                continue;
+            }
+            let models = runtime.models();
+            match models.iter().position(|m| *m == model_str.as_str()) {
+                Some(idx) => {
+                    model_indices.insert(runtime, idx);
+                    changes.push(format!(
+                        "{} model → {} (from {})",
+                        runtime.name(),
+                        model_str,
+                        env_var,
+                    ));
+                }
+                None => {
+                    warn!(
+                        env_var = env_var,
+                        value = %model_str,
+                        valid = ?models,
+                        event = "env_model_override_invalid",
+                        "ignoring invalid model from environment variable"
+                    );
+                }
+            }
+        }
+    }
+    changes
+}
 
 /// Validate parsed config and return a list of warnings.
 fn validate_config(toml_raw: &str, config: &ObeliskConfig) -> Vec<String> {
@@ -162,6 +211,28 @@ fn validate_config(toml_raw: &str, config: &ObeliskConfig) -> Vec<String> {
             if vw < 2 {
                 warnings.push(format!(
                     "velocity_window={} too small, minimum is 2", vw
+                ));
+            }
+        }
+        if let Some(rows) = orch.daemon_pty_rows {
+            if rows < 10 {
+                warnings.push(format!(
+                    "daemon_pty_rows={} too small, clamping to 10", rows
+                ));
+            } else if rows > 500 {
+                warnings.push(format!(
+                    "daemon_pty_rows={} too large, clamping to 500", rows
+                ));
+            }
+        }
+        if let Some(cols) = orch.daemon_pty_cols {
+            if cols < 40 {
+                warnings.push(format!(
+                    "daemon_pty_cols={} too small, clamping to 40", cols
+                ));
+            } else if cols > 500 {
+                warnings.push(format!(
+                    "daemon_pty_cols={} too large, clamping to 500", cols
                 ));
             }
         }
@@ -377,6 +448,8 @@ pub struct App {
     pub auto_spawn: bool,
     pub max_concurrent: usize,
     pub poll_interval_secs: u64,
+    pub daemon_pty_rows: u16,
+    pub daemon_pty_cols: u16,
     pub poll_countdown: f64,
 
     pub should_quit: bool,

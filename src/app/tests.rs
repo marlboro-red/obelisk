@@ -1035,6 +1035,8 @@ fn config_round_trip() {
             auto_spawn: Some(true),
             poll_interval_secs: Some(60),
             velocity_window: Some(12),
+            daemon_pty_rows: Some(50),
+            daemon_pty_cols: Some(200),
         }),
         models: Some(ModelsConfig {
             claude: Some("claude-opus-4-6".into()),
@@ -1053,9 +1055,60 @@ fn config_round_trip() {
     assert_eq!(orch.max_concurrent, Some(5));
     assert_eq!(orch.auto_spawn, Some(true));
     assert_eq!(orch.poll_interval_secs, Some(60));
+    assert_eq!(orch.daemon_pty_rows, Some(50));
+    assert_eq!(orch.daemon_pty_cols, Some(200));
 
     let models = restored.models.unwrap();
     assert_eq!(models.claude.as_deref(), Some("claude-opus-4-6"));
+}
+
+/// Env var override tests are combined because env vars are process-global
+/// and would race with parallel tests.
+#[test]
+fn env_model_overrides() {
+    // Clean slate — remove all override vars first
+    std::env::remove_var(ENV_MODEL_CLAUDE);
+    std::env::remove_var(ENV_MODEL_CODEX);
+    std::env::remove_var(ENV_MODEL_COPILOT);
+
+    // ── Part 1: valid override ──
+    let mut indices: HashMap<Runtime, usize> = HashMap::from([
+        (Runtime::ClaudeCode, 0),
+        (Runtime::Codex, 0),
+        (Runtime::Copilot, 0),
+    ]);
+    std::env::set_var(ENV_MODEL_CLAUDE, "claude-haiku-4-5-20251001");
+    let changes = apply_env_model_overrides(&mut indices);
+    std::env::remove_var(ENV_MODEL_CLAUDE);
+
+    assert_eq!(indices[&Runtime::ClaudeCode], 2); // haiku is index 2
+    assert!(changes.iter().any(|c| c.contains("OBELISK_MODEL_CLAUDE")));
+
+    // ── Part 2: invalid model name is ignored ──
+    let mut indices: HashMap<Runtime, usize> = HashMap::from([
+        (Runtime::ClaudeCode, 1),
+        (Runtime::Codex, 0),
+        (Runtime::Copilot, 0),
+    ]);
+    std::env::set_var(ENV_MODEL_CODEX, "nonexistent-model");
+    let changes = apply_env_model_overrides(&mut indices);
+    std::env::remove_var(ENV_MODEL_CODEX);
+
+    assert_eq!(indices[&Runtime::Codex], 0);
+    assert!(changes.is_empty());
+
+    // ── Part 3: empty string is ignored ──
+    let mut indices: HashMap<Runtime, usize> = HashMap::from([
+        (Runtime::ClaudeCode, 0),
+        (Runtime::Codex, 0),
+        (Runtime::Copilot, 0),
+    ]);
+    std::env::set_var(ENV_MODEL_COPILOT, "");
+    let changes = apply_env_model_overrides(&mut indices);
+    std::env::remove_var(ENV_MODEL_COPILOT);
+
+    assert_eq!(indices[&Runtime::Copilot], 0);
+    assert!(changes.is_empty());
 }
 
 /// Config hot-reload tests are combined into a single test because they use
@@ -1202,6 +1255,39 @@ fn validate_warns_on_velocity_window_too_small() {
     let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
     let warnings = validate_config(toml_str, &config);
     assert!(warnings.iter().any(|w| w.contains("velocity_window=1")));
+}
+
+#[test]
+fn validate_warns_on_daemon_pty_rows_too_small() {
+    let toml_str = r#"
+        [orchestrator]
+        daemon_pty_rows = 5
+    "#;
+    let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+    let warnings = validate_config(toml_str, &config);
+    assert!(warnings.iter().any(|w| w.contains("daemon_pty_rows=5")));
+}
+
+#[test]
+fn validate_warns_on_daemon_pty_cols_too_small() {
+    let toml_str = r#"
+        [orchestrator]
+        daemon_pty_cols = 20
+    "#;
+    let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+    let warnings = validate_config(toml_str, &config);
+    assert!(warnings.iter().any(|w| w.contains("daemon_pty_cols=20")));
+}
+
+#[test]
+fn validate_warns_on_daemon_pty_rows_too_large() {
+    let toml_str = r#"
+        [orchestrator]
+        daemon_pty_rows = 999
+    "#;
+    let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+    let warnings = validate_config(toml_str, &config);
+    assert!(warnings.iter().any(|w| w.contains("daemon_pty_rows=999")));
 }
 
 #[test]

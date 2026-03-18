@@ -3,7 +3,7 @@ use super::*;
 impl App {
     pub fn new() -> Self {
         let config_exists = std::path::Path::new(CONFIG_FILE).exists();
-        let (config, config_warnings) = if config_exists {
+        let (config, mut config_warnings) = if config_exists {
             match std::fs::read_to_string(CONFIG_FILE) {
                 Ok(raw) => match toml::from_str::<ObeliskConfig>(&raw) {
                     Ok(cfg) => {
@@ -29,6 +29,8 @@ impl App {
         let mut auto_spawn = false;
         let mut poll_interval_secs = 30u64;
         let mut velocity_window_size = 24usize;
+        let mut daemon_pty_rows = 40u16;
+        let mut daemon_pty_cols = 120u16;
         let mut model_indices: HashMap<Runtime, usize> = HashMap::from([
             (Runtime::ClaudeCode, 0),
             (Runtime::Codex, 0),
@@ -56,6 +58,12 @@ impl App {
             if let Some(vw) = orch.velocity_window {
                 velocity_window_size = vw.max(2); // minimum 2 data points
             }
+            if let Some(rows) = orch.daemon_pty_rows {
+                daemon_pty_rows = rows.clamp(10, 500);
+            }
+            if let Some(cols) = orch.daemon_pty_cols {
+                daemon_pty_cols = cols.clamp(40, 500);
+            }
         }
 
         if let Some(models) = &config.models {
@@ -74,6 +82,12 @@ impl App {
                     model_indices.insert(*runtime, idx);
                 }
             }
+        }
+
+        // Environment variables override TOML model selections
+        let env_overrides = apply_env_model_overrides(&mut model_indices);
+        for msg in &env_overrides {
+            config_warnings.push(msg.clone());
         }
 
         let session_id = generate_session_id();
@@ -109,6 +123,8 @@ impl App {
             auto_spawn,
             max_concurrent,
             poll_interval_secs,
+            daemon_pty_rows,
+            daemon_pty_cols,
             poll_countdown,
             should_quit: false,
             next_unit: 0,
@@ -241,6 +257,8 @@ impl App {
                 auto_spawn: Some(self.auto_spawn),
                 poll_interval_secs: Some(self.poll_interval_secs),
                 velocity_window: Some(self.velocity_window_size),
+                daemon_pty_rows: Some(self.daemon_pty_rows),
+                daemon_pty_cols: Some(self.daemon_pty_cols),
             }),
             models: Some(ModelsConfig {
                 claude: Some(self.selected_model_for(Runtime::ClaudeCode).to_string()),
@@ -364,6 +382,20 @@ impl App {
                     changes.push(format!("velocity_window → {}", vw));
                 }
             }
+            if let Some(rows) = orch.daemon_pty_rows {
+                let rows = rows.clamp(10, 500);
+                if rows != self.daemon_pty_rows {
+                    self.daemon_pty_rows = rows;
+                    changes.push(format!("daemon_pty_rows → {}", rows));
+                }
+            }
+            if let Some(cols) = orch.daemon_pty_cols {
+                let cols = cols.clamp(40, 500);
+                if cols != self.daemon_pty_cols {
+                    self.daemon_pty_cols = cols;
+                    changes.push(format!("daemon_pty_cols → {}", cols));
+                }
+            }
         }
 
         // ── Model settings ──
@@ -392,6 +424,9 @@ impl App {
                 }
             }
         }
+
+        // ── Environment variable overrides (take precedence over TOML) ──
+        changes.extend(apply_env_model_overrides(&mut self.model_indices));
 
         // ── Theme settings ──
         let new_theme_config = cfg.theme.unwrap_or_default();

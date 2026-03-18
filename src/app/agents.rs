@@ -22,14 +22,15 @@ impl App {
 
         // Clean up merge queue if this agent was queued/merging
         if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == agent_id) {
-            let entry = self.merge_queue.remove(pos).unwrap();
-            self.log(
-                LogCategory::Alert,
-                format!(
-                    "MERGE-QUEUE: AGENT-{:02} exited while merging {} (lock released, {} remaining)",
-                    entry.unit_number, entry.task_id, self.merge_queue.len()
-                ),
-            );
+            if let Some(entry) = self.merge_queue.remove(pos) {
+                self.log(
+                    LogCategory::Alert,
+                    format!(
+                        "MERGE-QUEUE: AGENT-{:02} exited while merging {} (lock released, {} remaining)",
+                        entry.unit_number, entry.task_id, self.merge_queue.len()
+                    ),
+                );
+            }
         }
 
         let log_info = if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
@@ -221,15 +222,16 @@ impl App {
 
         // Dequeue from merge queue if still present (e.g. fast close)
         if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == agent_id) {
-            let entry = self.merge_queue.remove(pos).unwrap();
-            let elapsed = entry.enqueued_at.elapsed().as_secs();
-            self.log(
-                LogCategory::System,
-                format!(
-                    "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
-                    entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
-                ),
-            );
+            if let Some(entry) = self.merge_queue.remove(pos) {
+                let elapsed = entry.enqueued_at.elapsed().as_secs();
+                self.log(
+                    LogCategory::System,
+                    format!(
+                        "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
+                        entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
+                    ),
+                );
+            }
         }
 
         if let Some((unit, task_id, title, rt, model, elapsed)) = completion {
@@ -479,6 +481,50 @@ impl App {
         }
     }
 
+    /// Send SIGTERM to a process, with PID validation and error checking.
+    /// Returns true if the signal was sent successfully (or on non-unix), false otherwise.
+    #[allow(unused_variables)]
+    fn send_sigterm(pid: u32, context: &str) -> bool {
+        #[cfg(unix)]
+        {
+            let Ok(pid_i32) = i32::try_from(pid) else {
+                error!(pid, context, "PID overflows i32, cannot send signal");
+                return false;
+            };
+            if pid_i32 <= 0 {
+                error!(pid_i32, context, "invalid PID (must be > 0), refusing to signal");
+                return false;
+            }
+            let ret = unsafe { libc::kill(pid_i32, libc::SIGTERM) };
+            if ret != 0 {
+                let err = std::io::Error::last_os_error();
+                error!(pid_i32, %err, context, "libc::kill(SIGTERM) failed");
+                return false;
+            }
+            true
+        }
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+            let status = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            match status {
+                Ok(s) if s.success() => true,
+                Ok(s) => {
+                    error!(pid, ?s, context, "taskkill failed");
+                    false
+                }
+                Err(e) => {
+                    error!(pid, %e, context, "taskkill could not be launched");
+                    false
+                }
+            }
+        }
+    }
+
     /// Kill agent process via SIGTERM. Returns (unit_number, worktree_path) for logging/cleanup.
     pub fn kill_agent(&mut self, agent_id: usize) -> Option<(usize, Option<String>)> {
         let agent = self.agents.iter_mut().find(|a| a.id == agent_id)?;
@@ -486,19 +532,7 @@ impl App {
             return None;
         }
         if let Some(pid) = agent.pid {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            #[cfg(windows)]
-            {
-                use std::process::Command;
-                let _ = Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
+            Self::send_sigterm(pid, "kill_agent");
         }
         agent.status = AgentStatus::Failed;
         agent.elapsed_secs = agent.started_at.elapsed().as_secs();
@@ -528,19 +562,7 @@ impl App {
             return None;
         }
         if let Some(pid) = agent.pid {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            #[cfg(windows)]
-            {
-                use std::process::Command;
-                let _ = Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
+            Self::send_sigterm(pid, "force_complete_agent");
         }
         agent.status = AgentStatus::Completed;
         agent.elapsed_secs = agent.started_at.elapsed().as_secs();

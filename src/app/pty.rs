@@ -248,15 +248,16 @@ impl App {
         }
         if let Some(aid) = merge_dequeue_agent_id {
             if let Some(pos) = self.merge_queue.iter().position(|e| e.agent_id == aid) {
-                let entry = self.merge_queue.remove(pos).unwrap();
-                let elapsed = entry.enqueued_at.elapsed().as_secs();
-                self.log(
-                    LogCategory::System,
-                    format!(
-                        "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
-                        entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
-                    ),
-                );
+                if let Some(entry) = self.merge_queue.remove(pos) {
+                    let elapsed = entry.enqueued_at.elapsed().as_secs();
+                    self.log(
+                        LogCategory::System,
+                        format!(
+                            "MERGE-QUEUE: AGENT-{:02} merge complete for {} ({}s in queue, {} remaining)",
+                            entry.unit_number, entry.task_id, elapsed, self.merge_queue.len()
+                        ),
+                    );
+                }
             }
         }
         if let Some((unit, task_id)) = merge_conflict_info {
