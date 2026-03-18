@@ -158,9 +158,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     message: Some(format!("invalid command: {}", e)),
                                     data: None,
                                 };
-                                let _ = stream
-                                    .write_all(serde_json::to_string(&resp).unwrap().as_bytes())
-                                    .await;
+                                match serde_json::to_string(&resp) {
+                                    Ok(json) => { let _ = stream.write_all(json.as_bytes()).await; }
+                                    Err(e) => error!("failed to serialize error response: {}", e),
+                                }
                                 return;
                             }
                         };
@@ -169,9 +170,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             return;
                         }
                         if let Ok(resp) = resp_rx.await {
-                            let _ = stream
-                                .write_all(serde_json::to_string(&resp).unwrap().as_bytes())
-                                .await;
+                            match serde_json::to_string(&resp) {
+                                Ok(json) => { let _ = stream.write_all(json.as_bytes()).await; }
+                                Err(e) => {
+                                    error!("failed to serialize daemon response: {}", e);
+                                    let fallback = r#"{"ok":false,"message":"internal serialization error"}"#;
+                                    let _ = stream.write_all(fallback.as_bytes()).await;
+                                }
+                            }
                         }
                     });
                 }
