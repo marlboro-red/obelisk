@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::LazyLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 // All valid issue types for cycling the type filter
 const ALL_TYPES: &[&str] = &["bug", "feature", "task", "chore", "epic"];
@@ -2196,6 +2196,50 @@ impl App {
         }
     }
 
+    /// Send SIGTERM to a process, with PID validation and error checking.
+    /// Returns true if the signal was sent successfully (or on non-unix), false otherwise.
+    #[allow(unused_variables)]
+    fn send_sigterm(pid: u32, context: &str) -> bool {
+        #[cfg(unix)]
+        {
+            let Ok(pid_i32) = i32::try_from(pid) else {
+                error!(pid, context, "PID overflows i32, cannot send signal");
+                return false;
+            };
+            if pid_i32 <= 0 {
+                error!(pid_i32, context, "invalid PID (must be > 0), refusing to signal");
+                return false;
+            }
+            let ret = unsafe { libc::kill(pid_i32, libc::SIGTERM) };
+            if ret != 0 {
+                let err = std::io::Error::last_os_error();
+                error!(pid_i32, %err, context, "libc::kill(SIGTERM) failed");
+                return false;
+            }
+            true
+        }
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+            let status = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            match status {
+                Ok(s) if s.success() => true,
+                Ok(s) => {
+                    error!(pid, ?s, context, "taskkill failed");
+                    false
+                }
+                Err(e) => {
+                    error!(pid, %e, context, "taskkill could not be launched");
+                    false
+                }
+            }
+        }
+    }
+
     /// Kill agent process via SIGTERM. Returns (unit_number, worktree_path) for logging/cleanup.
     pub fn kill_agent(&mut self, agent_id: usize) -> Option<(usize, Option<String>)> {
         let agent = self.agents.iter_mut().find(|a| a.id == agent_id)?;
@@ -2203,19 +2247,7 @@ impl App {
             return None;
         }
         if let Some(pid) = agent.pid {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            #[cfg(windows)]
-            {
-                use std::process::Command;
-                let _ = Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
+            Self::send_sigterm(pid, "kill_agent");
         }
         agent.status = AgentStatus::Failed;
         agent.elapsed_secs = agent.started_at.elapsed().as_secs();
@@ -2245,19 +2277,7 @@ impl App {
             return None;
         }
         if let Some(pid) = agent.pid {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            #[cfg(windows)]
-            {
-                use std::process::Command;
-                let _ = Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
+            Self::send_sigterm(pid, "force_complete_agent");
         }
         agent.status = AgentStatus::Completed;
         agent.elapsed_secs = agent.started_at.elapsed().as_secs();
