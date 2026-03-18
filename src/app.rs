@@ -2946,8 +2946,11 @@ impl App {
             if cfg!(target_os = "windows")
                 && data.windows(4).any(|w| w == b"\x1b[6n") {
                     use std::io::Write;
-                    let _ = state.writer.write_all(b"\x1b[1;1R");
-                    let _ = state.writer.flush();
+                    if let Err(e) = state.writer.write_all(b"\x1b[1;1R")
+                        .and_then(|_| state.writer.flush())
+                    {
+                        warn!(agent_id, "ConPTY CPR write failed: {e}");
+                    }
                 }
             // Strip any CPR responses (ESC[row;colR) that leak into the output
             // stream before feeding the vt100 parser — defense-in-depth.
