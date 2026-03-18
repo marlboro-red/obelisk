@@ -8,14 +8,29 @@ fn encode_project_path(cwd: &Path) -> String {
     path_str.replace('/', "-")
 }
 
-/// Return the Claude Code project directory for the current working directory.
-fn claude_project_dir(cwd: &Path) -> PathBuf {
-    let home = std::env::var("HOME")
+/// Resolve the user's home directory across platforms.
+/// Checks HOME (Unix / Git Bash on Windows), USERPROFILE (Windows default),
+/// then HOMEDRIVE+HOMEPATH (Windows fallback).
+fn home_dir() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .or_else(|| {
+            let drive = std::env::var("HOMEDRIVE").ok()?;
+            let path = std::env::var("HOMEPATH").ok()?;
+            Some(format!("{}{}", drive, path))
+        })
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("~"));
-    home.join(".claude")
-        .join("projects")
-        .join(encode_project_path(cwd))
+}
+
+/// Return the Claude Code project directory for the current working directory.
+fn claude_project_dir(cwd: &Path) -> Option<PathBuf> {
+    let home = home_dir()?;
+    Some(
+        home.join(".claude")
+            .join("projects")
+            .join(encode_project_path(cwd)),
+    )
 }
 
 /// Per-model pricing in USD per token. Returns (input_per_token, output_per_token,
@@ -151,7 +166,7 @@ pub fn read_agent_usage(
     ended_before: chrono::DateTime<chrono::Utc>,
 ) -> Option<AgentUsage> {
     let cwd = std::env::current_dir().ok()?;
-    let project_dir = claude_project_dir(&cwd);
+    let project_dir = claude_project_dir(&cwd)?;
 
     if !project_dir.is_dir() {
         return None;
@@ -269,5 +284,59 @@ mod tests {
         assert_eq!(format_tokens(1000), "1.0K");
         assert_eq!(format_tokens(15_432), "15.4K");
         assert_eq!(format_tokens(1_500_000), "1.5M");
+    }
+
+    #[test]
+    fn home_dir_never_returns_tilde() {
+        // home_dir() should return None rather than a literal "~" path
+        // when no home env vars are set.
+        let result = home_dir();
+        if let Some(ref p) = result {
+            assert_ne!(
+                p.as_os_str(),
+                "~",
+                "home_dir() must not fall back to literal '~'"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_project_dir_returns_none_without_home() {
+        // Temporarily clear all home-related env vars to verify we get None
+        // instead of a bogus "~/.claude/..." path.
+        let saved_home = std::env::var("HOME").ok();
+        let saved_userprofile = std::env::var("USERPROFILE").ok();
+        let saved_homedrive = std::env::var("HOMEDRIVE").ok();
+        let saved_homepath = std::env::var("HOMEPATH").ok();
+
+        std::env::remove_var("HOME");
+        std::env::remove_var("USERPROFILE");
+        std::env::remove_var("HOMEDRIVE");
+        std::env::remove_var("HOMEPATH");
+
+        let result = claude_project_dir(Path::new("/tmp/test"));
+        assert!(result.is_none(), "Expected None when no home env vars are set");
+
+        // Restore env vars
+        if let Some(v) = saved_home { std::env::set_var("HOME", v); }
+        if let Some(v) = saved_userprofile { std::env::set_var("USERPROFILE", v); }
+        if let Some(v) = saved_homedrive { std::env::set_var("HOMEDRIVE", v); }
+        if let Some(v) = saved_homepath { std::env::set_var("HOMEPATH", v); }
+    }
+
+    #[test]
+    fn home_dir_uses_userprofile_fallback() {
+        let saved_home = std::env::var("HOME").ok();
+        let saved_userprofile = std::env::var("USERPROFILE").ok();
+
+        std::env::remove_var("HOME");
+        std::env::set_var("USERPROFILE", r"C:\Users\testuser");
+
+        let result = home_dir();
+        assert_eq!(result, Some(PathBuf::from(r"C:\Users\testuser")));
+
+        // Restore
+        if let Some(v) = saved_home { std::env::set_var("HOME", v); } else { std::env::remove_var("HOME"); }
+        if let Some(v) = saved_userprofile { std::env::set_var("USERPROFILE", v); } else { std::env::remove_var("USERPROFILE"); }
     }
 }
