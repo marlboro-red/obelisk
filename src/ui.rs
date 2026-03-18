@@ -420,31 +420,29 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &mut App) {
             app.layout_areas.blocked_queue = Some(left_chunks[1]);
             render_blocked_queue(f, left_chunks[1], app);
         }
+    } else if app.blocked_tasks.is_empty() {
+        let left_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(4), Constraint::Length(9)])
+            .split(h_chunks[0]);
+        app.layout_areas.ready_queue = Some(left_chunks[0]);
+        app.layout_areas.blocked_queue = None;
+        render_ready_queue(f, left_chunks[0], app);
+        render_task_preview(f, left_chunks[1], app);
     } else {
-        if app.blocked_tasks.is_empty() {
-            let left_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(4), Constraint::Length(9)])
-                .split(h_chunks[0]);
-            app.layout_areas.ready_queue = Some(left_chunks[0]);
-            app.layout_areas.blocked_queue = None;
-            render_ready_queue(f, left_chunks[0], app);
-            render_task_preview(f, left_chunks[1], app);
-        } else {
-            let left_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(4),
-                    Constraint::Length(6),
-                    Constraint::Length(9),
-                ])
-                .split(h_chunks[0]);
-            app.layout_areas.ready_queue = Some(left_chunks[0]);
-            render_ready_queue(f, left_chunks[0], app);
-            app.layout_areas.blocked_queue = Some(left_chunks[1]);
-            render_blocked_queue(f, left_chunks[1], app);
-            render_task_preview(f, left_chunks[2], app);
-        }
+        let left_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(4),
+                Constraint::Length(6),
+                Constraint::Length(9),
+            ])
+            .split(h_chunks[0]);
+        app.layout_areas.ready_queue = Some(left_chunks[0]);
+        render_ready_queue(f, left_chunks[0], app);
+        app.layout_areas.blocked_queue = Some(left_chunks[1]);
+        render_blocked_queue(f, left_chunks[1], app);
+        render_task_preview(f, left_chunks[2], app);
     }
     render_agent_panel(f, h_chunks[1], app);
 

@@ -188,7 +188,7 @@ pub fn read_agent_usage(
                 started_after - first_ts
             };
             // Pick the session whose start time is closest to the agent's start time
-            if best.as_ref().map_or(true, |(_, d)| distance < *d) {
+            if best.as_ref().is_none_or(|(_, d)| distance < *d) {
                 best = Some((usage, distance));
             }
         }
