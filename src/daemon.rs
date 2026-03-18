@@ -78,8 +78,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("obelisk daemon listening on 127.0.0.1:{}", port);
 
     let mut app = App::new();
-    // Daemon uses a fixed PTY size (no terminal to measure)
-    app.last_pty_size = (40, 120);
+    // Daemon uses configured PTY size (no terminal to measure)
+    app.last_pty_size = (app.daemon_pty_rows, app.daemon_pty_cols);
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 

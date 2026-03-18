@@ -29,6 +29,8 @@ struct OrchestratorConfig {
     auto_spawn: Option<bool>,
     poll_interval_secs: Option<u64>,
     velocity_window: Option<usize>,
+    daemon_pty_rows: Option<u16>,
+    daemon_pty_cols: Option<u16>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -75,6 +77,7 @@ const KNOWN_NOTIFICATIONS_KEYS: &[&str] = &["webhook"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "headers", "events"];
 const KNOWN_ORCH_KEYS: &[&str] = &[
     "runtime", "max_concurrent", "auto_spawn", "poll_interval_secs", "velocity_window",
+    "daemon_pty_rows", "daemon_pty_cols",
 ];
 const KNOWN_MODELS_KEYS: &[&str] = &["claude", "codex", "copilot"];
 const KNOWN_THEME_KEYS: &[&str] = &[
@@ -162,6 +165,28 @@ fn validate_config(toml_raw: &str, config: &ObeliskConfig) -> Vec<String> {
             if vw < 2 {
                 warnings.push(format!(
                     "velocity_window={} too small, minimum is 2", vw
+                ));
+            }
+        }
+        if let Some(rows) = orch.daemon_pty_rows {
+            if rows < 10 {
+                warnings.push(format!(
+                    "daemon_pty_rows={} too small, clamping to 10", rows
+                ));
+            } else if rows > 500 {
+                warnings.push(format!(
+                    "daemon_pty_rows={} too large, clamping to 500", rows
+                ));
+            }
+        }
+        if let Some(cols) = orch.daemon_pty_cols {
+            if cols < 40 {
+                warnings.push(format!(
+                    "daemon_pty_cols={} too small, clamping to 40", cols
+                ));
+            } else if cols > 500 {
+                warnings.push(format!(
+                    "daemon_pty_cols={} too large, clamping to 500", cols
                 ));
             }
         }
@@ -377,6 +402,8 @@ pub struct App {
     pub auto_spawn: bool,
     pub max_concurrent: usize,
     pub poll_interval_secs: u64,
+    pub daemon_pty_rows: u16,
+    pub daemon_pty_cols: u16,
     pub poll_countdown: f64,
 
     pub should_quit: bool,
@@ -639,6 +666,8 @@ impl App {
         let mut auto_spawn = false;
         let mut poll_interval_secs = 30u64;
         let mut velocity_window_size = 24usize;
+        let mut daemon_pty_rows = 40u16;
+        let mut daemon_pty_cols = 120u16;
         let mut model_indices: HashMap<Runtime, usize> = HashMap::from([
             (Runtime::ClaudeCode, 0),
             (Runtime::Codex, 0),
@@ -665,6 +694,12 @@ impl App {
             }
             if let Some(vw) = orch.velocity_window {
                 velocity_window_size = vw.max(2); // minimum 2 data points
+            }
+            if let Some(rows) = orch.daemon_pty_rows {
+                daemon_pty_rows = rows.clamp(10, 500);
+            }
+            if let Some(cols) = orch.daemon_pty_cols {
+                daemon_pty_cols = cols.clamp(40, 500);
             }
         }
 
@@ -719,6 +754,8 @@ impl App {
             auto_spawn,
             max_concurrent,
             poll_interval_secs,
+            daemon_pty_rows,
+            daemon_pty_cols,
             poll_countdown,
             should_quit: false,
             next_unit: 0,
@@ -851,6 +888,8 @@ impl App {
                 auto_spawn: Some(self.auto_spawn),
                 poll_interval_secs: Some(self.poll_interval_secs),
                 velocity_window: Some(self.velocity_window_size),
+                daemon_pty_rows: Some(self.daemon_pty_rows),
+                daemon_pty_cols: Some(self.daemon_pty_cols),
             }),
             models: Some(ModelsConfig {
                 claude: Some(self.selected_model_for(Runtime::ClaudeCode).to_string()),
@@ -972,6 +1011,20 @@ impl App {
                 if vw != self.velocity_window_size {
                     self.velocity_window_size = vw;
                     changes.push(format!("velocity_window → {}", vw));
+                }
+            }
+            if let Some(rows) = orch.daemon_pty_rows {
+                let rows = rows.clamp(10, 500);
+                if rows != self.daemon_pty_rows {
+                    self.daemon_pty_rows = rows;
+                    changes.push(format!("daemon_pty_rows → {}", rows));
+                }
+            }
+            if let Some(cols) = orch.daemon_pty_cols {
+                let cols = cols.clamp(40, 500);
+                if cols != self.daemon_pty_cols {
+                    self.daemon_pty_cols = cols;
+                    changes.push(format!("daemon_pty_cols → {}", cols));
                 }
             }
         }
@@ -4590,6 +4643,8 @@ mod tests {
                 auto_spawn: Some(true),
                 poll_interval_secs: Some(60),
                 velocity_window: Some(12),
+                daemon_pty_rows: Some(50),
+                daemon_pty_cols: Some(200),
             }),
             models: Some(ModelsConfig {
                 claude: Some("claude-opus-4-6".into()),
@@ -4608,6 +4663,8 @@ mod tests {
         assert_eq!(orch.max_concurrent, Some(5));
         assert_eq!(orch.auto_spawn, Some(true));
         assert_eq!(orch.poll_interval_secs, Some(60));
+        assert_eq!(orch.daemon_pty_rows, Some(50));
+        assert_eq!(orch.daemon_pty_cols, Some(200));
 
         let models = restored.models.unwrap();
         assert_eq!(models.claude.as_deref(), Some("claude-opus-4-6"));
@@ -4757,6 +4814,39 @@ mod tests {
         let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
         let warnings = validate_config(toml_str, &config);
         assert!(warnings.iter().any(|w| w.contains("velocity_window=1")));
+    }
+
+    #[test]
+    fn validate_warns_on_daemon_pty_rows_too_small() {
+        let toml_str = r#"
+            [orchestrator]
+            daemon_pty_rows = 5
+        "#;
+        let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+        let warnings = validate_config(toml_str, &config);
+        assert!(warnings.iter().any(|w| w.contains("daemon_pty_rows=5")));
+    }
+
+    #[test]
+    fn validate_warns_on_daemon_pty_cols_too_small() {
+        let toml_str = r#"
+            [orchestrator]
+            daemon_pty_cols = 20
+        "#;
+        let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+        let warnings = validate_config(toml_str, &config);
+        assert!(warnings.iter().any(|w| w.contains("daemon_pty_cols=20")));
+    }
+
+    #[test]
+    fn validate_warns_on_daemon_pty_rows_too_large() {
+        let toml_str = r#"
+            [orchestrator]
+            daemon_pty_rows = 999
+        "#;
+        let config: ObeliskConfig = toml::from_str(toml_str).unwrap();
+        let warnings = validate_config(toml_str, &config);
+        assert!(warnings.iter().any(|w| w.contains("daemon_pty_rows=999")));
     }
 
     #[test]
