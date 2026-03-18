@@ -149,6 +149,7 @@ impl std::fmt::Display for Runtime {
 pub enum AgentStatus {
     Starting,
     Running,
+    Killing,
     Completed,
     Failed,
 }
@@ -201,6 +202,7 @@ impl AgentStatus {
         match self {
             AgentStatus::Starting => "◐",
             AgentStatus::Running => "▶",
+            AgentStatus::Killing => "⊘",
             AgentStatus::Completed => "✓",
             AgentStatus::Failed => "✗",
         }
@@ -241,7 +243,7 @@ impl AgentStatusFilter {
     pub fn matches(&self, status: AgentStatus) -> bool {
         match self {
             AgentStatusFilter::All => true,
-            AgentStatusFilter::Running => status == AgentStatus::Running,
+            AgentStatusFilter::Running => status == AgentStatus::Running || status == AgentStatus::Killing,
             AgentStatusFilter::Failed => status == AgentStatus::Failed,
             AgentStatusFilter::Completed => status == AgentStatus::Completed,
             AgentStatusFilter::Starting => status == AgentStatus::Starting,

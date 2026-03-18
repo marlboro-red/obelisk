@@ -1174,6 +1174,7 @@ impl App {
                     status: match a.status {
                         AgentStatus::Starting => "Starting".to_string(),
                         AgentStatus::Running => "Running".to_string(),
+                        AgentStatus::Killing => "Killing".to_string(),
                         AgentStatus::Completed => "Completed".to_string(),
                         AgentStatus::Failed => "Failed".to_string(),
                     },
@@ -1236,14 +1237,14 @@ impl App {
     pub fn active_agent_count(&self) -> usize {
         self.agents
             .iter()
-            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing))
             .count()
     }
 
     pub fn count_running(&self) -> usize {
         self.agents
             .iter()
-            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing))
             .count()
     }
 
@@ -1270,7 +1271,7 @@ impl App {
             }
         }
         for agent in &mut self.agents {
-            if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+            if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing) {
                 agent.elapsed_secs = agent.started_at.elapsed().as_secs();
             }
         }
@@ -1296,7 +1297,7 @@ impl App {
             let running_ids: Vec<usize> = self
                 .agents
                 .iter()
-                .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+                .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing))
                 .map(|a| a.id)
                 .collect();
             for id in running_ids {
@@ -1623,7 +1624,7 @@ impl App {
             let title = agent.task.title.clone();
             let rt = agent.runtime.name().to_string();
             let elapsed = agent.elapsed_secs;
-            // Don't overwrite a terminal status — force_complete or kill may
+            // Don't overwrite a terminal status — force_complete may
             // have already set Completed/Failed before the exit watcher fires.
             if matches!(agent.status, AgentStatus::Completed | AgentStatus::Failed) {
                 // If already completed via issue polling but usage wasn't read yet,
@@ -1633,6 +1634,16 @@ impl App {
                     agent.usage = crate::cost::read_agent_usage(agent.started_at_utc, ended_at);
                 }
                 None
+            } else if agent.status == AgentStatus::Killing {
+                // Agent was killed by the user — always mark as Failed regardless
+                // of exit code. This completes the Killing → Failed transition
+                // atomically with counter updates (no TOCTOU race).
+                agent.status = AgentStatus::Failed;
+                if agent.runtime == Runtime::ClaudeCode {
+                    let ended_at = chrono::Utc::now();
+                    agent.usage = crate::cost::read_agent_usage(agent.started_at_utc, ended_at);
+                }
+                Some((false, unit, task_id, title, rt, elapsed))
             } else if exit_code == Some(0) {
                 agent.status = AgentStatus::Completed;
                 // Read Claude Code usage logs on successful exit
@@ -2351,30 +2362,35 @@ impl App {
     }
 
     /// Kill agent process via SIGTERM. Returns (unit_number, worktree_path) for logging/cleanup.
+    ///
+    /// Sets status to `Killing` immediately (before sending SIGTERM) to prevent
+    /// the exit watcher from racing with this method. The final `Killing → Failed`
+    /// transition and counter increment happen in `on_agent_exited`.
     pub fn kill_agent(&mut self, agent_id: usize) -> Option<(usize, Option<String>)> {
         let agent = self.agents.iter_mut().find(|a| a.id == agent_id)?;
         if !matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
             return None;
         }
+        // Transition to Killing *before* sending the signal so the exit watcher
+        // sees a non-Running status and defers counter management to on_agent_exited.
+        agent.status = AgentStatus::Killing;
         if let Some(pid) = agent.pid {
             Self::send_sigterm(pid, "kill_agent");
         }
-        agent.status = AgentStatus::Failed;
         agent.elapsed_secs = agent.started_at.elapsed().as_secs();
         let unit = agent.unit_number;
         let task_id = agent.task.id.clone();
         let worktree = agent.worktree_path.clone();
-        self.total_failed += 1;
         warn!(
             agent_id = unit,
             task_id,
             elapsed_secs = agent.elapsed_secs,
-            event = "agent_killed",
-            "agent terminated by user"
+            event = "agent_killing",
+            "agent SIGTERM sent, awaiting exit"
         );
         self.log(
             LogCategory::Alert,
-            format!("AGENT-{:02} terminated (killed)", unit),
+            format!("AGENT-{:02} terminating (kill sent)", unit),
         );
         Some((unit, worktree))
     }
@@ -2422,7 +2438,7 @@ impl App {
             visible[sel].0
         };
         let agent = &self.agents[raw_idx];
-        if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+        if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing) {
             return Some(format!(
                 "AGENT-{:02} is active — cannot dismiss",
                 agent.unit_number
@@ -2607,7 +2623,7 @@ impl App {
     pub fn active_task_ids(&self) -> std::collections::HashSet<String> {
         self.agents
             .iter()
-            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing))
             .map(|a| a.task.id.clone())
             .collect()
     }
@@ -2682,7 +2698,7 @@ impl App {
 
                 // Classify status
                 let status = if let Some(aid) = agent_id {
-                    if self.agents.iter().any(|a| a.id == aid && matches!(a.status, AgentStatus::Starting | AgentStatus::Running)) {
+                    if self.agents.iter().any(|a| a.id == aid && matches!(a.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing)) {
                         WorktreeStatus::Active
                     } else {
                         WorktreeStatus::Idle
@@ -3334,7 +3350,7 @@ impl App {
         let running: Vec<usize> = self
             .agents
             .iter()
-            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+            .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing))
             .map(|a| a.id)
             .collect();
 
@@ -3782,6 +3798,82 @@ mod tests {
             AgentStatus::Failed,
             "exit watcher must not overwrite Failed status"
         );
+    }
+
+    #[test]
+    fn kill_agent_sets_killing_status() {
+        let mut app = App::new();
+        app.agents.push(test_agent(60, AgentStatus::Running));
+
+        let result = app.kill_agent(60);
+        assert!(result.is_some());
+
+        let agent = app.agents.iter().find(|a| a.id == 60).unwrap();
+        assert_eq!(
+            agent.status,
+            AgentStatus::Killing,
+            "kill_agent should set Killing, not Failed"
+        );
+        // Counter should NOT be incremented yet — deferred to on_agent_exited
+        assert_eq!(app.total_failed, 0, "total_failed must not increment until exit watcher fires");
+    }
+
+    #[test]
+    fn kill_then_exit_transitions_to_failed() {
+        let mut app = App::new();
+        app.agents.push(test_agent(61, AgentStatus::Running));
+
+        // User kills the agent → Killing
+        app.kill_agent(61);
+        assert_eq!(
+            app.agents.iter().find(|a| a.id == 61).unwrap().status,
+            AgentStatus::Killing,
+        );
+
+        // Exit watcher fires (SIGTERM exit code 143)
+        app.on_agent_exited(61, Some(143));
+
+        let agent = app.agents.iter().find(|a| a.id == 61).unwrap();
+        assert_eq!(
+            agent.status,
+            AgentStatus::Failed,
+            "Killing agent must transition to Failed on exit"
+        );
+        assert_eq!(app.total_failed, 1, "total_failed must be incremented exactly once");
+        assert_eq!(app.total_completed, 0, "killed agent must not count as completed");
+    }
+
+    #[test]
+    fn kill_then_exit_with_zero_still_fails() {
+        let mut app = App::new();
+        app.agents.push(test_agent(62, AgentStatus::Running));
+
+        // Kill, then exit with code 0 (edge case)
+        app.kill_agent(62);
+        app.on_agent_exited(62, Some(0));
+
+        let agent = app.agents.iter().find(|a| a.id == 62).unwrap();
+        assert_eq!(
+            agent.status,
+            AgentStatus::Failed,
+            "Killing agent must be Failed even with exit code 0"
+        );
+        assert_eq!(app.total_failed, 1);
+        assert_eq!(app.total_completed, 0);
+    }
+
+    #[test]
+    fn kill_agent_rejects_killing_status() {
+        let mut app = App::new();
+        app.agents.push(test_agent(63, AgentStatus::Running));
+
+        // First kill sets Killing
+        let result = app.kill_agent(63);
+        assert!(result.is_some());
+
+        // Second kill should be rejected (already Killing)
+        let result = app.kill_agent(63);
+        assert!(result.is_none(), "should not re-kill an agent already being killed");
     }
 
     #[test]
