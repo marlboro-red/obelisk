@@ -33,6 +33,16 @@ dolt-server.lock
 dolt-server.port
 dolt-server.activity
 dolt-monitor.pid
+dolt-monitor.pid.lock
+
+# Obelisk runtime logs
+logs/
+
+# Session data (contains cost data and execution metadata)
+obelisk_sessions.jsonl
+
+# Credential files (sensitive, must never be committed)
+*credential*
 
 # Backup data (auto-exported JSONL, local-only)
 backup/
