@@ -58,6 +58,39 @@ selection; cycle through options at runtime with `m`.
 - `claude-sonnet-4`
 - `gpt-5`
 
+#### Environment Variable Overrides
+
+Model selections can be overridden via environment variables. These take
+precedence over `obelisk.toml` values and are useful for CI, scripting, or
+quick one-off changes without editing the config file.
+
+| Variable | Overrides |
+|----------|-----------|
+| `OBELISK_MODEL_CLAUDE` | `[models] claude` |
+| `OBELISK_MODEL_CODEX` | `[models] codex` |
+| `OBELISK_MODEL_COPILOT` | `[models] copilot` |
+
+The value must be one of the valid model names listed above. Invalid values
+are logged as warnings and ignored.
+
+Example:
+
+```bash
+OBELISK_MODEL_CLAUDE=claude-sonnet-4-6 obelisk
+```
+
+#### Updating Models
+
+When new model versions are released:
+
+1. Update the model lists in `src/types.rs` (`Runtime::models()`)
+2. Update defaults in `obelisk.toml`
+3. Update the model lists in this document
+
+Users who have customized `[models]` in their `obelisk.toml` will need to
+update those values manually, or use environment variable overrides to
+select the new models without changing the file.
+
 ### Concurrency
 
 | Setting | Default | Range |
