@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 // All valid issue types for cycling the type filter
@@ -537,6 +538,8 @@ pub struct App {
 
     // Webhook notifications config
     pub webhook_config: WebhookConfig,
+    pub webhook_failure_tx: mpsc::UnboundedSender<String>,
+    pub webhook_failure_rx: mpsc::UnboundedReceiver<String>,
 
     // Split-pane view state
     /// Agent IDs pinned to each pane slot (up to 4)
@@ -792,6 +795,7 @@ impl App {
             .unwrap_or_default();
 
         let poll_countdown = poll_interval_secs as f64;
+        let (webhook_failure_tx, webhook_failure_rx) = mpsc::unbounded_channel();
         let mut app = Self {
             ready_tasks: Vec::new(),
             agents: Vec::new(),
@@ -850,6 +854,8 @@ impl App {
             diff_last_poll_frame: 0,
             notifications_enabled: true,
             webhook_config,
+            webhook_failure_tx,
+            webhook_failure_rx,
             split_pane_agents: [None; 4],
             split_pane_focus: 0,
             split_pane_scroll: [None; 4],
@@ -1291,6 +1297,11 @@ impl App {
             }
         }
 
+        // Surface webhook delivery failures to the event log
+        while let Ok(msg) = self.webhook_failure_rx.try_recv() {
+            self.log(LogCategory::Alert, msg);
+        }
+
         // Periodically flush PTY logs to disk for running agents (~every 30s)
         if self.frame_count.is_multiple_of(300) {
             let running_ids: Vec<usize> = self
@@ -1399,6 +1410,7 @@ impl App {
                                 failure_details: None,
                                 timestamp: chrono::Utc::now().to_rfc3339(),
                             },
+                            &self.webhook_failure_tx,
                         );
                     }
                 }
@@ -1712,6 +1724,7 @@ impl App {
                             failure_details: None,
                             timestamp: chrono::Utc::now().to_rfc3339(),
                         },
+                        &self.webhook_failure_tx,
                     );
                 }
             } else {
@@ -1767,6 +1780,7 @@ impl App {
                             failure_details,
                             timestamp: chrono::Utc::now().to_rfc3339(),
                         },
+                        &self.webhook_failure_tx,
                     );
                 }
             }
@@ -1866,6 +1880,7 @@ impl App {
                         failure_details: None,
                         timestamp: chrono::Utc::now().to_rfc3339(),
                     },
+                    &self.webhook_failure_tx,
                 );
             }
         }
@@ -4385,6 +4400,31 @@ mod tests {
         app.frame_count = 1;
         app.on_tick(); // frame_count becomes 2, which is > 0
         assert!(app.alert_message.is_none());
+    }
+
+    #[test]
+    fn on_tick_drains_webhook_failures_into_event_log() {
+        let mut app = App::new();
+        let initial_count = app.event_log.len();
+
+        // Simulate webhook failures arriving via the channel
+        app.webhook_failure_tx
+            .send("Webhook failed for agent_completed: HTTP 500".into())
+            .unwrap();
+        app.webhook_failure_tx
+            .send("Webhook failed for agent_failed: connection refused".into())
+            .unwrap();
+
+        app.on_tick();
+
+        assert_eq!(app.event_log.len(), initial_count + 2);
+        // push_front means newest first
+        assert!(app.event_log[0]
+            .message
+            .contains("connection refused"));
+        assert!(app.event_log[1].message.contains("HTTP 500"));
+        assert_eq!(app.event_log[0].category, LogCategory::Alert);
+        assert_eq!(app.event_log[1].category, LogCategory::Alert);
     }
 
     // ── Model selection ──────────────────────────────────────────

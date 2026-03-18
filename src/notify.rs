@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 fn notifications_suppressed() -> bool {
@@ -140,8 +141,13 @@ pub struct WebhookPayload {
 }
 
 /// Fire a webhook POST request in the background. Non-blocking — failures
-/// are logged but never propagate to callers.
-pub fn send_webhook(config: &WebhookConfig, event: WebhookEventType, payload: WebhookPayload) {
+/// are logged and surfaced to the TUI via `failure_tx`.
+pub fn send_webhook(
+    config: &WebhookConfig,
+    event: WebhookEventType,
+    payload: WebhookPayload,
+    failure_tx: &mpsc::UnboundedSender<String>,
+) {
     if notifications_suppressed() {
         return;
     }
@@ -155,6 +161,7 @@ pub fn send_webhook(config: &WebhookConfig, event: WebhookEventType, payload: We
     };
     let headers = config.headers.clone();
     let event_str = event.as_str().to_string();
+    let tx = failure_tx.clone();
 
     debug!(event = %event_str, url = %url, "sending webhook");
 
@@ -178,19 +185,27 @@ pub fn send_webhook(config: &WebhookConfig, event: WebhookEventType, payload: We
                         "webhook delivered"
                     );
                 } else {
+                    let msg = format!(
+                        "Webhook failed for {}: HTTP {}",
+                        event_str,
+                        resp.status()
+                    );
                     warn!(
                         event = %event_str,
                         status = %resp.status(),
                         "webhook returned non-success status"
                     );
+                    let _ = tx.send(msg);
                 }
             }
             Err(e) => {
+                let msg = format!("Webhook failed for {}: {}", event_str, e);
                 warn!(
                     event = %event_str,
                     error = %e,
                     "webhook delivery failed"
                 );
+                let _ = tx.send(msg);
             }
         }
     });
