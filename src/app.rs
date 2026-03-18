@@ -88,6 +88,52 @@ const KNOWN_THEME_PRESETS: &[&str] = &[
 ];
 const KNOWN_RUNTIMES: &[&str] = &["claude", "codex", "copilot"];
 
+/// Environment variable names for model overrides.
+const ENV_MODEL_CLAUDE: &str = "OBELISK_MODEL_CLAUDE";
+const ENV_MODEL_CODEX: &str = "OBELISK_MODEL_CODEX";
+const ENV_MODEL_COPILOT: &str = "OBELISK_MODEL_COPILOT";
+
+/// Apply environment variable overrides for model selections.
+/// Env vars take precedence over obelisk.toml values.
+/// Returns a list of change descriptions (empty if no env vars were set).
+fn apply_env_model_overrides(model_indices: &mut HashMap<Runtime, usize>) -> Vec<String> {
+    let mut changes = Vec::new();
+    let env_pairs: &[(Runtime, &str)] = &[
+        (Runtime::ClaudeCode, ENV_MODEL_CLAUDE),
+        (Runtime::Codex, ENV_MODEL_CODEX),
+        (Runtime::Copilot, ENV_MODEL_COPILOT),
+    ];
+    for &(runtime, env_var) in env_pairs {
+        if let Ok(model_str) = std::env::var(env_var) {
+            if model_str.is_empty() {
+                continue;
+            }
+            let models = runtime.models();
+            match models.iter().position(|m| *m == model_str.as_str()) {
+                Some(idx) => {
+                    model_indices.insert(runtime, idx);
+                    changes.push(format!(
+                        "{} model → {} (from {})",
+                        runtime.name(),
+                        model_str,
+                        env_var,
+                    ));
+                }
+                None => {
+                    warn!(
+                        env_var = env_var,
+                        value = %model_str,
+                        valid = ?models,
+                        event = "env_model_override_invalid",
+                        "ignoring invalid model from environment variable"
+                    );
+                }
+            }
+        }
+    }
+    changes
+}
+
 /// Validate parsed config and return a list of warnings.
 fn validate_config(toml_raw: &str, config: &ObeliskConfig) -> Vec<String> {
     let mut warnings = Vec::new();
@@ -613,7 +659,7 @@ fn detect_repo_name() -> String {
 impl App {
     pub fn new() -> Self {
         let config_exists = std::path::Path::new(CONFIG_FILE).exists();
-        let (config, config_warnings) = if config_exists {
+        let (config, mut config_warnings) = if config_exists {
             match std::fs::read_to_string(CONFIG_FILE) {
                 Ok(raw) => match toml::from_str::<ObeliskConfig>(&raw) {
                     Ok(cfg) => {
@@ -684,6 +730,12 @@ impl App {
                     model_indices.insert(*runtime, idx);
                 }
             }
+        }
+
+        // Environment variables override TOML model selections
+        let env_overrides = apply_env_model_overrides(&mut model_indices);
+        for msg in &env_overrides {
+            config_warnings.push(msg.clone());
         }
 
         let session_id = generate_session_id();
@@ -1002,6 +1054,9 @@ impl App {
                 }
             }
         }
+
+        // ── Environment variable overrides (take precedence over TOML) ──
+        changes.extend(apply_env_model_overrides(&mut self.model_indices));
 
         // ── Theme settings ──
         let new_theme_config = cfg.theme.unwrap_or_default();
@@ -4611,6 +4666,55 @@ mod tests {
 
         let models = restored.models.unwrap();
         assert_eq!(models.claude.as_deref(), Some("claude-opus-4-6"));
+    }
+
+    /// Env var override tests are combined because env vars are process-global
+    /// and would race with parallel tests.
+    #[test]
+    fn env_model_overrides() {
+        // Clean slate — remove all override vars first
+        std::env::remove_var(ENV_MODEL_CLAUDE);
+        std::env::remove_var(ENV_MODEL_CODEX);
+        std::env::remove_var(ENV_MODEL_COPILOT);
+
+        // ── Part 1: valid override ──
+        let mut indices: HashMap<Runtime, usize> = HashMap::from([
+            (Runtime::ClaudeCode, 0),
+            (Runtime::Codex, 0),
+            (Runtime::Copilot, 0),
+        ]);
+        std::env::set_var(ENV_MODEL_CLAUDE, "claude-haiku-4-5-20251001");
+        let changes = apply_env_model_overrides(&mut indices);
+        std::env::remove_var(ENV_MODEL_CLAUDE);
+
+        assert_eq!(indices[&Runtime::ClaudeCode], 2); // haiku is index 2
+        assert!(changes.iter().any(|c| c.contains("OBELISK_MODEL_CLAUDE")));
+
+        // ── Part 2: invalid model name is ignored ──
+        let mut indices: HashMap<Runtime, usize> = HashMap::from([
+            (Runtime::ClaudeCode, 1),
+            (Runtime::Codex, 0),
+            (Runtime::Copilot, 0),
+        ]);
+        std::env::set_var(ENV_MODEL_CODEX, "nonexistent-model");
+        let changes = apply_env_model_overrides(&mut indices);
+        std::env::remove_var(ENV_MODEL_CODEX);
+
+        assert_eq!(indices[&Runtime::Codex], 0);
+        assert!(changes.is_empty());
+
+        // ── Part 3: empty string is ignored ──
+        let mut indices: HashMap<Runtime, usize> = HashMap::from([
+            (Runtime::ClaudeCode, 0),
+            (Runtime::Codex, 0),
+            (Runtime::Copilot, 0),
+        ]);
+        std::env::set_var(ENV_MODEL_COPILOT, "");
+        let changes = apply_env_model_overrides(&mut indices);
+        std::env::remove_var(ENV_MODEL_COPILOT);
+
+        assert_eq!(indices[&Runtime::Copilot], 0);
+        assert!(changes.is_empty());
     }
 
     /// Config hot-reload tests are combined into a single test because they use
