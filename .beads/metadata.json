@@ -2,5 +2,5 @@
   "database": "dolt",
   "backend": "dolt",
   "dolt_mode": "server",
-  "dolt_database": "bdOrc"
+  "dolt_database": "obelisk"
 }
