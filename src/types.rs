@@ -30,7 +30,6 @@ impl SortMode {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct BeadTask {
     pub id: String,
