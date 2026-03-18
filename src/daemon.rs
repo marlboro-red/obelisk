@@ -250,7 +250,7 @@ fn process_daemon_event(
                 let running: Vec<(usize, String)> = app
                     .agents
                     .iter()
-                    .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running))
+                    .filter(|a| matches!(a.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing))
                     .map(|a| (a.id, a.task.id.clone()))
                     .collect();
                 for (agent_id, task_id) in running {
@@ -442,6 +442,7 @@ fn handle_daemon_cmd(
                         "status_label": match a.status {
                             AgentStatus::Starting => "starting",
                             AgentStatus::Running => "running",
+                            AgentStatus::Killing => "killing",
                             AgentStatus::Completed => "completed",
                             AgentStatus::Failed => "failed",
                         },

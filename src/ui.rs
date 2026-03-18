@@ -213,7 +213,7 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
     // Compute badge counts
     let ready_count = app.ready_tasks.len();
     let active_count = app.agents.iter().filter(|a| {
-        a.status == AgentStatus::Running || a.status == AgentStatus::Starting
+        a.status == AgentStatus::Running || a.status == AgentStatus::Starting || a.status == AgentStatus::Killing
     }).count();
     let unread_events = app.event_log.len().saturating_sub(app.event_log_seen_count);
     let history_count = app.history_sessions.len();
@@ -1262,6 +1262,7 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
             let status_style = match agent.status {
                 AgentStatus::Starting => Style::default().fg(t.warn),
                 AgentStatus::Running => Style::default().fg(t.accent),
+                AgentStatus::Killing => Style::default().fg(t.danger),
                 AgentStatus::Completed => Style::default().fg(t.info),
                 AgentStatus::Failed => Style::default().fg(t.danger),
             };
@@ -1282,13 +1283,14 @@ fn render_agent_panel(f: &mut Frame, area: Rect, app: &App) {
             let status_text = match agent.status {
                 AgentStatus::Starting => "INIT",
                 AgentStatus::Running => &elapsed,
+                AgentStatus::Killing => "KILL",
                 AgentStatus::Completed => "DONE",
                 AgentStatus::Failed => "FAIL",
             };
 
             let line_count = app.agent_line_count(agent.id);
 
-            let phase_badge = if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+            let phase_badge = if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing) {
                 Span::styled(
                     format!(" [{}]", agent.phase.short()),
                     Style::default()
@@ -1357,6 +1359,7 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let status_str = match agent.status {
         AgentStatus::Starting => "INITIALIZING",
         AgentStatus::Running => "ACTIVE",
+        AgentStatus::Killing => "KILLING",
         AgentStatus::Completed => "COMPLETE",
         AgentStatus::Failed => "TERMINATED",
     };
@@ -1364,6 +1367,7 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let header_color = match agent.status {
         AgentStatus::Starting => t.warn,
         AgentStatus::Running => t.accent,
+        AgentStatus::Killing => t.danger,
         AgentStatus::Completed => t.info,
         AgentStatus::Failed => t.danger,
     };
@@ -1407,7 +1411,7 @@ fn render_agent_detail(f: &mut Frame, area: Rect, app: &mut App) {
             Style::default().fg(t.bright),
         ),
     ];
-    if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running) {
+    if matches!(agent.status, AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing) {
         header_spans.push(Span::styled("  /  ", Style::default().fg(t.muted)));
         header_spans.extend(render_phase_indicator(agent.phase, t));
     }
@@ -1585,6 +1589,7 @@ fn render_split_pane(f: &mut Frame, area: Rect, app: &mut App) {
                 let status_str = match agent.status {
                     AgentStatus::Starting => "INIT",
                     AgentStatus::Running => "▶",
+                    AgentStatus::Killing => "⊘",
                     AgentStatus::Completed => "✓",
                     AgentStatus::Failed => "✗",
                 };
@@ -1734,6 +1739,7 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
     let status_indicator = match agent.status {
         AgentStatus::Starting => ("INITIALIZING", t.muted),
         AgentStatus::Running => ("ACTIVE", t.accent),
+        AgentStatus::Killing => ("KILLING", t.danger),
         AgentStatus::Completed => ("COMPLETE", t.accent),
         AgentStatus::Failed => ("TERMINATED", t.danger),
     };
@@ -1757,7 +1763,7 @@ fn render_agent_stats(f: &mut Frame, area: Rect, agent: &AgentInstance, app: &Ap
             ("(cleaned)", t.muted)
         } else {
             match agent.status {
-                AgentStatus::Starting | AgentStatus::Running => ("(active)", t.accent),
+                AgentStatus::Starting | AgentStatus::Running | AgentStatus::Killing => ("(active)", t.accent),
                 _ => ("(pending)", t.warn),
             }
         };
