@@ -475,6 +475,15 @@ fn process_event(
                 );
             }
             app.on_agent_exited(agent_id, exit_code);
+            // When an agent completes successfully, a child issue was likely closed —
+            // check if any parent epics are now eligible for auto-closure.
+            if success {
+                let tx_epic = tx.clone();
+                tokio::spawn(async move {
+                    let result = runtime::close_eligible_epics().await;
+                    let _ = tx_epic.send(AppEvent::EpicCloseResult(result));
+                });
+            }
         }
         AppEvent::AgentPid { agent_id, pid } => {
             debug!(agent_id, pid, event = "agent_pid", "agent process started");
@@ -529,6 +538,35 @@ fn process_event(
         }
         AppEvent::IssueStatusClosed { agent_id } => {
             app.on_issue_closed(agent_id);
+            // Child issue was closed — check if any parent epics are now eligible
+            let tx_epic = tx.clone();
+            tokio::spawn(async move {
+                let result = runtime::close_eligible_epics().await;
+                let _ = tx_epic.send(AppEvent::EpicCloseResult(result));
+            });
+        }
+        AppEvent::EpicCloseResult(result) => {
+            match result {
+                Ok(closed_ids) if !closed_ids.is_empty() => {
+                    info!(
+                        closed_epics = %closed_ids.join(","),
+                        event = "epics_auto_closed",
+                        "epics auto-closed after all children completed"
+                    );
+                    app.log(
+                        LogCategory::Complete,
+                        format!("Epic(s) auto-closed: {}", closed_ids.join(", ")),
+                    );
+                    app.alert_message = Some((
+                        format!("EPIC(S) CLOSED: {}", closed_ids.join(", ")),
+                        app.frame_count + 80,
+                    ));
+                }
+                Err(e) => {
+                    warn!(%e, event = "epic_close_failed", "failed to auto-close eligible epics");
+                }
+                _ => {} // No epics were eligible — nothing to do
+            }
         }
         AppEvent::IssueCreateResult(result) => {
             match result {

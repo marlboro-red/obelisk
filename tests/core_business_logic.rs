@@ -265,7 +265,7 @@ fn template_resolve_falls_back_to_builtin() {
 #[test]
 fn template_resolve_each_builtin_type() {
     let dir = PathBuf::from("/tmp/obelisk-test-nonexistent-dir");
-    for itype in ["bug", "feature", "task", "chore", "epic"] {
+    for itype in ["bug", "feature", "task", "chore"] {
         let resolved = templates::resolve(&dir, itype);
         assert!(!resolved.content.is_empty(), "{} template should have content", itype);
         assert!(resolved.name.contains("built-in"));

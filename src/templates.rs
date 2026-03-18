@@ -11,7 +11,8 @@ fn builtin_template(issue_type: &str) -> &'static str {
         "feature" => include_str!("templates/feature.md"),
         "task" => include_str!("templates/task.md"),
         "chore" => include_str!("templates/chore.md"),
-        "epic" => include_str!("templates/epic.md"),
+        // Epic template removed — epics are containers that should never be
+        // directly assigned to agents. Only their children are workable.
         _ => include_str!("templates/task.md"),
     }
 }

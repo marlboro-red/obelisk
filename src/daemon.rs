@@ -6,7 +6,7 @@
 
 use crate::app::{App, SpawnRequest};
 use crate::runtime;
-use crate::types::{AgentStatus, AppEvent};
+use crate::types::{AgentStatus, AppEvent, LogCategory};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -316,6 +316,13 @@ fn process_daemon_event(
                 );
             }
             app.on_agent_exited(agent_id, exit_code);
+            if exit_code == Some(0) {
+                let tx_epic = tx.clone();
+                tokio::spawn(async move {
+                    let result = runtime::close_eligible_epics().await;
+                    let _ = tx_epic.send(AppEvent::EpicCloseResult(result));
+                });
+            }
         }
         AppEvent::AgentPid { agent_id, pid } => {
             debug!(agent_id, pid, event = "agent_pid", "agent process started");
@@ -370,6 +377,30 @@ fn process_daemon_event(
         }
         AppEvent::IssueStatusClosed { agent_id } => {
             app.on_issue_closed(agent_id);
+            let tx_epic = tx.clone();
+            tokio::spawn(async move {
+                let result = runtime::close_eligible_epics().await;
+                let _ = tx_epic.send(AppEvent::EpicCloseResult(result));
+            });
+        }
+        AppEvent::EpicCloseResult(result) => {
+            match result {
+                Ok(closed_ids) if !closed_ids.is_empty() => {
+                    info!(
+                        closed_epics = %closed_ids.join(","),
+                        event = "epics_auto_closed",
+                        "epics auto-closed after all children completed"
+                    );
+                    app.log(
+                        LogCategory::Complete,
+                        format!("Epic(s) auto-closed: {}", closed_ids.join(", ")),
+                    );
+                }
+                Err(e) => {
+                    warn!(%e, event = "epic_close_failed", "failed to auto-close eligible epics");
+                }
+                _ => {}
+            }
         }
         AppEvent::Terminal(_) => {}  // no TUI in daemon mode
         AppEvent::IssueCreateResult(_) => {} // no TUI in daemon mode

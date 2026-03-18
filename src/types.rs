@@ -580,4 +580,6 @@ pub enum AppEvent {
     IssueCreateResult(Result<String, String>),
     /// An agent's beads issue has been polled and found to be closed
     IssueStatusClosed { agent_id: usize },
+    /// Result of `bd epic close-eligible` — carries IDs of epics that were auto-closed
+    EpicCloseResult(Result<Vec<String>, String>),
 }

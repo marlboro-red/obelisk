@@ -439,6 +439,45 @@ pub async fn poll_issue_status(task_id: &str) -> Result<bool, String> {
     Ok(false)
 }
 
+/// Run `bd epic close-eligible` to auto-close any epics whose children are all done.
+/// Returns the list of epic IDs that were closed, or an error message.
+pub async fn close_eligible_epics() -> Result<Vec<String>, String> {
+    let output = Command::new("bd")
+        .args(["epic", "close-eligible", "--json"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run bd epic close-eligible: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("bd epic close-eligible failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return Ok(Vec::new());
+    }
+
+    // Parse the output — expect a JSON array of closed epic IDs or objects
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(arr) = parsed.as_array() {
+            let ids: Vec<String> = arr
+                .iter()
+                .filter_map(|v| {
+                    // Handle both string IDs and objects with an "id" field
+                    v.as_str()
+                        .map(String::from)
+                        .or_else(|| v.get("id").and_then(|id| id.as_str()).map(String::from))
+                })
+                .collect();
+            return Ok(ids);
+        }
+    }
+
+    Ok(Vec::new())
+}
+
 /// Run `git diff` + `git diff --cached` in an agent's worktree and parse the result
 /// into a structured `DiffData`. Returns an empty diff if the worktree doesn't exist.
 pub async fn poll_worktree_diff(worktree_path: &str) -> DiffData {

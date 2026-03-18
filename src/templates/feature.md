@@ -200,6 +200,6 @@ git log --oneline $DEFAULT_BRANCH~3..$DEFAULT_BRANCH   # should show your merge 
 | `.beads/` merge conflicts | `git checkout --theirs .beads/issues.jsonl` then `bd import -i .beads/issues.jsonl` |
 | `bd` can't find database in worktree | Set up `.beads/redirect` per Phase 2 |
 | Issue is blocked | STOP. Report back. Do not work on blocked issues |
-| Already claimed by another agent | Run `bd ready --json` and pick different work |
+| Already claimed by another agent | STOP. Report the conflict and exit — do not pick up other work. Obelisk handles task assignment |
 | Merge lock held too long (>5 min) | May be stale — `rm -rf .obelisk/merge.lock` then re-acquire |
 | Merge conflict after lock acquired | Release lock first (`rm -rf .obelisk/merge.lock`), then abort merge, rebase, and retry |
