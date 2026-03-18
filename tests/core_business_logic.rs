@@ -177,6 +177,76 @@ fn log_category_labels_are_non_empty() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// BeadTask — epic detection
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn bead_task_is_epic_returns_true_for_epic_type() {
+    let task = BeadTask {
+        id: "e-1".into(),
+        title: "Auth System".into(),
+        status: "open".into(),
+        priority: Some(1),
+        issue_type: Some("epic".into()),
+        assignee: None,
+        labels: None,
+        description: None,
+        created_at: None,
+    };
+    assert!(task.is_epic());
+}
+
+#[test]
+fn bead_task_is_epic_returns_false_for_task_type() {
+    let task = BeadTask {
+        id: "t-1".into(),
+        title: "Fix bug".into(),
+        status: "open".into(),
+        priority: None,
+        issue_type: Some("task".into()),
+        assignee: None,
+        labels: None,
+        description: None,
+        created_at: None,
+    };
+    assert!(!task.is_epic());
+}
+
+#[test]
+fn bead_task_is_epic_returns_false_for_none_type() {
+    let task = BeadTask {
+        id: "t-2".into(),
+        title: "Default type".into(),
+        status: "open".into(),
+        priority: None,
+        issue_type: None,
+        assignee: None,
+        labels: None,
+        description: None,
+        created_at: None,
+    };
+    assert!(!task.is_epic());
+}
+
+#[test]
+fn bead_task_is_epic_returns_false_for_other_types() {
+    for itype in ["bug", "feature", "chore", "decision", "message"] {
+        let task = BeadTask {
+            id: "t-x".into(),
+            title: "Something".into(),
+            status: "open".into(),
+            priority: None,
+            issue_type: Some(itype.into()),
+            assignee: None,
+            labels: None,
+            description: None,
+            created_at: None,
+        };
+        assert!(!task.is_epic(), "is_epic() should be false for type '{}'", itype);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Templates — resolution and interpolation
 // ═══════════════════════════════════════════════════════════════════
 

@@ -1230,6 +1230,9 @@ impl App {
         let new_tasks: Vec<BeadTask> = tasks
             .into_iter()
             .filter(|t| !self.claimed_task_ids.contains(&t.id))
+            // Epics are containers, not directly workable — only their children
+            // (tasks, bugs, features, etc.) should be assigned to agents.
+            .filter(|t| !t.is_epic())
             .collect();
         let new_count = new_tasks
             .iter()
@@ -1774,6 +1777,13 @@ impl App {
         }
 
         let task = self.selected_task()?.clone();
+        if task.is_epic() {
+            self.log(
+                LogCategory::Alert,
+                format!("Cannot spawn agent for epic {} — epics are containers, work their children instead", task.id),
+            );
+            return None;
+        }
         let runtime = self.selected_runtime;
 
         let model = self.selected_model_for(runtime).to_string();
@@ -1906,6 +1916,7 @@ impl App {
         let best_idx = filtered
             .iter()
             .enumerate()
+            .filter(|(_, t)| !t.is_epic())
             .filter(|(_, t)| !blocked_ids.contains(&t.id) && !dep_blocked.contains(&t.id))
             .min_by_key(|(_, t)| t.priority.unwrap_or(3))
             .map(|(i, _)| i);
@@ -3990,6 +4001,65 @@ mod tests {
         assert!(app.last_poll_ok);
         assert_eq!(app.consecutive_poll_failures, 0);
         assert!(app.last_poll_error.is_none());
+    }
+
+    #[test]
+    fn on_poll_result_filters_out_epics() {
+        let mut app = App::new();
+
+        let tasks = vec![
+            BeadTask { id: "e-1".into(), title: "Epic".into(), status: "open".into(),
+                       priority: Some(1), issue_type: Some("epic".into()), assignee: None,
+                       labels: None, description: None, created_at: None },
+            BeadTask { id: "t-1".into(), title: "Task".into(), status: "open".into(),
+                       priority: Some(2), issue_type: Some("task".into()), assignee: None,
+                       labels: None, description: None, created_at: None },
+            BeadTask { id: "b-1".into(), title: "Bug".into(), status: "open".into(),
+                       priority: Some(0), issue_type: Some("bug".into()), assignee: None,
+                       labels: None, description: None, created_at: None },
+        ];
+
+        app.on_poll_result(tasks);
+
+        assert_eq!(app.ready_tasks.len(), 2, "epic should be filtered out");
+        assert!(app.ready_tasks.iter().all(|t| !t.is_epic()),
+                "no epics should be in the ready queue");
+        assert!(app.ready_tasks.iter().any(|t| t.id == "t-1"));
+        assert!(app.ready_tasks.iter().any(|t| t.id == "b-1"));
+    }
+
+    #[test]
+    fn on_poll_result_filters_epics_with_none_issue_type_kept() {
+        let mut app = App::new();
+
+        let tasks = vec![
+            BeadTask { id: "e-1".into(), title: "Epic".into(), status: "open".into(),
+                       priority: Some(1), issue_type: Some("epic".into()), assignee: None,
+                       labels: None, description: None, created_at: None },
+            BeadTask { id: "t-1".into(), title: "Default type".into(), status: "open".into(),
+                       priority: None, issue_type: None, assignee: None,
+                       labels: None, description: None, created_at: None },
+        ];
+
+        app.on_poll_result(tasks);
+
+        assert_eq!(app.ready_tasks.len(), 1);
+        assert_eq!(app.ready_tasks[0].id, "t-1",
+                   "tasks with no issue_type (defaults to task) should be kept");
+    }
+
+    #[test]
+    fn get_spawn_info_blocks_epic() {
+        let mut app = App::new();
+        app.ready_tasks = vec![
+            BeadTask { id: "e-1".into(), title: "Epic".into(), status: "open".into(),
+                       priority: Some(1), issue_type: Some("epic".into()), assignee: None,
+                       labels: None, description: None, created_at: None },
+        ];
+        app.task_list_state.select(Some(0));
+
+        let result = app.get_spawn_info();
+        assert!(result.is_none(), "should refuse to spawn an agent for an epic");
     }
 
     #[test]

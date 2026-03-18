@@ -50,6 +50,14 @@ pub struct BeadTask {
     pub created_at: Option<String>,
 }
 
+impl BeadTask {
+    /// Returns true if this issue is an epic (a container for child issues).
+    /// Epics should never be directly assigned to agents — only their children.
+    pub fn is_epic(&self) -> bool {
+        self.issue_type.as_deref() == Some("epic")
+    }
+}
+
 /// A dependency record returned by `bd list -s blocked --json`.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
