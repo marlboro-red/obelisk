@@ -404,9 +404,11 @@ impl App {
             let _ = file.write_all(&agent.raw_pty_log[flushed..new_bytes]);
         }
 
-        // Update flushed byte count (need mutable borrow)
+        // Drain flushed bytes from memory to bound growth (obelisk-ufp).
+        // The data is safely on disk now, so we can release the memory.
         if let Some(agent) = self.agents.iter_mut().find(|a| a.id == agent_id) {
-            agent.pty_log_flushed_bytes = new_bytes;
+            agent.raw_pty_log.drain(..new_bytes);
+            agent.pty_log_flushed_bytes = 0;
         }
     }
 
@@ -482,16 +484,29 @@ impl App {
         }
 
         // ── Section 2: Raw PTY output ──
+        // Since flushed bytes are drained from memory (obelisk-ufp), read from
+        // the persisted log file on disk which contains the complete history.
         content.push_str("\n════════════════════════════════════════════════════════════════════════════════\n");
         content.push_str("RAW PTY OUTPUT\n");
         content.push_str("════════════════════════════════════════════════════════════════════════════════\n\n");
 
-        if agent.raw_pty_log.is_empty() {
+        let persisted_log = PathBuf::from(".obelisk")
+            .join("logs")
+            .join(format!("agent-{:02}-{}.log", agent.unit_number, agent.task.id));
+        let disk_data = std::fs::read(&persisted_log).ok();
+        let has_disk = disk_data.as_ref().map_or(false, |d| !d.is_empty());
+        let has_mem = !agent.raw_pty_log.is_empty();
+
+        if !has_disk && !has_mem {
             content.push_str("(No raw PTY data captured)\n");
         } else {
-            content.push_str(&format!("Raw bytes: {} total\n\n", agent.raw_pty_log.len()));
-            // Write raw bytes as lossy UTF-8 (preserves ANSI escape sequences)
-            content.push_str(&String::from_utf8_lossy(&agent.raw_pty_log));
+            if has_disk {
+                content.push_str(&String::from_utf8_lossy(disk_data.as_ref().unwrap()));
+            }
+            // Append any unflushed bytes still in memory
+            if has_mem {
+                content.push_str(&String::from_utf8_lossy(&agent.raw_pty_log));
+            }
         }
 
         // Write to file
