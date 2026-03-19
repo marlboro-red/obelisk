@@ -17,9 +17,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 const PORT_FILE: &str = ".beads/obelisk.port";
+const TOKEN_FILE: &str = ".beads/obelisk.token";
 
 /// JSON command sent by CLI clients over the socket.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd")]
 pub enum DaemonCmd {
     #[serde(rename = "status")]
@@ -44,9 +45,22 @@ pub struct DaemonResp {
     pub data: Option<serde_json::Value>,
 }
 
+/// Authenticated request envelope wrapping a token and a command.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DaemonRequest {
+    pub token: String,
+    #[serde(flatten)]
+    pub cmd: DaemonCmd,
+}
+
 /// Path to the port file used by the daemon for client discovery.
 pub fn port_file_path() -> PathBuf {
     PathBuf::from(PORT_FILE)
+}
+
+/// Path to the token file used for daemon authentication.
+pub fn token_file_path() -> PathBuf {
+    PathBuf::from(TOKEN_FILE)
 }
 
 /// Read the daemon's TCP port from the port file.
@@ -58,13 +72,33 @@ pub fn read_daemon_port() -> Result<u16, String> {
         .map_err(|e| format!("invalid port in {}: {}", path.display(), e))
 }
 
+/// Read the daemon's authentication token from the token file.
+pub fn read_daemon_token() -> Result<String, String> {
+    let path = token_file_path();
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|_| "daemon token file not found. Is the daemon running?".to_string())?;
+    Ok(contents.trim().to_string())
+}
+
+/// Generate a cryptographically random hex token (32 bytes = 64 hex chars).
+fn generate_token() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let bytes: [u8; 32] = rng.gen();
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// Run the daemon event loop. Blocks until a `stop` command is received or the
 /// process is signalled.
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let port_file = port_file_path();
-    // Clean up stale port file
+    let token_file = token_file_path();
+    // Clean up stale files
     if port_file.exists() {
         std::fs::remove_file(&port_file)?;
+    }
+    if token_file.exists() {
+        std::fs::remove_file(&token_file)?;
     }
     // Ensure parent directory exists
     if let Some(parent) = port_file.parent() {
@@ -79,6 +113,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&port_file, std::fs::Permissions::from_mode(0o600))?;
     }
+
+    // Generate and write authentication token
+    let daemon_token = generate_token();
+    std::fs::write(&token_file, &daemon_token)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))?;
+    }
+
     info!("daemon listening on 127.0.0.1:{}", port);
     eprintln!("obelisk daemon listening on 127.0.0.1:{}", port);
 
@@ -144,11 +188,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (cmd_tx, mut cmd_rx) =
         mpsc::unbounded_channel::<(DaemonCmd, tokio::sync::oneshot::Sender<DaemonResp>)>();
 
+    let accept_token = daemon_token.clone();
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((mut stream, _)) => {
                     let cmd_tx = cmd_tx.clone();
+                    let expected_token = accept_token.clone();
                     tokio::spawn(async move {
                         const MAX_CMD_SIZE: usize = 64 * 1024; // 64KB
                         let mut buf = Vec::with_capacity(4096);
@@ -176,12 +222,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 Err(_) => return,
                             }
                         }
-                        let cmd: DaemonCmd = match serde_json::from_slice(&buf) {
-                            Ok(c) => c,
+                        let request: DaemonRequest = match serde_json::from_slice(&buf) {
+                            Ok(r) => r,
                             Err(e) => {
                                 let resp = DaemonResp {
                                     ok: false,
-                                    message: Some(format!("invalid command: {}", e)),
+                                    message: Some(format!("invalid request: {}", e)),
                                     data: None,
                                 };
                                 if let Ok(json) = serde_json::to_string(&resp) {
@@ -190,8 +236,21 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 return;
                             }
                         };
+                        // Validate authentication token
+                        if request.token != expected_token {
+                            warn!("rejected unauthenticated connection");
+                            let resp = DaemonResp {
+                                ok: false,
+                                message: Some("authentication failed: invalid token".to_string()),
+                                data: None,
+                            };
+                            if let Ok(json) = serde_json::to_string(&resp) {
+                                let _ = stream.write_all(json.as_bytes()).await;
+                            }
+                            return;
+                        }
                         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                        if cmd_tx.send((cmd, resp_tx)).is_err() {
+                        if cmd_tx.send((request.cmd, resp_tx)).is_err() {
                             return;
                         }
                         if let Ok(resp) = resp_rx.await {
@@ -239,8 +298,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     app.kill_all_agents();
     app.save_session();
 
-    // Clean up port file
+    // Clean up port and token files
     let _ = std::fs::remove_file(&port_file);
+    let _ = std::fs::remove_file(&token_file);
 
     Ok(())
 }
