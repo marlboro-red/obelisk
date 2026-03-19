@@ -100,13 +100,81 @@ impl App {
                 }
             }
         }
-        self.ready_tasks = new_tasks;
+        // Merge instead of replacing: keep tasks that disappeared from the poll
+        // result for one additional cycle (grace period) to prevent silent data
+        // loss from partial poll results (timeout, pagination, transient error).
+        let new_task_ids: std::collections::HashSet<&str> =
+            new_tasks.iter().map(|t| t.id.as_str()).collect();
+
+        // Grace tasks still missing after their grace cycle — truly gone
+        let expired: Vec<&BeadTask> = self
+            .grace_tasks
+            .iter()
+            .filter(|t| !new_task_ids.contains(t.id.as_str()))
+            .collect();
+        if !expired.is_empty() {
+            let ids: Vec<&str> = expired.iter().map(|t| t.id.as_str()).collect();
+            info!(
+                expired_ids = %ids.join(","),
+                count = expired.len(),
+                event = "grace_tasks_expired",
+                "tasks removed after grace period"
+            );
+            self.log(
+                LogCategory::Poll,
+                format!(
+                    "{} task(s) confirmed removed: {}",
+                    expired.len(),
+                    ids.join(", ")
+                ),
+            );
+        }
+
+        // Tasks in ready_tasks that disappeared from this poll and were NOT
+        // already in the grace list (avoid double-gracing)
+        let prev_grace_ids: std::collections::HashSet<&str> =
+            self.grace_tasks.iter().map(|t| t.id.as_str()).collect();
+        let disappeared: Vec<BeadTask> = self
+            .ready_tasks
+            .iter()
+            .filter(|t| {
+                !new_task_ids.contains(t.id.as_str())
+                    && !prev_grace_ids.contains(t.id.as_str())
+            })
+            .cloned()
+            .collect();
+        if !disappeared.is_empty() {
+            let ids: Vec<&str> = disappeared.iter().map(|t| t.id.as_str()).collect();
+            info!(
+                disappeared_ids = %ids.join(","),
+                count = disappeared.len(),
+                event = "tasks_entered_grace",
+                "previously-known tasks missing from poll, entering grace period"
+            );
+            self.log(
+                LogCategory::Poll,
+                format!(
+                    "{} task(s) missing from poll, retaining for 1 cycle: {}",
+                    disappeared.len(),
+                    ids.join(", ")
+                ),
+            );
+        }
+
+        // Update grace list: only the newly disappeared tasks
+        self.grace_tasks = disappeared;
+
+        // Build final ready list: new poll results + grace-retained tasks
+        let mut merged = new_tasks;
+        merged.extend(self.grace_tasks.iter().cloned());
+        self.ready_tasks = merged;
         self.sort_ready_tasks();
         self.log(
             LogCategory::Poll,
             format!(
-                "Scan complete: {} ready, {} active",
+                "Scan complete: {} ready ({} grace), {} active",
                 self.ready_tasks.len(),
+                self.grace_tasks.len(),
                 self.active_agent_count()
             ),
         );

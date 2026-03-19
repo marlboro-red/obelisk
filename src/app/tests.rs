@@ -610,6 +610,137 @@ fn on_poll_failed_increments_failure_count() {
     assert_eq!(app.consecutive_poll_failures, 2);
 }
 
+// ── Grace period (partial poll protection) ──────────────────
+
+#[test]
+fn on_poll_result_grace_retains_disappeared_tasks_for_one_cycle() {
+    let mut app = App::new();
+
+    // Poll 1: three tasks
+    let tasks = vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+        BeadTask { id: "t-2".into(), title: "B".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+        BeadTask { id: "t-3".into(), title: "C".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ];
+    app.on_poll_result(tasks);
+    assert_eq!(app.ready_tasks.len(), 3);
+    assert!(app.grace_tasks.is_empty());
+
+    // Poll 2: t-3 disappears — should be retained via grace
+    let tasks = vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+        BeadTask { id: "t-2".into(), title: "B".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ];
+    app.on_poll_result(tasks);
+    assert_eq!(app.ready_tasks.len(), 3, "disappeared task should be retained via grace");
+    assert_eq!(app.grace_tasks.len(), 1);
+    assert_eq!(app.grace_tasks[0].id, "t-3");
+    assert!(app.ready_tasks.iter().any(|t| t.id == "t-3"));
+}
+
+#[test]
+fn on_poll_result_grace_expires_after_two_consecutive_misses() {
+    let mut app = App::new();
+
+    // Poll 1: two tasks
+    app.on_poll_result(vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+        BeadTask { id: "t-2".into(), title: "B".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ]);
+
+    // Poll 2: t-2 disappears → enters grace
+    app.on_poll_result(vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ]);
+    assert_eq!(app.ready_tasks.len(), 2, "grace retains t-2");
+
+    // Poll 3: t-2 still missing → grace expires, truly removed
+    app.on_poll_result(vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ]);
+    assert_eq!(app.ready_tasks.len(), 1, "t-2 should be removed after grace expired");
+    assert!(app.grace_tasks.is_empty());
+    assert_eq!(app.ready_tasks[0].id, "t-1");
+}
+
+#[test]
+fn on_poll_result_grace_task_reappears_before_expiry() {
+    let mut app = App::new();
+
+    // Poll 1
+    app.on_poll_result(vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+        BeadTask { id: "t-2".into(), title: "B".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ]);
+
+    // Poll 2: t-2 disappears
+    app.on_poll_result(vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ]);
+    assert_eq!(app.grace_tasks.len(), 1);
+
+    // Poll 3: t-2 reappears — should clear grace and keep both
+    app.on_poll_result(vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+        BeadTask { id: "t-2".into(), title: "B".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ]);
+    assert_eq!(app.ready_tasks.len(), 2);
+    assert!(app.grace_tasks.is_empty(), "grace should be clear after task reappeared");
+}
+
+#[test]
+fn on_poll_result_empty_result_retains_all_via_grace() {
+    let mut app = App::new();
+
+    // Poll 1: three tasks
+    app.on_poll_result(vec![
+        BeadTask { id: "t-1".into(), title: "A".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+        BeadTask { id: "t-2".into(), title: "B".into(), status: "open".into(),
+                   priority: None, issue_type: None, assignee: None, labels: None,
+                   description: None, created_at: None },
+    ]);
+
+    // Poll 2: empty result (e.g. timeout) — all tasks retained via grace
+    app.on_poll_result(vec![]);
+    assert_eq!(app.ready_tasks.len(), 2, "all tasks should be retained via grace on empty poll");
+    assert_eq!(app.grace_tasks.len(), 2);
+
+    // Poll 3: still empty — now truly gone
+    app.on_poll_result(vec![]);
+    assert_eq!(app.ready_tasks.len(), 0, "grace expired, all tasks removed");
+    assert!(app.grace_tasks.is_empty());
+}
+
 // ── Sorting ──────────────────────────────────────────────────
 
 #[test]
