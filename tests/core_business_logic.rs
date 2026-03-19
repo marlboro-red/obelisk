@@ -3,7 +3,7 @@
 //! These tests exercise the pure logic in `types.rs`, `templates.rs`, `daemon.rs`,
 //! `theme.rs`, and `app.rs` — everything that doesn't require a real PTY or external CLI.
 
-use obelisk::daemon::{DaemonCmd, DaemonResp};
+use obelisk::daemon::{DaemonCmd, DaemonRequest, DaemonResp};
 use obelisk::templates;
 use obelisk::types::*;
 
@@ -675,7 +675,50 @@ fn daemon_cmd_kill_rejects_missing_agent_id() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Daemon port file
+// Daemon authenticated request envelope
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn daemon_request_serialization_round_trip() {
+    let request = DaemonRequest {
+        token: "abc123".into(),
+        cmd: DaemonCmd::Status,
+    };
+    let json = serde_json::to_string(&request).unwrap();
+    assert!(json.contains("abc123"));
+    assert!(json.contains(r#""cmd":"status"#));
+    let restored: DaemonRequest = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.token, "abc123");
+    assert!(matches!(restored.cmd, DaemonCmd::Status));
+}
+
+#[test]
+fn daemon_request_with_spawn_command() {
+    let request = DaemonRequest {
+        token: "secret-token".into(),
+        cmd: DaemonCmd::Spawn { issue_id: "obelisk-xyz".into() },
+    };
+    let json = serde_json::to_string(&request).unwrap();
+    assert!(json.contains("secret-token"));
+    assert!(json.contains("obelisk-xyz"));
+    let restored: DaemonRequest = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.token, "secret-token");
+    match restored.cmd {
+        DaemonCmd::Spawn { issue_id } => assert_eq!(issue_id, "obelisk-xyz"),
+        _ => panic!("expected Spawn variant"),
+    }
+}
+
+#[test]
+fn daemon_request_rejects_missing_token() {
+    // A bare command without a token field should fail to parse as DaemonRequest
+    let json = r#"{"cmd":"status"}"#;
+    let result = serde_json::from_str::<DaemonRequest>(json);
+    assert!(result.is_err());
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Daemon port & token files
 // ═══════════════════════════════════════════════════════════════════
 
 #[test]
@@ -683,6 +726,13 @@ fn port_file_path_is_under_beads() {
     let path = obelisk::daemon::port_file_path();
     assert!(path.to_str().unwrap().contains(".beads"));
     assert!(path.to_str().unwrap().contains("obelisk.port"));
+}
+
+#[test]
+fn token_file_path_is_under_beads() {
+    let path = obelisk::daemon::token_file_path();
+    assert!(path.to_str().unwrap().contains(".beads"));
+    assert!(path.to_str().unwrap().contains("obelisk.token"));
 }
 
 #[test]

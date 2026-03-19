@@ -1,19 +1,24 @@
 //! CLI client that sends commands to a running obelisk daemon via TCP.
 
-use crate::daemon::{DaemonCmd, DaemonResp};
+use crate::daemon::{DaemonCmd, DaemonRequest, DaemonResp};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-/// Connect to the daemon, send a command, and return the response.
+/// Connect to the daemon, send an authenticated command, and return the response.
 async fn send_cmd(cmd: &DaemonCmd) -> Result<DaemonResp, String> {
     let port = crate::daemon::read_daemon_port()?;
+    let token = crate::daemon::read_daemon_token()?;
 
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
         .await
         .map_err(|e| format!("failed to connect to daemon: {}", e))?;
 
+    let request = DaemonRequest {
+        token,
+        cmd: cmd.clone(),
+    };
     let payload =
-        serde_json::to_vec(&cmd).map_err(|e| format!("failed to serialize command: {}", e))?;
+        serde_json::to_vec(&request).map_err(|e| format!("failed to serialize command: {}", e))?;
     stream
         .write_all(&payload)
         .await
