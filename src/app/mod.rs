@@ -601,6 +601,9 @@ pub struct App {
     pub theme_config: ThemeConfig,
 
     // Blocked/incoming issues panel
+    /// Tasks from the previous poll that disappeared — kept for one extra cycle
+    /// before removal to avoid silent data loss from partial poll results.
+    pub grace_tasks: Vec<BeadTask>,
     pub blocked_tasks: Vec<BlockedTask>,
     pub blocked_list_state: ListState,
 

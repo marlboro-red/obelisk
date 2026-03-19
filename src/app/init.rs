@@ -193,6 +193,7 @@ impl App {
             recent_completions: VecDeque::with_capacity(10),
             theme,
             theme_config,
+            grace_tasks: Vec::new(),
             blocked_tasks: Vec::new(),
             blocked_list_state: ListState::default(),
             layout_areas: LayoutAreas::default(),
