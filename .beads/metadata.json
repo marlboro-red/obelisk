@@ -2,5 +2,6 @@
   "database": "dolt",
   "backend": "dolt",
   "dolt_mode": "server",
-  "dolt_database": "obelisk"
+  "dolt_database": "obelisk",
+  "project_id": "a2d4fc7f-01c1-4a6f-8e92-66d63503e859"
 }
