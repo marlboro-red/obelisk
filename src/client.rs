@@ -23,11 +23,20 @@ async fn send_cmd(cmd: &DaemonCmd) -> Result<DaemonResp, String> {
         .await
         .map_err(|e| format!("failed to shutdown write: {}", e))?;
 
+    const MAX_RESP_SIZE: u64 = 1024 * 1024; // 1MB
     let mut buf = Vec::new();
     stream
+        .take(MAX_RESP_SIZE + 1)
         .read_to_end(&mut buf)
         .await
         .map_err(|e| format!("failed to read response: {}", e))?;
+
+    if buf.len() as u64 > MAX_RESP_SIZE {
+        return Err(format!(
+            "daemon response exceeds maximum size ({} bytes)",
+            MAX_RESP_SIZE
+        ));
+    }
 
     serde_json::from_slice(&buf).map_err(|e| format!("failed to parse response: {}", e))
 }

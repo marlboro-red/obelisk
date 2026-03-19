@@ -150,12 +150,33 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 Ok((mut stream, _)) => {
                     let cmd_tx = cmd_tx.clone();
                     tokio::spawn(async move {
-                        let mut buf = vec![0u8; 8192];
-                        let n = match stream.read(&mut buf).await {
-                            Ok(n) => n,
-                            Err(_) => return,
-                        };
-                        let cmd: DaemonCmd = match serde_json::from_slice(&buf[..n]) {
+                        const MAX_CMD_SIZE: usize = 64 * 1024; // 64KB
+                        let mut buf = Vec::with_capacity(4096);
+                        let mut tmp = [0u8; 4096];
+                        loop {
+                            match stream.read(&mut tmp).await {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    buf.extend_from_slice(&tmp[..n]);
+                                    if buf.len() > MAX_CMD_SIZE {
+                                        let resp = DaemonResp {
+                                            ok: false,
+                                            message: Some(format!(
+                                                "command exceeds maximum size ({} bytes)",
+                                                MAX_CMD_SIZE
+                                            )),
+                                            data: None,
+                                        };
+                                        if let Ok(json) = serde_json::to_string(&resp) {
+                                            let _ = stream.write_all(json.as_bytes()).await;
+                                        }
+                                        return;
+                                    }
+                                }
+                                Err(_) => return,
+                            }
+                        }
+                        let cmd: DaemonCmd = match serde_json::from_slice(&buf) {
                             Ok(c) => c,
                             Err(e) => {
                                 let resp = DaemonResp {
