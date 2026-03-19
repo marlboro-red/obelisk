@@ -617,8 +617,111 @@ pub fn break_merge_lock() -> Result<(), String> {
     if !lock_dir.exists() {
         return Err("No merge lock to break".to_string());
     }
-    std::fs::remove_dir_all(lock_dir)
+    // Reject symlinks to prevent symlink attacks (removing arbitrary directories).
+    if lock_dir.is_symlink() {
+        return Err("Refusing to break merge lock: path is a symlink".to_string());
+    }
+    // Remove contents individually then the directory itself, avoiding remove_dir_all
+    // which follows symlinks inside the directory.
+    if let Ok(entries) = std::fs::read_dir(lock_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_symlink() {
+                return Err(format!(
+                    "Refusing to break merge lock: symlink found inside lock directory: {}",
+                    path.display()
+                ));
+            }
+            if path.is_file() {
+                std::fs::remove_file(&path)
+                    .map_err(|e| format!("Failed to remove {}: {}", path.display(), e))?;
+            }
+        }
+    }
+    std::fs::remove_dir(lock_dir)
         .map_err(|e| format!("Failed to break merge lock: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn break_merge_lock_rejects_symlink() {
+        // Create a target directory that should NOT be deleted
+        let target = tempfile::tempdir().unwrap();
+        let sentinel = target.path().join("precious_file.txt");
+        std::fs::write(&sentinel, "do not delete").unwrap();
+
+        // Ensure .obelisk exists
+        std::fs::create_dir_all(".obelisk").unwrap();
+
+        // Clean up any pre-existing lock
+        let _ = std::fs::remove_dir_all(MERGE_LOCK_DIR);
+
+        // Create a symlink at the lock path pointing to the target
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target.path(), MERGE_LOCK_DIR).unwrap();
+
+        // break_merge_lock should refuse to operate on a symlink
+        let result = break_merge_lock();
+        assert!(result.is_err(), "should reject symlink lock path");
+        assert!(
+            result.unwrap_err().contains("symlink"),
+            "error should mention symlink"
+        );
+
+        // The target directory and its contents must still exist
+        assert!(sentinel.exists(), "symlink target files must not be deleted");
+
+        // Clean up the symlink itself
+        let _ = std::fs::remove_file(MERGE_LOCK_DIR);
+    }
+
+    #[test]
+    fn break_merge_lock_rejects_symlink_inside_lock_dir() {
+        let target = tempfile::tempdir().unwrap();
+        let sentinel = target.path().join("precious_file.txt");
+        std::fs::write(&sentinel, "do not delete").unwrap();
+
+        // Create a real lock directory with a symlink inside it
+        let _ = std::fs::remove_dir_all(MERGE_LOCK_DIR);
+        std::fs::create_dir_all(MERGE_LOCK_DIR).unwrap();
+
+        #[cfg(unix)]
+        {
+            let inner_symlink = std::path::Path::new(MERGE_LOCK_DIR).join("sneaky");
+            std::os::unix::fs::symlink(target.path(), &inner_symlink).unwrap();
+        }
+
+        let result = break_merge_lock();
+        assert!(result.is_err(), "should reject lock dir containing symlinks");
+
+        // Target must still exist
+        assert!(sentinel.exists(), "symlink target files must not be deleted");
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(MERGE_LOCK_DIR);
+    }
+
+    #[test]
+    fn break_merge_lock_removes_normal_lock() {
+        // Create a normal lock directory with an owner file
+        let _ = std::fs::remove_dir_all(MERGE_LOCK_DIR);
+        std::fs::create_dir_all(MERGE_LOCK_DIR).unwrap();
+        std::fs::write(
+            std::path::Path::new(MERGE_LOCK_DIR).join("owner"),
+            "test-issue",
+        )
+        .unwrap();
+
+        let result = break_merge_lock();
+        assert!(result.is_ok(), "should remove normal lock directory");
+        assert!(
+            !std::path::Path::new(MERGE_LOCK_DIR).exists(),
+            "lock directory should be removed"
+        );
+    }
 }
 
 fn extract_stat_number(line: &str, keyword: &str) -> Option<usize> {
