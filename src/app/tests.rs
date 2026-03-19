@@ -2022,3 +2022,36 @@ fn merge_queue_multiple_agents_tracks_position() {
     assert_eq!(app.merge_queue.len(), 1);
     assert_eq!(app.merge_queue[0].agent_id, 11);
 }
+
+#[test]
+fn persist_pty_log_drains_flushed_bytes() {
+    // Regression test for obelisk-ufp: raw_pty_log must not grow unboundedly.
+    // After persist_agent_pty_log flushes to disk, the flushed bytes should be
+    // drained from the in-memory Vec.
+    let mut app = App::new();
+    app.agents.push(test_agent(50, AgentStatus::Running));
+
+    // Simulate receiving PTY data
+    let chunk = vec![b'A'; 4096];
+    app.on_agent_pty_data(50, &chunk);
+    assert_eq!(app.agents[0].raw_pty_log.len(), 4096);
+    assert_eq!(app.agents[0].pty_log_flushed_bytes, 0);
+
+    // Flush to disk
+    app.persist_agent_pty_log(50);
+
+    // After flush, in-memory buffer should be drained
+    assert_eq!(app.agents[0].raw_pty_log.len(), 0, "raw_pty_log should be empty after flush");
+    assert_eq!(app.agents[0].pty_log_flushed_bytes, 0, "flushed counter should reset to 0");
+
+    // Simulate more data arriving after flush
+    app.on_agent_pty_data(50, &[b'B'; 2048]);
+    assert_eq!(app.agents[0].raw_pty_log.len(), 2048);
+
+    // Second flush should also drain
+    app.persist_agent_pty_log(50);
+    assert_eq!(app.agents[0].raw_pty_log.len(), 0, "raw_pty_log should be empty after second flush");
+
+    // Clean up the test log file
+    let _ = std::fs::remove_dir_all(".obelisk/logs");
+}
