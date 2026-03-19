@@ -20,6 +20,8 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, info_span, warn};
 use types::{AgentStatus, AppEvent, LogCategory, View, Focus};
 
@@ -165,28 +167,45 @@ async fn run_app(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 
+    // Shutdown infrastructure: token signals tasks to stop, tracker awaits completion
+    let shutdown_token = CancellationToken::new();
+    let task_tracker = TaskTracker::new();
+
     // Terminal event reader (blocking I/O, so use spawn_blocking)
     let tx_term = tx.clone();
-    tokio::task::spawn_blocking(move || {
-        loop {
-            if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
-                if let Ok(ev) = event::read() {
-                    if tx_term.send(AppEvent::Terminal(ev)).is_err() {
-                        break;
+    let token = shutdown_token.clone();
+    task_tracker.spawn(async move {
+        tokio::task::spawn_blocking(move || {
+            loop {
+                if token.is_cancelled() {
+                    break;
+                }
+                if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
+                    if let Ok(ev) = event::read() {
+                        if tx_term.send(AppEvent::Terminal(ev)).is_err() {
+                            break;
+                        }
                     }
                 }
             }
-        }
+        })
+        .await
+        .ok();
     });
 
     // Tick timer
     let tx_tick = tx.clone();
-    tokio::spawn(async move {
+    let token = shutdown_token.clone();
+    task_tracker.spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(TICK_RATE_MS));
         loop {
-            interval.tick().await;
-            if tx_tick.send(AppEvent::Tick).is_err() {
-                break;
+            tokio::select! {
+                _ = token.cancelled() => break,
+                _ = interval.tick() => {
+                    if tx_tick.send(AppEvent::Tick).is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -199,9 +218,13 @@ async fn run_app(
     let tx_blocked_poll = tx.clone();
     let tx_dep_poll = tx.clone();
     let poller_interval = Arc::clone(&shared_poll_interval);
-    tokio::spawn(async move {
+    let token = shutdown_token.clone();
+    task_tracker.spawn(async move {
         let mut cycle: u64 = 0;
         loop {
+            if token.is_cancelled() {
+                break;
+            }
             match runtime::poll_ready().await {
                 Ok(tasks) => {
                     if tx_poll.send(AppEvent::PollResult(tasks)).is_err() {
@@ -229,13 +252,16 @@ async fn run_app(
             }
             cycle += 1;
             let secs = poller_interval.load(Ordering::Relaxed);
-            tokio::time::sleep(tokio::time::Duration::from_secs(secs)).await;
+            tokio::select! {
+                _ = token.cancelled() => break,
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(secs)) => {}
+            }
         }
     });
 
     // Startup worktree scan — warn if orphaned agent worktrees exist from a previous session
     let tx_wt = tx.clone();
-    tokio::spawn(async move {
+    task_tracker.spawn(async move {
         let worktrees = runtime::scan_agent_worktrees().await;
         if !worktrees.is_empty() {
             let paths: Vec<String> = worktrees.into_iter().map(|(p, _)| p).collect();
@@ -258,7 +284,7 @@ async fn run_app(
                 if matches!(event, AppEvent::Tick | AppEvent::Terminal(_)) {
                     needs_render = true;
                 }
-                process_event(&mut app, event, &tx, &shared_poll_interval);
+                process_event(&mut app, event, &tx, &shared_poll_interval, &task_tracker);
             }
             None => break,
         }
@@ -268,7 +294,7 @@ async fn run_app(
             if matches!(event, AppEvent::Tick | AppEvent::Terminal(_)) {
                 needs_render = true;
             }
-            process_event(&mut app, event, &tx, &shared_poll_interval);
+            process_event(&mut app, event, &tx, &shared_poll_interval, &task_tracker);
             if app.should_quit {
                 break;
             }
@@ -309,11 +335,27 @@ async fn run_app(
         uptime_secs = (chrono::Local::now() - app.session_started_at).num_seconds(),
         "session ending — shutting down"
     );
-    app.save_config();
+
+    // Signal all tracked tasks to stop
+    shutdown_token.cancel();
+
+    // Kill agent processes — this causes PTY readers and exit watchers to complete
     app.kill_all_agents();
 
-    // Persist session record
+    app.save_config();
     app.save_session();
+
+    // Wait for all tracked tasks to finish (with timeout)
+    task_tracker.close();
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(5),
+        task_tracker.wait(),
+    )
+    .await
+    {
+        Ok(()) => info!("all background tasks completed cleanly"),
+        Err(_) => warn!("shutdown timeout: some tasks did not complete within 5s"),
+    }
 
     Ok(())
 }
@@ -323,10 +365,11 @@ fn process_event(
     event: AppEvent,
     tx: &mpsc::UnboundedSender<AppEvent>,
     shared_poll_interval: &Arc<AtomicU64>,
+    tracker: &TaskTracker,
 ) {
     match event {
         AppEvent::Terminal(Event::Key(key)) => {
-            handle_key(app, key, tx);
+            handle_key(app, key, tx, tracker);
         }
         AppEvent::Tick => {
             app.on_tick();
@@ -338,7 +381,7 @@ fn process_event(
 
             if app.auto_spawn {
                 while let Some(req) = app.get_auto_spawn_info() {
-                    tokio::spawn(spawn_agent_process(tx.clone(), req));
+                    tracker.spawn(spawn_agent_process(tx.clone(), req, tracker.clone()));
                 }
             }
 
@@ -352,7 +395,7 @@ fn process_event(
             {
                 app.worktree_last_scan_frame = app.frame_count;
                 let tx_wt = tx.clone();
-                tokio::spawn(async move {
+                tracker.spawn(async move {
                     let worktrees = runtime::scan_agent_worktrees().await;
                     let _ = tx_wt.send(AppEvent::WorktreeScanned(worktrees));
                 });
@@ -363,7 +406,7 @@ fn process_event(
             {
                 app.dep_graph_last_poll_frame = app.frame_count;
                 let tx_dep = tx.clone();
-                tokio::spawn(async move {
+                tracker.spawn(async move {
                     match runtime::poll_dep_graph().await {
                         Ok(nodes) => {
                             let _ = tx_dep.send(AppEvent::DepGraphResult(nodes));
@@ -383,7 +426,7 @@ fn process_event(
                     if let Some(agent_id) = app.selected_agent_id {
                         app.diff_last_poll_frame = app.frame_count;
                         let tx_diff = tx.clone();
-                        tokio::spawn(async move {
+                        tracker.spawn(async move {
                             let diff = runtime::poll_worktree_diff(&wt_path).await;
                             let _ = tx_diff.send(AppEvent::DiffResult { agent_id, diff });
                         });
@@ -403,7 +446,7 @@ fn process_event(
                     .collect();
                 for (agent_id, task_id) in running {
                     let tx_status = tx.clone();
-                    tokio::spawn(async move {
+                    tracker.spawn(async move {
                         if let Ok(true) = runtime::poll_issue_status(&task_id).await {
                             let _ = tx_status.send(AppEvent::IssueStatusClosed { agent_id });
                         }
@@ -479,7 +522,7 @@ fn process_event(
             // check if any parent epics are now eligible for auto-closure.
             if success {
                 let tx_epic = tx.clone();
-                tokio::spawn(async move {
+                tracker.spawn(async move {
                     let result = runtime::close_eligible_epics().await;
                     let _ = tx_epic.send(AppEvent::EpicCloseResult(result));
                 });
@@ -540,7 +583,7 @@ fn process_event(
             app.on_issue_closed(agent_id);
             // Child issue was closed — check if any parent epics are now eligible
             let tx_epic = tx.clone();
-            tokio::spawn(async move {
+            tracker.spawn(async move {
                 let result = runtime::close_eligible_epics().await;
                 let _ = tx_epic.send(AppEvent::EpicCloseResult(result));
             });
@@ -583,7 +626,7 @@ fn process_event(
                     app.poll_countdown = 0.0;
                     let tx_poll = tx.clone();
                     let tx_blocked = tx.clone();
-                    tokio::spawn(async move {
+                    tracker.spawn(async move {
                         match runtime::poll_ready().await {
                             Ok(tasks) => {
                                 let _ = tx_poll.send(AppEvent::PollResult(tasks));
@@ -621,6 +664,7 @@ fn handle_key(
     app: &mut App,
     key: event::KeyEvent,
     tx: &mpsc::UnboundedSender<AppEvent>,
+    tracker: &TaskTracker,
 ) {
     // On Windows, crossterm emits both Press and Release events; only handle Press.
     if key.kind != KeyEventKind::Press {
@@ -740,7 +784,7 @@ fn handle_key(
                             .unwrap_or("")
                             .to_string();
                         let tx_done = tx.clone();
-                        tokio::spawn(async move {
+                        tracker.spawn(async move {
                             let mut cleaned = Vec::new();
                             let mut failed = Vec::new();
                             match runtime::cleanup_worktree(&worktree_path, &branch).await {
@@ -773,7 +817,7 @@ fn handle_key(
                             .unwrap_or("")
                             .to_string();
                         let tx_kill = tx.clone();
-                        tokio::spawn(async move {
+                        tracker.spawn(async move {
                             let mut cleaned = Vec::new();
                             let mut failed = Vec::new();
                             match runtime::cleanup_worktree(&worktree_path, &branch).await {
@@ -821,7 +865,7 @@ fn handle_key(
                     let issue_type = form.issue_type().to_string();
                     let priority = form.priority;
                     let tx_create = tx.clone();
-                    tokio::spawn(async move {
+                    tracker.spawn(async move {
                         let result =
                             runtime::create_issue(&title, &description, &issue_type, priority)
                                 .await;
@@ -1046,7 +1090,7 @@ fn handle_key(
         KeyCode::Char('r') if app.active_view == View::AgentDetail => {
             if let Some(agent_id) = app.selected_agent_id {
                 if let Some(req) = app.retry_agent(agent_id) {
-                    tokio::spawn(spawn_agent_process(tx.clone(), req));
+                    tracker.spawn(spawn_agent_process(tx.clone(), req, tracker.clone()));
                 }
             }
         }
@@ -1056,7 +1100,7 @@ fn handle_key(
         KeyCode::Enter => app.enter_pressed(),
         KeyCode::Char('s') if app.active_view == View::Dashboard => {
             if let Some(req) = app.get_spawn_info() {
-                tokio::spawn(spawn_agent_process(tx.clone(), req));
+                tracker.spawn(spawn_agent_process(tx.clone(), req, tracker.clone()));
             }
         }
         KeyCode::Char('p') => {
@@ -1064,7 +1108,7 @@ fn handle_key(
             app.poll_countdown = 0.0;
             let tx = tx.clone();
             let tx_blocked = tx.clone();
-            tokio::spawn(async move {
+            tracker.spawn(async move {
                 match runtime::poll_ready().await {
                     Ok(tasks) => {
                         let _ = tx.send(AppEvent::PollResult(tasks));
@@ -1161,7 +1205,7 @@ fn handle_key(
             app.log(LogCategory::System, "Scanning for orphaned worktrees...".into());
             let active_ids = app.active_task_ids();
             let tx_clean = tx.clone();
-            tokio::spawn(async move {
+            tracker.spawn(async move {
                 let worktrees = runtime::scan_agent_worktrees().await;
                 // Filter: keep only worktrees not associated with a currently active agent
                 let orphans: Vec<(String, String)> = worktrees
@@ -1199,7 +1243,7 @@ fn handle_key(
                 if let Some(wt_path) = app.selected_agent_worktree() {
                     if let Some(agent_id) = app.selected_agent_id {
                         let tx_diff = tx.clone();
-                        tokio::spawn(async move {
+                        tracker.spawn(async move {
                             let diff = runtime::poll_worktree_diff(&wt_path).await;
                             let _ = tx_diff.send(AppEvent::DiffResult { agent_id, diff });
                         });
@@ -1360,6 +1404,7 @@ fn key_to_pty_bytes(key: &event::KeyEvent) -> Option<Vec<u8>> {
 async fn spawn_agent_process(
     tx: mpsc::UnboundedSender<AppEvent>,
     req: app::SpawnRequest,
+    tracker: TaskTracker,
 ) {
     let agent_id = req.agent_id;
     let runtime = req.runtime;
@@ -1448,66 +1493,74 @@ async fn spawn_agent_process(
     // Reader task: read raw bytes from PTY, send as events
     let tx_reader = tx.clone();
     let reader_task_id = task_id.clone();
-    tokio::task::spawn_blocking(move || {
-        use std::io::Read;
-        let mut reader = reader;
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tx_reader
-                        .send(AppEvent::AgentPtyData {
+    tracker.spawn(async move {
+        tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let mut reader = reader;
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx_reader
+                            .send(AppEvent::AgentPtyData {
+                                agent_id,
+                                data: buf[..n].to_vec(),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
                             agent_id,
-                            data: buf[..n].to_vec(),
-                        })
-                        .is_err()
-                    {
+                            task_id = %reader_task_id,
+                            error = %e,
+                            event = "pty_read_error",
+                            "PTY reader encountered an error"
+                        );
                         break;
+                    }
+                }
+            }
+        })
+        .await
+        .ok();
+    });
+
+    // Exit watcher
+    let tx_exit = tx.clone();
+    tracker.spawn(async move {
+        tokio::task::spawn_blocking(move || {
+            let mut child = child;
+            let exit_code = match child.wait() {
+                Ok(status) => {
+                    if status.success() {
+                        Some(0)
+                    } else {
+                        // portable_pty::ExitStatus doesn't expose the raw code,
+                        // so we only know it was non-zero.
+                        Some(1)
                     }
                 }
                 Err(e) => {
                     warn!(
                         agent_id,
-                        task_id = %reader_task_id,
+                        task_id,
                         error = %e,
-                        event = "pty_read_error",
-                        "PTY reader encountered an error"
+                        event = "agent_wait_error",
+                        "child.wait() failed — exit code unknown"
                     );
-                    break;
+                    None
                 }
-            }
-        }
-    });
-
-    // Exit watcher
-    let tx_exit = tx.clone();
-    tokio::task::spawn_blocking(move || {
-        let mut child = child;
-        let exit_code = match child.wait() {
-            Ok(status) => {
-                if status.success() {
-                    Some(0)
-                } else {
-                    // portable_pty::ExitStatus doesn't expose the raw code,
-                    // so we only know it was non-zero.
-                    Some(1)
-                }
-            }
-            Err(e) => {
-                warn!(
-                    agent_id,
-                    task_id,
-                    error = %e,
-                    event = "agent_wait_error",
-                    "child.wait() failed — exit code unknown"
-                );
-                None
-            }
-        };
-        let _ = tx_exit.send(AppEvent::AgentExited {
-            agent_id,
-            exit_code,
-        });
+            };
+            let _ = tx_exit.send(AppEvent::AgentExited {
+                agent_id,
+                exit_code,
+            });
+        })
+        .await
+        .ok();
     });
 }
