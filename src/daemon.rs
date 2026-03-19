@@ -14,6 +14,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn};
 
 const PORT_FILE: &str = ".beads/obelisk.port";
@@ -132,15 +134,23 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 
+    // Shutdown infrastructure: token signals tasks to stop, tracker awaits completion
+    let shutdown_token = CancellationToken::new();
+    let task_tracker = TaskTracker::new();
+
     // Shared poll interval — updated by config hot-reload, read by poller
     let shared_poll_interval = Arc::new(AtomicU64::new(app.poll_interval_secs));
 
     // Poller task
     let tx_poll = tx.clone();
     let poller_interval = Arc::clone(&shared_poll_interval);
-    tokio::spawn(async move {
+    let token = shutdown_token.clone();
+    task_tracker.spawn(async move {
         let mut cycle = 0u64;
         loop {
+            if token.is_cancelled() {
+                break;
+            }
             match runtime::poll_ready().await {
                 Ok(tasks) => {
                     if tx_poll.send(AppEvent::PollResult(tasks)).is_err() {
@@ -168,18 +178,26 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             cycle += 1;
             let secs = poller_interval.load(Ordering::Relaxed);
-            tokio::time::sleep(tokio::time::Duration::from_secs(secs)).await;
+            tokio::select! {
+                _ = token.cancelled() => break,
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(secs)) => {}
+            }
         }
     });
 
     // Tick timer (slower than TUI — 1s ticks are fine for headless)
     let tx_tick = tx.clone();
-    tokio::spawn(async move {
+    let token = shutdown_token.clone();
+    task_tracker.spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
         loop {
-            interval.tick().await;
-            if tx_tick.send(AppEvent::Tick).is_err() {
-                break;
+            tokio::select! {
+                _ = token.cancelled() => break,
+                _ = interval.tick() => {
+                    if tx_tick.send(AppEvent::Tick).is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -189,28 +207,49 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         mpsc::unbounded_channel::<(DaemonCmd, tokio::sync::oneshot::Sender<DaemonResp>)>();
 
     let accept_token = daemon_token.clone();
-    tokio::spawn(async move {
+    let token = shutdown_token.clone();
+    task_tracker.spawn(async move {
         loop {
-            match listener.accept().await {
-                Ok((mut stream, _)) => {
-                    let cmd_tx = cmd_tx.clone();
-                    let expected_token = accept_token.clone();
-                    tokio::spawn(async move {
-                        const MAX_CMD_SIZE: usize = 64 * 1024; // 64KB
-                        let mut buf = Vec::with_capacity(4096);
-                        let mut tmp = [0u8; 4096];
-                        loop {
-                            match stream.read(&mut tmp).await {
-                                Ok(0) => break,
-                                Ok(n) => {
-                                    buf.extend_from_slice(&tmp[..n]);
-                                    if buf.len() > MAX_CMD_SIZE {
+            tokio::select! {
+                _ = token.cancelled() => break,
+                result = listener.accept() => {
+                    match result {
+                        Ok((mut stream, _)) => {
+                            let cmd_tx = cmd_tx.clone();
+                            let expected_token = accept_token.clone();
+                            tokio::spawn(async move {
+                                const MAX_CMD_SIZE: usize = 64 * 1024; // 64KB
+                                let mut buf = Vec::with_capacity(4096);
+                                let mut tmp = [0u8; 4096];
+                                loop {
+                                    match stream.read(&mut tmp).await {
+                                        Ok(0) => break,
+                                        Ok(n) => {
+                                            buf.extend_from_slice(&tmp[..n]);
+                                            if buf.len() > MAX_CMD_SIZE {
+                                                let resp = DaemonResp {
+                                                    ok: false,
+                                                    message: Some(format!(
+                                                        "command exceeds maximum size ({} bytes)",
+                                                        MAX_CMD_SIZE
+                                                    )),
+                                                    data: None,
+                                                };
+                                                if let Ok(json) = serde_json::to_string(&resp) {
+                                                    let _ = stream.write_all(json.as_bytes()).await;
+                                                }
+                                                return;
+                                            }
+                                        }
+                                        Err(_) => return,
+                                    }
+                                }
+                                let request: DaemonRequest = match serde_json::from_slice(&buf) {
+                                    Ok(r) => r,
+                                    Err(e) => {
                                         let resp = DaemonResp {
                                             ok: false,
-                                            message: Some(format!(
-                                                "command exceeds maximum size ({} bytes)",
-                                                MAX_CMD_SIZE
-                                            )),
+                                            message: Some(format!("invalid request: {}", e)),
                                             data: None,
                                         };
                                         if let Ok(json) = serde_json::to_string(&resp) {
@@ -218,50 +257,35 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                         return;
                                     }
-                                }
-                                Err(_) => return,
-                            }
-                        }
-                        let request: DaemonRequest = match serde_json::from_slice(&buf) {
-                            Ok(r) => r,
-                            Err(e) => {
-                                let resp = DaemonResp {
-                                    ok: false,
-                                    message: Some(format!("invalid request: {}", e)),
-                                    data: None,
                                 };
-                                if let Ok(json) = serde_json::to_string(&resp) {
-                                    let _ = stream.write_all(json.as_bytes()).await;
+                                // Validate authentication token
+                                if request.token != expected_token {
+                                    warn!("rejected unauthenticated connection");
+                                    let resp = DaemonResp {
+                                        ok: false,
+                                        message: Some("authentication failed: invalid token".to_string()),
+                                        data: None,
+                                    };
+                                    if let Ok(json) = serde_json::to_string(&resp) {
+                                        let _ = stream.write_all(json.as_bytes()).await;
+                                    }
+                                    return;
                                 }
-                                return;
-                            }
-                        };
-                        // Validate authentication token
-                        if request.token != expected_token {
-                            warn!("rejected unauthenticated connection");
-                            let resp = DaemonResp {
-                                ok: false,
-                                message: Some("authentication failed: invalid token".to_string()),
-                                data: None,
-                            };
-                            if let Ok(json) = serde_json::to_string(&resp) {
-                                let _ = stream.write_all(json.as_bytes()).await;
-                            }
-                            return;
+                                let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                                if cmd_tx.send((request.cmd, resp_tx)).is_err() {
+                                    return;
+                                }
+                                if let Ok(resp) = resp_rx.await {
+                                    if let Ok(json) = serde_json::to_string(&resp) {
+                                        let _ = stream.write_all(json.as_bytes()).await;
+                                    }
+                                }
+                            });
                         }
-                        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                        if cmd_tx.send((request.cmd, resp_tx)).is_err() {
-                            return;
+                        Err(e) => {
+                            error!("socket accept error: {}", e);
                         }
-                        if let Ok(resp) = resp_rx.await {
-                            if let Ok(json) = serde_json::to_string(&resp) {
-                                let _ = stream.write_all(json.as_bytes()).await;
-                            }
-                        }
-                    });
-                }
-                Err(e) => {
-                    error!("socket accept error: {}", e);
+                    }
                 }
             }
         }
@@ -272,14 +296,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             event = rx.recv() => {
                 match event {
-                    Some(ev) => process_daemon_event(&mut app, ev, &tx, &shared_poll_interval),
+                    Some(ev) => process_daemon_event(&mut app, ev, &tx, &shared_poll_interval, &task_tracker),
                     None => break,
                 }
             }
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some((daemon_cmd, resp_tx)) => {
-                        let (resp, should_stop) = handle_daemon_cmd(&mut app, daemon_cmd, &tx);
+                        let (resp, should_stop) = handle_daemon_cmd(&mut app, daemon_cmd, &tx, &task_tracker);
                         let _ = resp_tx.send(resp);
                         if should_stop {
                             break;
@@ -294,9 +318,27 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Shutdown
     info!("daemon shutting down");
     eprintln!("obelisk daemon shutting down");
-    app.save_config();
+
+    // Signal all tracked tasks to stop
+    shutdown_token.cancel();
+
+    // Kill agent processes — this causes PTY readers and exit watchers to complete
     app.kill_all_agents();
+
+    app.save_config();
     app.save_session();
+
+    // Wait for all tracked tasks to finish (with timeout)
+    task_tracker.close();
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(5),
+        task_tracker.wait(),
+    )
+    .await
+    {
+        Ok(()) => info!("all background tasks completed cleanly"),
+        Err(_) => warn!("shutdown timeout: some tasks did not complete within 5s"),
+    }
 
     // Clean up port and token files
     let _ = std::fs::remove_file(&port_file);
@@ -311,6 +353,7 @@ fn process_daemon_event(
     event: AppEvent,
     tx: &mpsc::UnboundedSender<AppEvent>,
     shared_poll_interval: &Arc<AtomicU64>,
+    tracker: &TaskTracker,
 ) {
     match event {
         AppEvent::Tick => {
@@ -327,7 +370,7 @@ fn process_daemon_event(
                     let unit = req.agent_id;
                     let task_id = req.task.id.clone();
                     info!(agent_id = unit, task_id, event = "auto_spawn", "auto-spawning agent for ready task");
-                    tokio::spawn(spawn_agent_process(tx.clone(), req));
+                    tracker.spawn(spawn_agent_process(tx.clone(), req, tracker.clone()));
                 }
             }
 
@@ -341,7 +384,7 @@ fn process_daemon_event(
                     .collect();
                 for (agent_id, task_id) in running {
                     let tx_status = tx.clone();
-                    tokio::spawn(async move {
+                    tracker.spawn(async move {
                         if let Ok(true) = runtime::poll_issue_status(&task_id).await {
                             let _ = tx_status.send(AppEvent::IssueStatusClosed { agent_id });
                         }
@@ -404,7 +447,7 @@ fn process_daemon_event(
             app.on_agent_exited(agent_id, exit_code);
             if exit_code == Some(0) {
                 let tx_epic = tx.clone();
-                tokio::spawn(async move {
+                tracker.spawn(async move {
                     let result = runtime::close_eligible_epics().await;
                     let _ = tx_epic.send(AppEvent::EpicCloseResult(result));
                 });
@@ -464,7 +507,7 @@ fn process_daemon_event(
         AppEvent::IssueStatusClosed { agent_id } => {
             app.on_issue_closed(agent_id);
             let tx_epic = tx.clone();
-            tokio::spawn(async move {
+            tracker.spawn(async move {
                 let result = runtime::close_eligible_epics().await;
                 let _ = tx_epic.send(AppEvent::EpicCloseResult(result));
             });
@@ -498,6 +541,7 @@ fn handle_daemon_cmd(
     app: &mut App,
     cmd: DaemonCmd,
     tx: &mpsc::UnboundedSender<AppEvent>,
+    tracker: &TaskTracker,
 ) -> (DaemonResp, bool) {
     match cmd {
         DaemonCmd::Status => {
@@ -544,7 +588,7 @@ fn handle_daemon_cmd(
             (DaemonResp { ok: true, message: None, data: Some(data) }, false)
         }
         DaemonCmd::Spawn { issue_id } => {
-            match spawn_task_by_id(app, &issue_id, tx) {
+            match spawn_task_by_id(app, &issue_id, tx, tracker) {
                 Ok(agent_id) => (
                     DaemonResp {
                         ok: true,
@@ -592,6 +636,7 @@ fn spawn_task_by_id(
     app: &mut App,
     issue_id: &str,
     tx: &mpsc::UnboundedSender<AppEvent>,
+    tracker: &TaskTracker,
 ) -> Result<usize, String> {
     if app.active_agent_count() >= app.max_concurrent {
         return Err("max concurrent agents reached".into());
@@ -611,7 +656,7 @@ fn spawn_task_by_id(
         .ok_or_else(|| "failed to create spawn request".to_string())?;
 
     let agent_id = req.agent_id;
-    tokio::spawn(spawn_agent_process(tx.clone(), req));
+    tracker.spawn(spawn_agent_process(tx.clone(), req, tracker.clone()));
     Ok(agent_id)
 }
 
@@ -619,6 +664,7 @@ fn spawn_task_by_id(
 async fn spawn_agent_process(
     tx: mpsc::UnboundedSender<AppEvent>,
     req: SpawnRequest,
+    tracker: TaskTracker,
 ) {
     let agent_id = req.agent_id;
     let runtime = req.runtime;
@@ -696,57 +742,65 @@ async fn spawn_agent_process(
     // Reader task
     let tx_reader = tx.clone();
     let reader_task_id = task_id.clone();
-    tokio::task::spawn_blocking(move || {
-        use std::io::Read;
-        let mut reader = reader;
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tx_reader
-                        .send(AppEvent::AgentPtyData {
+    tracker.spawn(async move {
+        tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let mut reader = reader;
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx_reader
+                            .send(AppEvent::AgentPtyData {
+                                agent_id,
+                                data: buf[..n].to_vec(),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
                             agent_id,
-                            data: buf[..n].to_vec(),
-                        })
-                        .is_err()
-                    {
+                            task_id = %reader_task_id,
+                            error = %e,
+                            event = "pty_read_error",
+                            "PTY reader encountered an error"
+                        );
                         break;
                     }
                 }
-                Err(e) => {
-                    warn!(
-                        agent_id,
-                        task_id = %reader_task_id,
-                        error = %e,
-                        event = "pty_read_error",
-                        "PTY reader encountered an error"
-                    );
-                    break;
-                }
             }
-        }
+        })
+        .await
+        .ok();
     });
 
     // Exit watcher
     let tx_exit = tx.clone();
-    tokio::task::spawn_blocking(move || {
-        let mut child = child;
-        let exit_code = match child.wait() {
-            Ok(status) => {
-                if status.success() { Some(0) } else { Some(1) }
-            }
-            Err(e) => {
-                warn!(
-                    agent_id,
-                    task_id,
-                    error = %e,
-                    event = "agent_wait_error",
-                    "child.wait() failed — exit code unknown"
-                );
-                None
-            }
-        };
-        let _ = tx_exit.send(AppEvent::AgentExited { agent_id, exit_code });
+    tracker.spawn(async move {
+        tokio::task::spawn_blocking(move || {
+            let mut child = child;
+            let exit_code = match child.wait() {
+                Ok(status) => {
+                    if status.success() { Some(0) } else { Some(1) }
+                }
+                Err(e) => {
+                    warn!(
+                        agent_id,
+                        task_id,
+                        error = %e,
+                        event = "agent_wait_error",
+                        "child.wait() failed — exit code unknown"
+                    );
+                    None
+                }
+            };
+            let _ = tx_exit.send(AppEvent::AgentExited { agent_id, exit_code });
+        })
+        .await
+        .ok();
     });
 }
