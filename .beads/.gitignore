@@ -12,8 +12,14 @@ last-touched
 # Daemon runtime (lock, log, pid)
 daemon.*
 
+# Logs (runtime, rotated per-session)
+logs/
+
 # Interactions log (runtime, not versioned)
 interactions.jsonl
+
+# Obelisk session log (runtime, not versioned)
+obelisk_sessions.jsonl
 
 # Push state (runtime, per-machine)
 push-state.json
